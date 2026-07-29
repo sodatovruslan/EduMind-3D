@@ -14,7 +14,7 @@ export interface TokenPair {
   token_type: string;
 }
 
-export type SimulationModule = "simlab" | "geo3d";
+export type SimulationModule = "simlab" | "geo3d" | "electricity_lab";
 
 export interface Simulation {
   id: string;

@@ -6,7 +6,6 @@ from app.routers import ai, auth, results, simulations, users
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
