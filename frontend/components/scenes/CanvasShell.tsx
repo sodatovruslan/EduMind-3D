@@ -17,6 +17,9 @@ interface CanvasShellProps {
   backgroundTop?: string;
   backgroundBottom?: string;
   quality?: QualityLevel;
+  // отключить OrbitControls (например, пока пользователь тянет провод
+  // в Electricity Lab — иначе тот же pointer-жест крутит камеру)
+  orbitEnabled?: boolean;
 }
 
 // вертикальный градиент вместо плоской заливки — рисуем на canvas и
@@ -72,6 +75,7 @@ export default function CanvasShell({
   backgroundTop = "#1e2340",
   backgroundBottom = "#04050c",
   quality = "medium",
+  orbitEnabled = true,
 }: CanvasShellProps) {
   const preset = QUALITY_PRESETS[quality];
 
@@ -131,7 +135,14 @@ export default function CanvasShell({
           </>
         )}
 
-        <OrbitControls enableDamping dampingFactor={0.08} minDistance={2} maxDistance={14} target={target} />
+        <OrbitControls
+          enabled={orbitEnabled}
+          enableDamping
+          dampingFactor={0.08}
+          minDistance={2}
+          maxDistance={14}
+          target={target}
+        />
 
         {preset.enableBloom && (
           <EffectComposer multisampling={0}>

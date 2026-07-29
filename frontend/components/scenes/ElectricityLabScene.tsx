@@ -14,7 +14,7 @@ import {
 import { WireDragProvider, WireDragSurface, useWireDrag } from "@/components/core/WireDragProvider";
 import ConnectionPoint from "@/components/core/ConnectionPoint";
 import { useSimulationClock } from "@/lib/use-simulation-clock";
-import { useQuality } from "@/lib/quality-context";
+import { useQuality, type QualityLevel } from "@/lib/quality-context";
 import { buildElectricityLabContext } from "@/lib/ai-context-adapter";
 import { solveCircuit, bulbBrightness, type CircuitComponent } from "@/lib/circuit-engine";
 import { apiFetch, ApiError } from "@/lib/api";
@@ -174,11 +174,13 @@ function MeterHousing({
   label,
   value,
   unit,
+  testId,
 }: {
   position: [number, number, number];
   label: string;
   value: number;
   unit: string;
+  testId: string;
 }) {
   return (
     <group position={position}>
@@ -187,7 +189,11 @@ function MeterHousing({
         <meshStandardMaterial color="#0f172a" roughness={0.4} metalness={0.5} />
       </mesh>
       <Html position={[0, 0, 0.16]} center distanceFactor={6} occlude>
-        <div className="pointer-events-none rounded bg-black/80 px-2 py-1 font-mono text-[10px] text-emerald-400">
+        <div
+          data-testid={testId}
+          data-value={value}
+          className="pointer-events-none rounded bg-black/80 px-2 py-1 font-mono text-[10px] text-emerald-400"
+        >
           <div className="text-[8px] uppercase tracking-widest text-emerald-600">{label}</div>
           {value.toFixed(2)} {unit}
         </div>
@@ -199,7 +205,7 @@ function MeterHousing({
 function Ammeter({ currentA }: { currentA: number }) {
   return (
     <group position={[3.2, 0.28, -0.45]} rotation={[0, Math.PI / 2, 0]}>
-      <MeterHousing position={[0, 0, 0]} label="A" value={currentA} unit="A" />
+      <MeterHousing position={[0, 0, 0]} label="A" value={currentA} unit="A" testId="ammeter-reading" />
       <ConnectionPoint id="ammeter_a" position={[0, 0, 0.45]} />
       <ConnectionPoint id="ammeter_b" position={[0, 0, -0.45]} />
     </group>
@@ -209,7 +215,7 @@ function Ammeter({ currentA }: { currentA: number }) {
 function Voltmeter({ voltageV }: { voltageV: number }) {
   return (
     <group position={[-1.5, 1.05, 0.9]}>
-      <MeterHousing position={[0, 0, 0]} label="V" value={voltageV} unit="V" />
+      <MeterHousing position={[0, 0, 0]} label="V" value={voltageV} unit="V" testId="voltmeter-reading" />
       <ConnectionPoint id="voltmeter_a" position={[-0.4, 0, 0]} color="#f59e0b" />
       <ConnectionPoint id="voltmeter_b" position={[0.4, 0, 0]} color="#f59e0b" />
     </group>
@@ -274,7 +280,7 @@ function Fuse({ isBlown, justBlown, timeScale }: { isBlown: boolean; justBlown: 
 }
 
 function Wires() {
-  const { state } = useExperimentState();
+  const { state, removeConnection } = useExperimentState();
   const { getTerminalPosition } = useWireDrag();
 
   return (
@@ -283,7 +289,22 @@ function Wires() {
         const a = getTerminalPosition(connection.terminals[0]);
         const b = getTerminalPosition(connection.terminals[1]);
         if (!a || !b) return null;
-        return <Line key={connection.id} points={[a, b]} color="#facc15" lineWidth={2.5} />;
+        // без отдельного Html-маркера на провод (лишний drei-портал,
+        // репроецируемый каждый кадр, ощутимо накапливает нагрузку при
+        // росте числа соединений) — тесты вычисляют середину провода как
+        // среднее между двумя already-существующими terminal-маркерами
+        return (
+          <Line
+            key={connection.id}
+            points={[a, b]}
+            color="#facc15"
+            lineWidth={2.5}
+            onClick={(e) => {
+              e.stopPropagation();
+              removeConnection(connection.id);
+            }}
+          />
+        );
       })}
     </>
   );
@@ -351,6 +372,29 @@ function CircuitScene() {
   );
 }
 
+// мост между WireDragProvider (обычный React-контекст, живет и снаружи
+// Canvas) и CanvasShell: пока пользователь тянет провод, OrbitControls
+// должен быть выключен — иначе тот же pointer-жест дополнительно крутит
+// камеру, и координаты терминалов "уезжают" прямо во время клика
+function ElectricityCanvas({ quality }: { quality: QualityLevel }) {
+  const { draggingFrom } = useWireDrag();
+  return (
+    <CanvasShell
+      cameraPosition={[2, 3.5, 6]}
+      target={[0, 0.3, -0.5]}
+      floorY={-0.06}
+      bloomIntensity={0.4}
+      quality={quality}
+      orbitEnabled={!draggingFrom}
+    >
+      <CircuitScene />
+    </CanvasShell>
+  );
+}
+
+const QUALITY_OPTIONS: QualityLevel[] = ["low", "medium", "high"];
+const QUALITY_LABEL: Record<QualityLevel, string> = { low: "Низкое", medium: "Среднее", high: "Высокое" };
+
 interface ElectricityLabSceneProps {
   simulation: Simulation;
 }
@@ -365,7 +409,7 @@ export default function ElectricityLabScene({ simulation }: ElectricityLabSceneP
 
 function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
   const { state, addConnection, updateComponent, resetExperiment, actionsLog, logEvent } = useExperimentState();
-  const { quality } = useQuality();
+  const { quality, setQuality } = useQuality();
   const clock = useSimulationClock();
   const [error, setError] = useState<string | null>(null);
   const [completionScore, setCompletionScore] = useState<number | null>(null);
@@ -410,11 +454,9 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
   return (
     <div className="rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">
       <div className="relative">
-        <CanvasShell cameraPosition={[2, 3.5, 6]} target={[0, 0.3, -0.5]} floorY={-0.06} bloomIntensity={0.4} quality={quality}>
-          <WireDragProvider onConnect={handleConnect}>
-            <CircuitScene />
-          </WireDragProvider>
-        </CanvasShell>
+        <WireDragProvider onConnect={handleConnect}>
+          <ElectricityCanvas quality={quality} />
+        </WireDragProvider>
 
         <AIAssistantChat simulationId={simulation.id} sceneStateDescription={sceneStateDescription} />
       </div>
@@ -431,31 +473,61 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
             step={0.5}
             value={battery?.voltageV ?? 12}
             onChange={(e) => handleVoltageChange(Number(e.target.value))}
+            data-testid="voltage-slider"
             className="w-full accent-neon-violet"
           />
         </div>
 
-        <div className="flex items-end gap-2">
-          <button
-            onClick={clock.isRunning ? clock.pause : clock.start}
-            className="neon-glow-indigo flex items-center gap-2 rounded-full bg-neon-violet px-4 py-2 text-sm font-medium text-white transition hover:brightness-110"
-          >
-            {clock.isRunning ? <Pause size={16} /> : <Play size={16} />}
-            {clock.isRunning ? "Пауза" : "Старт"}
-          </button>
-          <button
-            onClick={handleReset}
-            className="flex items-center gap-2 rounded-full border border-glass-border px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/5"
-          >
-            <RotateCcw size={16} />
-            Сбросить
-          </button>
+        <div className="flex items-end justify-between gap-2">
+          <div className="flex gap-2">
+            <button
+              onClick={clock.isRunning ? clock.pause : clock.start}
+              data-testid="clock-toggle"
+              className="neon-glow-indigo flex items-center gap-2 rounded-full bg-neon-violet px-4 py-2 text-sm font-medium text-white transition hover:brightness-110"
+            >
+              {clock.isRunning ? <Pause size={16} /> : <Play size={16} />}
+              {clock.isRunning ? "Пауза" : "Старт"}
+            </button>
+            <button
+              onClick={handleReset}
+              data-testid="reset-button"
+              className="flex items-center gap-2 rounded-full border border-glass-border px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/5"
+            >
+              <RotateCcw size={16} />
+              Сбросить
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1 font-mono text-xs text-slate-500">
+            {QUALITY_OPTIONS.map((level) => (
+              <button
+                key={level}
+                onClick={() => setQuality(level)}
+                data-testid={`quality-${level}`}
+                title={QUALITY_LABEL[level]}
+                className={`rounded-full border px-2 py-1 uppercase transition ${
+                  quality === level
+                    ? "border-neon-violet text-neon-violet"
+                    : "border-glass-border text-slate-500 hover:text-slate-300"
+                }`}
+              >
+                {level[0]}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="rim-light rounded-xl border border-glass-border bg-surface-container-lowest/60 p-3 text-sm text-slate-300 sm:col-span-2">
+        <div
+          data-testid="circuit-status"
+          data-active={solution.isCircuitActive}
+          data-short={solution.isShortCircuit}
+          data-fuse-blown={state.components.find((c) => c.id === "fuse")?.isBlown ?? false}
+          className="rim-light rounded-xl border border-glass-border bg-surface-container-lowest/60 p-3 text-sm text-slate-300 sm:col-span-2"
+        >
           {!solution.isClosedLoop && (
             <p className="text-slate-400">
               Соедини терминалы проводами: потяни от одной точки подключения к другой, чтобы собрать полный контур.
+              Клик по проводу — разрыв соединения.
             </p>
           )}
           {solution.isClosedLoop && solution.isShortCircuit && (
@@ -480,6 +552,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
           <button
             onClick={handleComplete}
             disabled={state.connections.length === 0}
+            data-testid="complete-button"
             className="rounded-full border border-glass-border px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/5 disabled:opacity-50"
           >
             Завершить попытку

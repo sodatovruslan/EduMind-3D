@@ -2,7 +2,8 @@
 
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import type { ThreeEvent } from "@react-three/fiber";
+import { useFrame, type ThreeEvent } from "@react-three/fiber";
+import { Html } from "@react-three/drei";
 import { useWireDrag } from "@/components/core/WireDragProvider";
 
 interface ConnectionPointProps {
@@ -12,11 +13,17 @@ interface ConnectionPointProps {
 }
 
 // терминал компонента: маленькая сфера, которая ловит начало/конец
-// перетаскивания провода и подсвечивается при наведении/активном драге
+// перетаскивания провода и заметно подсвечивается (пульс масштаба +
+// свечение) при наведении/активном драге. Рядом — невидимый DOM-маркер
+// (data-testid) с той же экранной позицией, что и 3D-точка: Playwright
+// не умеет искать объекты внутри WebGL-канваса, а drei/Html проецирует
+// обычный div точно на экранные координаты 3D-точки каждый кадр — это
+// дает стабильные, не зависящие от вращения камеры координаты для тестов.
 export default function ConnectionPoint({ id, position, color = "#94a3b8" }: ConnectionPointProps) {
   const { draggingFrom, hoveredTerminal, startDrag, setHoveredTerminal, commitDrag, registerTerminalPosition } =
     useWireDrag();
   const meshRef = useRef<THREE.Mesh>(null);
+  const visibleRef = useRef<THREE.Mesh>(null);
 
   useEffect(() => {
     if (meshRef.current) {
@@ -29,6 +36,13 @@ export default function ConnectionPoint({ id, position, color = "#94a3b8" }: Con
   const isHovered = hoveredTerminal === id;
   const isActive = draggingFrom === id;
   const highlighted = isHovered || isActive;
+
+  useFrame((_, delta) => {
+    if (!visibleRef.current) return;
+    const targetScale = highlighted ? 1.7 : 1;
+    const lerpFactor = Math.min(1, delta * 10);
+    visibleRef.current.scale.setScalar(THREE.MathUtils.lerp(visibleRef.current.scale.x, targetScale, lerpFactor));
+  });
 
   return (
     <group position={position}>
@@ -43,8 +57,12 @@ export default function ConnectionPoint({ id, position, color = "#94a3b8" }: Con
         onPointerOver={(e: ThreeEvent<PointerEvent>) => {
           e.stopPropagation();
           setHoveredTerminal(id);
+          document.body.style.cursor = "crosshair";
         }}
-        onPointerOut={() => setHoveredTerminal(null)}
+        onPointerOut={() => {
+          setHoveredTerminal(null);
+          document.body.style.cursor = "auto";
+        }}
         onPointerUp={(e: ThreeEvent<PointerEvent>) => {
           e.stopPropagation();
           if (draggingFrom && draggingFrom !== id) commitDrag(id);
@@ -53,16 +71,19 @@ export default function ConnectionPoint({ id, position, color = "#94a3b8" }: Con
         <sphereGeometry args={[0.16, 12, 12]} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
-      <mesh>
+      <mesh ref={visibleRef}>
         <sphereGeometry args={[0.06, 12, 12]} />
         <meshStandardMaterial
           color={highlighted ? "#22d3ee" : color}
           emissive={highlighted ? "#22d3ee" : "#000000"}
-          emissiveIntensity={highlighted ? 0.7 : 0}
+          emissiveIntensity={highlighted ? 1.1 : 0}
           metalness={0.6}
           roughness={0.3}
         />
       </mesh>
+      <Html center pointerEvents="none" style={{ pointerEvents: "none" }}>
+        <div data-testid={`terminal-${id}`} style={{ width: 1, height: 1 }} />
+      </Html>
     </group>
   );
 }
