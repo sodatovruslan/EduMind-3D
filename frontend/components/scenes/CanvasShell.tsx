@@ -20,6 +20,10 @@ interface CanvasShellProps {
   // отключить OrbitControls (например, пока пользователь тянет провод
   // в Electricity Lab — иначе тот же pointer-жест крутит камеру)
   orbitEnabled?: boolean;
+  // опциональные ограничения угла обзора (по умолчанию не заданы — полное
+  // вращение на 360°, как и раньше, для SimLab/GeoWorld ничего не меняется)
+  minPolarAngle?: number;
+  maxPolarAngle?: number;
 }
 
 // вертикальный градиент вместо плоской заливки — рисуем на canvas и
@@ -76,6 +80,8 @@ export default function CanvasShell({
   backgroundBottom = "#04050c",
   quality = "medium",
   orbitEnabled = true,
+  minPolarAngle,
+  maxPolarAngle,
 }: CanvasShellProps) {
   const preset = QUALITY_PRESETS[quality];
 
@@ -141,6 +147,8 @@ export default function CanvasShell({
           dampingFactor={0.08}
           minDistance={2}
           maxDistance={14}
+          minPolarAngle={minPolarAngle}
+          maxPolarAngle={maxPolarAngle}
           target={target}
         />
 
