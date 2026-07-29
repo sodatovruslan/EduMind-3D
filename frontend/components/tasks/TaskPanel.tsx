@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowRight, CheckCircle2, XCircle } from "lucide-react";
 import type { CircuitComponent, CircuitSolution, Connection } from "@/lib/circuit-engine";
 import { TASKS, TaskStatus, deriveTaskStatus, validateTask } from "@/lib/task-engine";
+import { explainError } from "@/lib/error-explanations";
 
 /**
  * Interactive Learning System — UI поверх Task Validator. Сама эта панель
@@ -93,7 +94,7 @@ export default function TaskPanel({ components, connections, solution }: TaskPan
           <ul className="space-y-0.5" data-testid="task-error-list">
             {result.errors.map((e) => (
               <li key={e.code} className={e.critical ? "text-red-400" : "text-slate-300"}>
-                ❌ {e.message}
+                ❌ {explainError(e.code, e.message)}
               </li>
             ))}
             {result.warnings.map((w) => (

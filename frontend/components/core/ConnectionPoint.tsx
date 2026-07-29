@@ -10,6 +10,10 @@ interface ConnectionPointProps {
   id: string;
   position: [number, number, number];
   color?: string;
+  // Guided Onboarding: мягкая непрерывная пульсация независимо от hover —
+  // подсказка "подключи именно сюда" во время обучающего режима. Не
+  // трогает существующую hover/drag-подсветку, рисуется отдельным мешем.
+  suggested?: boolean;
 }
 
 // терминал компонента: маленькая сфера, которая ловит начало/конец
@@ -19,13 +23,15 @@ interface ConnectionPointProps {
 // не умеет искать объекты внутри WebGL-канваса, а drei/Html проецирует
 // обычный div точно на экранные координаты 3D-точки каждый кадр — это
 // дает стабильные, не зависящие от вращения камеры координаты для тестов.
-export default function ConnectionPoint({ id, position, color = "#c9a227" }: ConnectionPointProps) {
+export default function ConnectionPoint({ id, position, color = "#c9a227", suggested = false }: ConnectionPointProps) {
   const { draggingFrom, hoveredTerminal, startDrag, setHoveredTerminal, commitDrag, registerTerminalPosition } =
     useWireDrag();
   const meshRef = useRef<THREE.Mesh>(null);
   const visibleRef = useRef<THREE.Mesh>(null);
   const glowRef = useRef<THREE.Mesh>(null);
   const glowMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
+  const suggestRingRef = useRef<THREE.Mesh>(null);
+  const suggestMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
 
   useEffect(() => {
     if (meshRef.current) {
@@ -50,6 +56,14 @@ export default function ConnectionPoint({ id, position, color = "#c9a227" }: Con
       const pulse = highlighted ? 1.4 + Math.sin(r3fClock.elapsedTime * 6) * 0.2 : 0;
       glowRef.current.scale.setScalar(THREE.MathUtils.lerp(glowRef.current.scale.x, Math.max(pulse, 0.001), Math.min(1, delta * 8)));
       glowMaterialRef.current.opacity = THREE.MathUtils.lerp(glowMaterialRef.current.opacity, highlighted ? 0.35 : 0, Math.min(1, delta * 8));
+    }
+    // Guided Onboarding: медленная непрерывная пульсация золотистого кольца,
+    // независимая от hover — включается только когда suggested=true
+    if (suggestRingRef.current && suggestMaterialRef.current) {
+      const targetScale = suggested ? 1.6 + Math.sin(r3fClock.elapsedTime * 3) * 0.25 : 0.001;
+      suggestRingRef.current.scale.setScalar(THREE.MathUtils.lerp(suggestRingRef.current.scale.x, targetScale, Math.min(1, delta * 6)));
+      const targetOpacity = suggested ? 0.55 + Math.sin(r3fClock.elapsedTime * 3) * 0.2 : 0;
+      suggestMaterialRef.current.opacity = THREE.MathUtils.lerp(suggestMaterialRef.current.opacity, targetOpacity, Math.min(1, delta * 6));
     }
   });
 
@@ -83,6 +97,12 @@ export default function ConnectionPoint({ id, position, color = "#c9a227" }: Con
       <mesh ref={glowRef} scale={0.001}>
         <sphereGeometry args={[0.075, 12, 12]} />
         <meshBasicMaterial ref={glowMaterialRef} color="#22d3ee" transparent opacity={0} depthWrite={false} />
+      </mesh>
+      {/* сфера, а не плоское кольцо — видна одинаково с любого угла камеры,
+          в отличие от тора, который "исчезает" при взгляде почти вдоль его плоскости */}
+      <mesh ref={suggestRingRef} scale={0.001}>
+        <sphereGeometry args={[0.1, 12, 12]} />
+        <meshBasicMaterial ref={suggestMaterialRef} color="#facc15" transparent opacity={0} depthWrite={false} wireframe />
       </mesh>
       <mesh ref={visibleRef}>
         <sphereGeometry args={[0.055, 12, 12]} />

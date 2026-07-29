@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import { useFrame } from "@react-three/fiber";
+import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import { Html, QuadraticBezierLine, MeshTransmissionMaterial } from "@react-three/drei";
 import { Play, Pause, RotateCcw } from "lucide-react";
 import CanvasShell from "@/components/scenes/CanvasShell";
@@ -14,6 +14,9 @@ import {
 } from "@/components/core/ExperimentStateProvider";
 import { WireDragProvider, WireDragSurface, useWireDrag } from "@/components/core/WireDragProvider";
 import ConnectionPoint from "@/components/core/ConnectionPoint";
+import { TutorialProvider, useTutorial } from "@/components/tutorial/TutorialProvider";
+import TutorialPanel from "@/components/tutorial/TutorialPanel";
+import { COMPONENT_INFO } from "@/lib/component-info";
 import { useSimulationClock } from "@/lib/use-simulation-clock";
 import { useQuality, type QualityLevel } from "@/lib/quality-context";
 import { buildElectricityLabContext } from "@/lib/ai-context-adapter";
@@ -21,6 +24,31 @@ import { solveCircuit, bulbBrightness, type CircuitComponent } from "@/lib/circu
 import { apiFetch, ApiError } from "@/lib/api";
 import { playConnect, playDisconnect, playFuseBlow, playPowerOn, playSwitchClick } from "@/lib/sound-effects";
 import type { Simulation } from "@/lib/types";
+
+// Guided Onboarding: наведение курсора в любую точку компонента (не только
+// на клемму) показывает всплывающую подпись с названием — общий хук вместо
+// повторения одной и той же пары обработчиков в каждом компоненте
+function useHoverTooltip() {
+  const [hovered, setHovered] = useState(false);
+  return {
+    hovered,
+    onPointerOver: (e: ThreeEvent<PointerEvent>) => {
+      e.stopPropagation();
+      setHovered(true);
+    },
+    onPointerOut: () => setHovered(false),
+  };
+}
+
+function TooltipLabel({ label, position = [0, 0.55, 0] as [number, number, number] }: { label: string; position?: [number, number, number] }) {
+  return (
+    <Html position={position} center distanceFactor={8} style={{ pointerEvents: "none" }}>
+      <div className="pointer-events-none whitespace-nowrap rounded-lg border border-white/10 bg-slate-900/90 px-2 py-1 text-xs text-slate-100 shadow-lg">
+        {label}
+      </div>
+    </Html>
+  );
+}
 
 const BULB_RATED_POWER_W = 18;
 
@@ -93,8 +121,11 @@ function Workbench() {
 }
 
 function Battery() {
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
+  const { suggestedTerminals } = useTutorial();
+  const info = COMPONENT_INFO.battery;
   return (
-    <group position={[-3.2, 0.28, 0]}>
+    <group position={[-3.2, 0.28, 0]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
       {/* пластиковый корпус — матовый, невысокая металличность */}
       <mesh castShadow rotation={[0, 0, Math.PI / 2]}>
         <cylinderGeometry args={[0.22, 0.22, 0.9, 24]} />
@@ -109,16 +140,38 @@ function Battery() {
         <cylinderGeometry args={[0.09, 0.09, 0.06, 16]} />
         <meshStandardMaterial color={BRASS_COLOR} metalness={0.85} roughness={0.25} />
       </mesh>
-      <ConnectionPoint id="battery_pos" position={[-0.4, 0, 0]} color="#ef4444" />
-      <ConnectionPoint id="battery_neg" position={[0.4, 0, 0]} color="#1e293b" />
+      <ConnectionPoint
+        id="battery_pos"
+        position={[-0.4, 0, 0]}
+        color="#ef4444"
+        suggested={suggestedTerminals?.includes("battery_pos") ?? false}
+      />
+      <ConnectionPoint
+        id="battery_neg"
+        position={[0.4, 0, 0]}
+        color="#1e293b"
+        suggested={suggestedTerminals?.includes("battery_neg") ?? false}
+      />
+      {/* Guided Onboarding: явные +/- рядом с клеммами, чтобы новичок сразу
+          понимал полярность, а не считывал её только по цвету */}
+      <Html position={[-0.4, 0.32, 0]} center distanceFactor={8} style={{ pointerEvents: "none" }}>
+        <div className="pointer-events-none text-lg font-bold leading-none text-red-400">+</div>
+      </Html>
+      <Html position={[0.4, 0.32, 0]} center distanceFactor={8} style={{ pointerEvents: "none" }}>
+        <div className="pointer-events-none text-lg font-bold leading-none text-slate-300">−</div>
+      </Html>
+      {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} />}
     </group>
   );
 }
 
 function Resistor() {
   const bandColors = ["#a16207", "#000000", "#dc2626"];
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
+  const { suggestedTerminals } = useTutorial();
+  const info = COMPONENT_INFO.resistor;
   return (
-    <group position={[-1.5, 0.28, 0]} rotation={[0, 0, Math.PI / 2]}>
+    <group position={[-1.5, 0.28, 0]} rotation={[0, 0, Math.PI / 2]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
       {/* керамическое тело */}
       <mesh castShadow>
         <cylinderGeometry args={[0.13, 0.13, 0.7, 20]} />
@@ -139,8 +192,9 @@ function Resistor() {
         <cylinderGeometry args={[0.02, 0.02, 0.06, 10]} />
         <meshStandardMaterial color="#9ca3af" metalness={0.8} roughness={0.3} />
       </mesh>
-      <ConnectionPoint id="resistor_a" position={[0, 0.4, 0]} />
-      <ConnectionPoint id="resistor_b" position={[0, -0.4, 0]} />
+      <ConnectionPoint id="resistor_a" position={[0, 0.4, 0]} suggested={suggestedTerminals?.includes("resistor_a") ?? false} />
+      <ConnectionPoint id="resistor_b" position={[0, -0.4, 0]} suggested={suggestedTerminals?.includes("resistor_b") ?? false} />
+      {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0, 0.2]} />}
     </group>
   );
 }
@@ -148,6 +202,9 @@ function Resistor() {
 function Bulb({ brightness }: { brightness: number }) {
   const lightRef = useRef<THREE.PointLight>(null);
   const filamentRef = useRef<THREE.MeshStandardMaterial>(null);
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
+  const { suggestedTerminals } = useTutorial();
+  const info = COMPONENT_INFO.bulb;
 
   useFrame((_, delta) => {
     // плавный разогрев/остывание — тот же easing-принцип для света и
@@ -168,7 +225,7 @@ function Bulb({ brightness }: { brightness: number }) {
   });
 
   return (
-    <group position={[0.2, 0.6, 0]}>
+    <group position={[0.2, 0.6, 0]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
       {/* алюминиевый цоколь */}
       <mesh position={[0, -0.32, 0]} castShadow>
         <cylinderGeometry args={[0.12, 0.14, 0.16, 16]} />
@@ -187,14 +244,18 @@ function Bulb({ brightness }: { brightness: number }) {
         <meshStandardMaterial ref={filamentRef} color="#fde047" emissive="#facc15" emissiveIntensity={0} />
       </mesh>
       <pointLight ref={lightRef} color="#fde047" intensity={0} distance={4} decay={2} />
-      <ConnectionPoint id="bulb_a" position={[-0.42, -0.6, 0]} />
-      <ConnectionPoint id="bulb_b" position={[0.42, -0.6, 0]} />
+      <ConnectionPoint id="bulb_a" position={[-0.42, -0.6, 0]} suggested={suggestedTerminals?.includes("bulb_a") ?? false} />
+      <ConnectionPoint id="bulb_b" position={[0.42, -0.6, 0]} suggested={suggestedTerminals?.includes("bulb_b") ?? false} />
+      {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.4, 0]} />}
     </group>
   );
 }
 
 function Switch({ isClosed, onToggle }: { isClosed: boolean; onToggle: () => void }) {
   const leverRef = useRef<THREE.Group>(null);
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
+  const { suggestedTerminals } = useTutorial();
+  const info = COMPONENT_INFO.switch;
 
   useFrame((_, delta) => {
     if (!leverRef.current) return;
@@ -203,7 +264,7 @@ function Switch({ isClosed, onToggle }: { isClosed: boolean; onToggle: () => voi
   });
 
   return (
-    <group position={[1.9, 0.28, 0]}>
+    <group position={[1.9, 0.28, 0]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
       {/* пластиковое основание */}
       <mesh position={[0, -0.08, 0]} castShadow>
         <boxGeometry args={[0.9, 0.08, 0.3]} />
@@ -220,8 +281,9 @@ function Switch({ isClosed, onToggle }: { isClosed: boolean; onToggle: () => voi
           <meshStandardMaterial color="#9ca3af" metalness={0.9} roughness={0.25} />
         </mesh>
       </group>
-      <ConnectionPoint id="switch_a" position={[-0.4, 0, 0]} />
-      <ConnectionPoint id="switch_b" position={[0.4, 0, 0]} />
+      <ConnectionPoint id="switch_a" position={[-0.4, 0, 0]} suggested={suggestedTerminals?.includes("switch_a") ?? false} />
+      <ConnectionPoint id="switch_b" position={[0.4, 0, 0]} suggested={suggestedTerminals?.includes("switch_b") ?? false} />
+      {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.35, 0]} />}
     </group>
   );
 }
@@ -280,21 +342,29 @@ function MeterHousing({
 }
 
 function Ammeter({ currentA }: { currentA: number }) {
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
+  const { suggestedTerminals } = useTutorial();
+  const info = COMPONENT_INFO.ammeter;
   return (
-    <group position={[3.2, 0.28, -0.45]} rotation={[0, Math.PI / 2, 0]}>
+    <group position={[3.2, 0.28, -0.45]} rotation={[0, Math.PI / 2, 0]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
       <MeterHousing position={[0, 0, 0]} label="A" value={currentA} unit="A" testId="ammeter-reading" />
-      <ConnectionPoint id="ammeter_a" position={[0, 0, 0.45]} />
-      <ConnectionPoint id="ammeter_b" position={[0, 0, -0.45]} />
+      <ConnectionPoint id="ammeter_a" position={[0, 0, 0.45]} suggested={suggestedTerminals?.includes("ammeter_a") ?? false} />
+      <ConnectionPoint id="ammeter_b" position={[0, 0, -0.45]} suggested={suggestedTerminals?.includes("ammeter_b") ?? false} />
+      {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.3, 0]} />}
     </group>
   );
 }
 
 function Voltmeter({ voltageV }: { voltageV: number }) {
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
+  const { suggestedTerminals } = useTutorial();
+  const info = COMPONENT_INFO.voltmeter;
   return (
-    <group position={[-1.5, 1.05, 0.9]}>
+    <group position={[-1.5, 1.05, 0.9]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
       <MeterHousing position={[0, 0, 0]} label="V" value={voltageV} unit="V" testId="voltmeter-reading" />
-      <ConnectionPoint id="voltmeter_a" position={[-0.4, 0, 0]} color={BRASS_COLOR} />
-      <ConnectionPoint id="voltmeter_b" position={[0.4, 0, 0]} color={BRASS_COLOR} />
+      <ConnectionPoint id="voltmeter_a" position={[-0.4, 0, 0]} color={BRASS_COLOR} suggested={suggestedTerminals?.includes("voltmeter_a") ?? false} />
+      <ConnectionPoint id="voltmeter_b" position={[0.4, 0, 0]} color={BRASS_COLOR} suggested={suggestedTerminals?.includes("voltmeter_b") ?? false} />
+      {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.3, 0]} />}
     </group>
   );
 }
@@ -341,8 +411,11 @@ function FuseParticles({ active, timeScale, count }: { active: boolean; timeScal
 function Fuse({ isBlown, justBlown, timeScale }: { isBlown: boolean; justBlown: boolean; timeScale: number }) {
   const { preset } = useQuality();
   const particleCount = Math.min(preset.maxParticles, 14);
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
+  const { suggestedTerminals } = useTutorial();
+  const info = COMPONENT_INFO.fuse;
   return (
-    <group position={[1.4, 0.28, -1.6]} rotation={[0, 0, Math.PI / 2]}>
+    <group position={[1.4, 0.28, -1.6]} rotation={[0, 0, Math.PI / 2]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
       <mesh castShadow>
         <cylinderGeometry args={[0.09, 0.09, 0.5, 16]} />
         <MeshTransmissionMaterial thickness={0.03} roughness={0.1} transmission={0.85} ior={1.4} color={isBlown ? "#1c1917" : "#e0f2fe"} resolution={64} samples={1} />
@@ -352,8 +425,9 @@ function Fuse({ isBlown, justBlown, timeScale }: { isBlown: boolean; justBlown: 
         <meshStandardMaterial color={isBlown ? "#1c1917" : "#94a3b8"} metalness={0.8} roughness={0.3} />
       </mesh>
       <FuseParticles active={justBlown} timeScale={timeScale} count={particleCount} />
-      <ConnectionPoint id="fuse_a" position={[0, 0.3, 0]} />
-      <ConnectionPoint id="fuse_b" position={[0, -0.3, 0]} />
+      <ConnectionPoint id="fuse_a" position={[0, 0.3, 0]} suggested={suggestedTerminals?.includes("fuse_a") ?? false} />
+      <ConnectionPoint id="fuse_b" position={[0, -0.3, 0]} suggested={suggestedTerminals?.includes("fuse_b") ?? false} />
+      {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0, 0.2]} />}
     </group>
   );
 }
@@ -611,8 +685,10 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
   }
 
   const sceneStateDescription = buildElectricityLabContext(solution, battery?.voltageV ?? 0);
+  const switchClosed = state.components.find((c) => c.id === "switch")?.isClosed ?? true;
 
   return (
+    <TutorialProvider connections={state.connections} switchClosed={switchClosed} isCircuitActive={solution.isCircuitActive}>
     <div className="rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">
       <div className="relative">
         <WireDragProvider onConnect={handleConnect}>
@@ -623,6 +699,13 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
       </div>
 
       <div className="glass-panel mt-4 grid grid-cols-1 gap-4 rounded-2xl p-4 sm:grid-cols-2">
+        <div className="flex items-center gap-2 text-xs text-slate-500 sm:col-span-2" data-testid="terminal-legend">
+          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: BRASS_COLOR }} />
+          Золотые точки — это клеммы, к которым можно подключать провода. Наведи курсор на компонент, чтобы увидеть его
+          название.
+        </div>
+
+        <TutorialPanel />
         <div>
           <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
             Напряжение источника: {(battery?.voltageV ?? 0).toFixed(1)} В
@@ -744,5 +827,6 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
         </div>
       </div>
     </div>
+    </TutorialProvider>
   );
 }
