@@ -7,6 +7,7 @@ import { Html, QuadraticBezierLine, MeshTransmissionMaterial } from "@react-thre
 import { Play, Pause, RotateCcw } from "lucide-react";
 import CanvasShell from "@/components/scenes/CanvasShell";
 import AIAssistantChat from "@/components/ai/AIAssistantChat";
+import TaskPanel from "@/components/tasks/TaskPanel";
 import {
   ExperimentStateProvider,
   useExperimentState,
@@ -563,6 +564,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
   const mountedAtRef = useRef(Date.now());
 
   const battery = state.components.find((c) => c.id === "battery");
+  const resistor = state.components.find((c) => c.id === "resistor");
   const solution = useMemo(() => solveCircuit(state.components, state.connections), [state.components, state.connections]);
 
   function handleConnect(fromId: string, toId: string) {
@@ -573,6 +575,11 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
   function handleVoltageChange(value: number) {
     updateComponent("battery", { voltageV: value });
     logEvent({ type: "param_changed", componentId: "battery", field: "voltageV", value });
+  }
+
+  function handleResistanceChange(value: number) {
+    updateComponent("resistor", { resistanceOhm: value });
+    logEvent({ type: "param_changed", componentId: "resistor", field: "resistanceOhm", value });
   }
 
   function handleReset() {
@@ -628,6 +635,22 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
             value={battery?.voltageV ?? 12}
             onChange={(e) => handleVoltageChange(Number(e.target.value))}
             data-testid="voltage-slider"
+            className="w-full accent-neon-violet"
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+            Сопротивление резистора: {(resistor?.resistanceOhm ?? 0).toFixed(1)} Ом
+          </label>
+          <input
+            type="range"
+            min={1}
+            max={40}
+            step={0.5}
+            value={resistor?.resistanceOhm ?? 4}
+            onChange={(e) => handleResistanceChange(Number(e.target.value))}
+            data-testid="resistance-slider"
             className="w-full accent-neon-violet"
           />
         </div>
@@ -698,6 +721,10 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
               контур).
             </p>
           )}
+        </div>
+
+        <div className="sm:col-span-2">
+          <TaskPanel components={state.components} connections={state.connections} solution={solution} />
         </div>
 
         {error && <p className="text-sm text-red-400 sm:col-span-2">{error}</p>}
