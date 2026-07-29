@@ -55,3 +55,86 @@ EARTH_LAYERS: dict[LayerKey, EarthLayer] = {
 def get_layer_info(layer: str) -> EarthLayer | None:
     """Справочная информация о слое Земли или None, если слой неизвестен."""
     return EARTH_LAYERS.get(layer)
+
+
+@dataclass(frozen=True)
+class ContinentInfo:
+    name: str
+    area_million_km2: float
+    population_millions: int
+    fact: str
+
+
+CONTINENTS: dict[str, ContinentInfo] = {
+    "africa": ContinentInfo(
+        name="Африка",
+        area_million_km2=30.4,
+        population_millions=1460,
+        fact="Самый жаркий континент; здесь протекает Нил — самая длинная река в мире.",
+    ),
+    "asia": ContinentInfo(
+        name="Азия",
+        area_million_km2=44.6,
+        population_millions=4700,
+        fact="Самый большой и населенный континент; здесь находится Эверест — высочайшая точка Земли.",
+    ),
+    "north_america": ContinentInfo(
+        name="Северная Америка",
+        area_million_km2=24.7,
+        population_millions=600,
+        fact="Простирается от Арктики до тропиков; включает Великие озера — крупнейшую систему пресной воды.",
+    ),
+    "south_america": ContinentInfo(
+        name="Южная Америка",
+        area_million_km2=17.8,
+        population_millions=430,
+        fact="Здесь находится Амазония — крупнейший тропический лес планеты.",
+    ),
+    "europe": ContinentInfo(
+        name="Европа",
+        area_million_km2=10.2,
+        population_millions=750,
+        fact="Самый густонаселенный континент относительно площади; более 40 стран.",
+    ),
+    "oceania": ContinentInfo(
+        name="Океания",
+        area_million_km2=8.5,
+        population_millions=44,
+        fact="Включает Австралию и тысячи островов Тихого океана.",
+    ),
+    "antarctica": ContinentInfo(
+        name="Антарктида",
+        area_million_km2=14.2,
+        population_millions=0,
+        fact="Самый холодный континент; постоянного населения нет — только научные станции.",
+    ),
+}
+
+
+def classify_continent(lat: float, lng: float) -> str | None:
+    """
+    Приблизительная классификация континента по широте/долготе через
+    грубые прямоугольные bounding box'ы — не точные береговые линии
+    (это не GIS-сервис), но достаточно для образовательной 3D-демонстрации.
+    Возвращает None, если точка попадает в океан между границами.
+    """
+    if lat <= -60:
+        return "antarctica"
+    if -50 <= lat <= -10 and 110 <= lng <= 180:
+        return "oceania"
+    if -60 <= lat <= 13 and -82 <= lng <= -34:
+        return "south_america"
+    if 7 <= lat <= 83 and -170 <= lng <= -52:
+        return "north_america"
+    if -35 <= lat <= 37 and -18 <= lng <= 52:
+        return "africa"
+    if 36 <= lat <= 71 and -25 <= lng <= 40:
+        return "europe"
+    if -10 <= lat <= 81 and 40 <= lng <= 180:
+        return "asia"
+    return None
+
+
+def get_continent_info(key: str) -> ContinentInfo | None:
+    """Справочная информация о континенте или None, если ключ неизвестен."""
+    return CONTINENTS.get(key)

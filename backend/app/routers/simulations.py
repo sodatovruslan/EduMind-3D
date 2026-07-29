@@ -14,7 +14,7 @@ from app.schemas.simulation import (
     SimulationCompleteRequest,
     SimulationRead,
 )
-from app.services.geography_engine import get_layer_info
+from app.services.geography_engine import classify_continent, get_continent_info, get_layer_info
 from app.services.grader_service import compute_score
 from app.services.simulation_engine import compute_reaction
 
@@ -80,6 +80,28 @@ async def run_action(
                 "delta_temperature_c": reaction.delta_temperature_c,
                 "precipitate_formed": reaction.precipitate_formed,
                 "precipitate_color": reaction.precipitate_color,
+            },
+        )
+
+    if simulation.module == SimulationModule.GEO3D and action.action_type == "explore_continent":
+        lat = action.payload.get("lat")
+        lng = action.payload.get("lng")
+        if not isinstance(lat, (int, float)) or not isinstance(lng, (int, float)):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нужны координаты lat/lng")
+
+        continent_key = classify_continent(lat, lng)
+        if continent_key is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Здесь океан — суши нет")
+
+        continent = get_continent_info(continent_key)
+        return SimulationActionResponse(
+            action_type=action.action_type,
+            result={
+                "continent": continent_key,
+                "name": continent.name,
+                "area_million_km2": continent.area_million_km2,
+                "population_millions": continent.population_millions,
+                "fact": continent.fact,
             },
         )
 

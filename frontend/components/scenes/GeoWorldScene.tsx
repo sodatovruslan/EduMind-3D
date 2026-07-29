@@ -21,6 +21,14 @@ interface LayerInfo {
   composition: string;
 }
 
+interface ContinentInfo {
+  continent: string;
+  name: string;
+  area_million_km2: number;
+  population_millions: number;
+  fact: string;
+}
+
 // не в масштабе: реальная кора Земли — тонкая пленка (~0.5% радиуса),
 // на 3D-разрезе ее пришлось бы искать под микроскопом. Пропорции слоев
 // намеренно утрированы для наглядности разреза, порядок слоев — верный.
@@ -78,13 +86,16 @@ function PlateBoundaries({ radius }: { radius: number }) {
 interface EarthLayersProps {
   isCutaway: boolean;
   onSelectLayer: (layer: LayerKey) => void;
+  onSelectContinent: (lat: number, lng: number) => void;
 }
+
+type PendingAction = { kind: "layer"; layer: LayerKey } | { kind: "continent"; lat: number; lng: number };
 
 // Разрез сделан через прозрачность (тот же проверенный прием, что и
 // X-Ray в анатомии): внешние слои "призрачно" просвечивают, обнажая
 // более глубокие. Честная геометрическая "крышка" среза (clipping planes
 // + stencil-caps) требует отдельного рендер-прохода — за рамки MVP.
-function EarthLayers({ isCutaway, onSelectLayer }: EarthLayersProps) {
+function EarthLayers({ isCutaway, onSelectLayer, onSelectContinent }: EarthLayersProps) {
   const groupRef = useRef<THREE.Group>(null);
   const cloudsRef = useRef<THREE.Mesh>(null);
   const crustMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
@@ -126,22 +137,45 @@ function EarthLayers({ isCutaway, onSelectLayer }: EarthLayersProps) {
   // пересеченных мешей вдоль луча от ближнего к дальнему (кора → мантия →
   // ...→ внутреннее ядро), а stopPropagation в первом же обработчике (коре)
   // блокировал бы клики по всему, что глубже — даже когда кора почти
-  // прозрачна. Вместо остановки propagation копим "последний" (самый
-  // глубокий) слой в ref и обрабатываем его один раз в microtask —
+  // прозрачна. Вместо остановки propagation копим "последнее" (самое
+  // глубокое) действие в ref и обрабатываем его один раз в microtask —
   // так один физический клик дает ровно один запрос к API.
-  const pendingLayerRef = useRef<LayerKey | null>(null);
+  const pendingActionRef = useRef<PendingAction | null>(null);
   const pendingScheduledRef = useRef(false);
 
-  function handleClick(e: ThreeEvent<MouseEvent>, layer: LayerKey) {
-    if (layer !== "crust" && !isCutaway) return; // внутренние слои доступны только в разрезе
-    pendingLayerRef.current = layer;
+  function schedulePending(action: PendingAction) {
+    pendingActionRef.current = action;
     if (!pendingScheduledRef.current) {
       pendingScheduledRef.current = true;
       queueMicrotask(() => {
         pendingScheduledRef.current = false;
-        if (pendingLayerRef.current) onSelectLayer(pendingLayerRef.current);
+        const pending = pendingActionRef.current;
+        if (!pending) return;
+        if (pending.kind === "layer") onSelectLayer(pending.layer);
+        else onSelectContinent(pending.lat, pending.lng);
       });
     }
+  }
+
+  function handleClick(e: ThreeEvent<MouseEvent>, layer: LayerKey) {
+    if (layer !== "crust" && !isCutaway) return; // внутренние слои доступны только в разрезе
+
+    if (layer === "crust" && !isCutaway) {
+      // вне разреза клик по поверхности — это исследование континента
+      // (не самой коры): переводим точку клика из мировых координат в
+      // локальные координаты вращающейся группы, чтобы widget не зависел
+      // от текущего угла вращения глобуса
+      const local = groupRef.current ? groupRef.current.worldToLocal(e.point.clone()) : e.point.clone();
+      const v = local.normalize();
+      const lat = Math.asin(v.y) * (180 / Math.PI);
+      let phi = Math.atan2(v.z, -v.x);
+      if (phi < 0) phi += Math.PI * 2;
+      const lng = (phi / (Math.PI * 2)) * 360 - 180;
+      schedulePending({ kind: "continent", lat, lng });
+      return;
+    }
+
+    schedulePending({ kind: "layer", layer });
   }
 
   return (
@@ -228,6 +262,7 @@ interface GeoWorldSceneProps {
 export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
   const [isCutaway, setIsCutaway] = useState(false);
   const [selectedLayer, setSelectedLayer] = useState<LayerInfo | null>(null);
+  const [selectedContinent, setSelectedContinent] = useState<ContinentInfo | null>(null);
   const [isLoadingLayer, setIsLoadingLayer] = useState(false);
   const [actionsLog, setActionsLog] = useState<Record<string, unknown>[]>([]);
   const [completionScore, setCompletionScore] = useState<number | null>(null);
@@ -243,9 +278,28 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
         body: JSON.stringify({ action_type: "explore_layer", payload: { layer } }),
       });
       setSelectedLayer(response.result);
+      setSelectedContinent(null);
       setActionsLog((prev) => [...prev, { action_type: "explore_layer", layer }]);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Не удалось получить информацию о слое");
+    } finally {
+      setIsLoadingLayer(false);
+    }
+  }
+
+  async function handleSelectContinent(lat: number, lng: number) {
+    setError(null);
+    setIsLoadingLayer(true);
+    try {
+      const response = await apiFetch<{ result: ContinentInfo }>(`/api/simulations/${simulation.id}/action`, {
+        method: "POST",
+        body: JSON.stringify({ action_type: "explore_continent", payload: { lat, lng } }),
+      });
+      setSelectedContinent(response.result);
+      setSelectedLayer(null);
+      setActionsLog((prev) => [...prev, { action_type: "explore_continent", lat, lng }]);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Здесь океан — попробуй кликнуть по суше");
     } finally {
       setIsLoadingLayer(false);
     }
@@ -269,7 +323,9 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
 
   const sceneStateDescription = `Ученик изучает внутреннее строение Земли. Разрез слоев: ${
     isCutaway ? "включен" : "выключен"
-  }. ${selectedLayer ? `Выбранный слой: ${selectedLayer.name}.` : "Слой пока не выбран."}`;
+  }. ${selectedLayer ? `Выбранный слой: ${selectedLayer.name}.` : ""}${
+    selectedContinent ? `Выбранный континент: ${selectedContinent.name}.` : ""
+  }${!selectedLayer && !selectedContinent ? "Ничего пока не выбрано." : ""}`;
 
   return (
     <div className="rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">
@@ -283,7 +339,7 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
           bloomIntensity={0.7}
         >
           <Stars radius={50} depth={30} count={1200} factor={2.5} fade speed={0.4} />
-          <EarthLayers isCutaway={isCutaway} onSelectLayer={handleSelectLayer} />
+          <EarthLayers isCutaway={isCutaway} onSelectLayer={handleSelectLayer} onSelectContinent={handleSelectContinent} />
         </CanvasShell>
 
         <AIAssistantChat simulationId={simulation.id} sceneStateDescription={sceneStateDescription} />
@@ -301,8 +357,18 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
         </div>
 
         <div className="rim-light rounded-xl border border-glass-border bg-surface-container-lowest/60 p-3 text-sm text-slate-300 sm:col-span-2">
-          {isLoadingLayer && <p className="text-slate-400">Загружаем данные о слое...</p>}
-          {!isLoadingLayer && selectedLayer && (
+          {isLoadingLayer && <p className="text-slate-400">Загружаем данные...</p>}
+          {!isLoadingLayer && selectedContinent && (
+            <>
+              <p className="font-headline font-semibold text-slate-100">{selectedContinent.name}</p>
+              <p className="text-slate-400">
+                Площадь: {selectedContinent.area_million_km2} млн км² · Население:{" "}
+                {selectedContinent.population_millions} млн чел.
+              </p>
+              <p className="text-slate-400">{selectedContinent.fact}</p>
+            </>
+          )}
+          {!isLoadingLayer && !selectedContinent && selectedLayer && (
             <>
               <p className="font-headline font-semibold text-slate-100">{selectedLayer.name}</p>
               <p className="text-slate-400">
@@ -313,10 +379,10 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
               </p>
             </>
           )}
-          {!isLoadingLayer && !selectedLayer && (
+          {!isLoadingLayer && !selectedContinent && !selectedLayer && (
             <p className="text-slate-400">
-              Кликни по поверхности Земли, чтобы узнать о коре, а затем включи разрез слоев — так откроется доступ к
-              мантии и ядру.
+              Кликни по поверхности Земли, чтобы узнать о континенте, а затем включи разрез слоев — так откроется
+              доступ к мантии и ядру.
             </p>
           )}
         </div>
