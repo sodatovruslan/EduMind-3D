@@ -1,8 +1,12 @@
 """
 Разовый сид-скрипт для dev-БД: создает по одной демонстрационной
 симуляции на каждый модуль, чтобы было что открыть на дашборде.
-Запуск: .venv/Scripts/python.exe seed_simulations.py
+Запуск: python seed_simulations.py
 """
+import asyncio
+
+from sqlalchemy import select
+
 from app.database import SessionLocal
 from app.models.simulation import Simulation, SimulationModule
 
@@ -21,24 +25,28 @@ SEED_SIMULATIONS = [
         "config": {"expected_steps": ["explore_layer", "explore_layer", "explore_layer", "explore_layer"]},
         "difficulty": 1,
     },
+    {
+        "title": "Собери электрическую цепь",
+        "module": SimulationModule.ELECTRICITY_LAB,
+        "subject": "Физика",
+        "config": {"expected_steps": ["connect_circuit", "close_switch", "read_meters"]},
+        "difficulty": 1,
+    },
 ]
 
 
-def main() -> None:
-    db = SessionLocal()
-    try:
-        existing_titles = {s.title for s in db.query(Simulation).all()}
+async def main() -> None:
+    async with SessionLocal() as db:
+        existing_titles = {row[0] for row in (await db.execute(select(Simulation.title))).all()}
         created = 0
         for seed in SEED_SIMULATIONS:
             if seed["title"] in existing_titles:
                 continue
             db.add(Simulation(**seed))
             created += 1
-        db.commit()
+        await db.commit()
         print(f"Создано симуляций: {created}")
-    finally:
-        db.close()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

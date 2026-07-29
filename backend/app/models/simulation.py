@@ -11,6 +11,7 @@ from app.database import Base
 class SimulationModule(str, enum.Enum):
     SIMLAB = "simlab"
     GEO3D = "geo3d"
+    ELECTRICITY_LAB = "electricity_lab"
 
 
 class Simulation(Base):
