@@ -1,3 +1,5 @@
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,8 +10,15 @@ from app.models.ai_log import AILog
 from app.models.lab_result import LabResult
 from app.models.simulation import Simulation
 from app.models.user import User, UserRole
-from app.schemas.ai import GradeRequest, GradeResponse, HintRequest, HintResponse
-from app.services.ai_service import get_grading_feedback, get_hint
+from app.schemas.ai import (
+    GradeRequest,
+    GradeResponse,
+    HintRequest,
+    HintResponse,
+    TeacherChatRequest,
+    TeacherChatResponse,
+)
+from app.services.ai_service import get_grading_feedback, get_hint, get_teacher_response
 from app.services.grader_service import build_grading_context
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
@@ -75,6 +84,41 @@ async def grade_lab_result(
     await db.commit()
 
     return GradeResponse(score=lab_result.score or 0.0, feedback=feedback_text)
+
+
+@router.post("/teacher", response_model=TeacherChatResponse)
+async def ask_teacher(
+    payload: TeacherChatRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    AI Teacher (Stage 3): в отличие от /hint, принимает не текстовое
+    описание сцены, а уже собранный AI Context Builder JSON-объект
+    (physics/validation/task/xp) — тот же принцип "AI не считает физику
+    сам", просто с более строгой структурой данных и teacher-промптом.
+    """
+    result = await db.execute(select(Simulation).where(Simulation.id == payload.simulation_id))
+    simulation = result.scalar_one_or_none()
+    if simulation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Симуляция не найдена")
+
+    context_json = json.dumps(payload.context, ensure_ascii=False)
+    history_payload = [{"role": m.role, "text": m.text} for m in payload.history]
+    reply_text = await get_teacher_response(context_json, payload.student_message, history_payload)
+
+    db.add(
+        AILog(
+            user_id=current_user.id,
+            simulation_id=simulation.id,
+            prompt=f"{context_json}\n\nВопрос: {payload.student_message}",
+            response=reply_text,
+            log_type="teacher_chat",
+        )
+    )
+    await db.commit()
+
+    return TeacherChatResponse(reply=reply_text)
 
 
 @router.get("/logs/{simulation_id}", response_model=list[dict])

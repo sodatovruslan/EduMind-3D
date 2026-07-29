@@ -6,8 +6,9 @@ import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import { Html, QuadraticBezierLine, MeshTransmissionMaterial } from "@react-three/drei";
 import { Play, Pause, RotateCcw } from "lucide-react";
 import CanvasShell from "@/components/scenes/CanvasShell";
-import AIAssistantChat from "@/components/ai/AIAssistantChat";
+import AITeacherChat from "@/components/ai/AITeacherChat";
 import TaskPanel from "@/components/tasks/TaskPanel";
+import { TaskProgressProvider, useTaskProgress } from "@/components/tasks/TaskProgressProvider";
 import {
   ExperimentStateProvider,
   useExperimentState,
@@ -19,8 +20,8 @@ import TutorialPanel from "@/components/tutorial/TutorialPanel";
 import { COMPONENT_INFO } from "@/lib/component-info";
 import { useSimulationClock } from "@/lib/use-simulation-clock";
 import { useQuality, type QualityLevel } from "@/lib/quality-context";
-import { buildElectricityLabContext } from "@/lib/ai-context-adapter";
-import { solveCircuit, bulbBrightness, type CircuitComponent } from "@/lib/circuit-engine";
+import { buildAIContext } from "@/lib/ai-context-builder";
+import { solveCircuit, bulbBrightness, type CircuitComponent, type CircuitSolution, type Connection } from "@/lib/circuit-engine";
 import { apiFetch, ApiError } from "@/lib/api";
 import { playConnect, playDisconnect, playFuseBlow, playPowerOn, playSwitchClick } from "@/lib/sound-effects";
 import type { Simulation } from "@/lib/types";
@@ -629,6 +630,29 @@ export default function ElectricityLabScene({ simulation }: ElectricityLabSceneP
   );
 }
 
+// AI Teacher (Stage 3): собирает LabAIContext из уже посчитанного состояния
+// (Task Validator через useTaskProgress + Physics/Circuit Engine через
+// components/connections/solution) и передает его в чат — рендерится
+// внутри TaskProgressProvider, поэтому может звать useTaskProgress()
+function TeacherChatPanel({
+  simulationId,
+  components,
+  connections,
+  solution,
+}: {
+  simulationId: string;
+  components: CircuitComponent[];
+  connections: Connection[];
+  solution: CircuitSolution;
+}) {
+  const { task, status, totalXp, result } = useTaskProgress();
+  const context = useMemo(
+    () => buildAIContext({ task, taskStatus: status, xp: totalXp, components, connections, solution, validation: result }),
+    [task, status, totalXp, components, connections, solution, result]
+  );
+  return <AITeacherChat simulationId={simulationId} context={context} />;
+}
+
 function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
   const { state, addConnection, updateComponent, resetExperiment, actionsLog, logEvent } = useExperimentState();
   const { quality, setQuality } = useQuality();
@@ -684,18 +708,17 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
     }
   }
 
-  const sceneStateDescription = buildElectricityLabContext(solution, battery?.voltageV ?? 0);
   const switchClosed = state.components.find((c) => c.id === "switch")?.isClosed ?? true;
 
   return (
     <TutorialProvider connections={state.connections} switchClosed={switchClosed} isCircuitActive={solution.isCircuitActive}>
-    <div className="rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">
+    <TaskProgressProvider components={state.components} connections={state.connections} solution={solution}>
+    <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+    <div className="flex-1 rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">
       <div className="relative">
         <WireDragProvider onConnect={handleConnect}>
           <ElectricityCanvas quality={quality} />
         </WireDragProvider>
-
-        <AIAssistantChat simulationId={simulation.id} sceneStateDescription={sceneStateDescription} />
       </div>
 
       <div className="glass-panel mt-4 grid grid-cols-1 gap-4 rounded-2xl p-4 sm:grid-cols-2">
@@ -807,7 +830,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
         </div>
 
         <div className="sm:col-span-2">
-          <TaskPanel components={state.components} connections={state.connections} solution={solution} />
+          <TaskPanel />
         </div>
 
         {error && <p className="text-sm text-red-400 sm:col-span-2">{error}</p>}
@@ -827,6 +850,15 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
         </div>
       </div>
     </div>
+
+    <TeacherChatPanel
+      simulationId={simulation.id}
+      components={state.components}
+      connections={state.connections}
+      solution={solution}
+    />
+    </div>
+    </TaskProgressProvider>
     </TutorialProvider>
   );
 }

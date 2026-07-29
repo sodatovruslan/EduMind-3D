@@ -17,3 +17,22 @@ class GradeRequest(BaseModel):
 class GradeResponse(BaseModel):
     score: float
     feedback: str
+
+
+class TeacherChatMessage(BaseModel):
+    role: str  # "user" | "assistant"
+    text: str
+
+
+class TeacherChatRequest(BaseModel):
+    simulation_id: str
+    student_message: str
+    # Уже собранный на фронтенде AI Context Builder объект (Physics Engine /
+    # Circuit Engine / Task Validator state) — единственный источник фактов
+    # о лаборатории, который получает AI Teacher. Backend его не пересчитывает.
+    context: dict
+    history: list[TeacherChatMessage] = []
+
+
+class TeacherChatResponse(BaseModel):
+    reply: str

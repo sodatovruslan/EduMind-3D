@@ -80,7 +80,15 @@ async def test_complete_simulation_creates_lab_result_with_score(client, db_sess
     assert len(my_results.json()) == 1
 
 
-async def test_ai_hint_uses_mock_when_no_api_key_configured(client, db_session):
+async def test_ai_hint_uses_mock_when_no_api_key_configured(client, db_session, monkeypatch):
+    # мок-fallback должен срабатывать именно при отсутствии ключей, вне
+    # зависимости от того, что реально настроено в .env этого окружения
+    # (например, реальный GEMINI_API_KEY для ручной проверки в браузере)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", None)
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", None)
+
     headers = await _register_and_login(client)
     simulation = await _seed_simlab_simulation(db_session)
 

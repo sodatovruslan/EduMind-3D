@@ -1,25 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowRight, CheckCircle2, XCircle } from "lucide-react";
-import type { CircuitComponent, CircuitSolution, Connection } from "@/lib/circuit-engine";
-import { TASKS, TaskStatus, deriveTaskStatus, validateTask } from "@/lib/task-engine";
+import { TaskStatus } from "@/lib/task-engine";
 import { explainError } from "@/lib/error-explanations";
+import { useTaskProgress } from "@/components/tasks/TaskProgressProvider";
 
 /**
- * Interactive Learning System — UI поверх Task Validator. Сама эта панель
- * ничего не проверяет и не считает: на каждое изменение схемы (components/
- * connections/solution, уже посчитанные Physics Engine выше по дереву)
- * просто зовет validateTask и отображает реальный результат. Никакой логики
- * "притворного" прохождения тут нет — completed/errors целиком приходят
- * из task-engine.ts.
+ * Interactive Learning System — UI поверх Task Validator. Состояние
+ * прогресса (текущее задание/XP) владеет TaskProgressProvider — эта
+ * панель только отображает его и вызывает advance(). Сама панель ничего
+ * не проверяет и не считает: completed/errors целиком приходят из
+ * task-engine.ts через провайдер.
  */
-interface TaskPanelProps {
-  components: CircuitComponent[];
-  connections: Connection[];
-  solution: CircuitSolution;
-}
-
 const STATUS_LABEL: Record<TaskStatus, string> = {
   [TaskStatus.NOT_STARTED]: "Не начато",
   [TaskStatus.IN_PROGRESS]: "В процессе",
@@ -36,34 +28,14 @@ const STATUS_COLOR: Record<TaskStatus, string> = {
 
 const DIFFICULTY_LABEL: Record<string, string> = { easy: "Легко", medium: "Средне", hard: "Сложно" };
 
-export default function TaskPanel({ components, connections, solution }: TaskPanelProps) {
-  const [taskIndex, setTaskIndex] = useState(0);
-  const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
-  const [totalXp, setTotalXp] = useState(0);
-
-  const task = TASKS[taskIndex];
-  const hasStarted = connections.length > 0;
-
-  const result = useMemo(
-    () => validateTask(task, { components, connections, solution }),
-    [task, components, connections, solution]
-  );
-  const status = deriveTaskStatus(result, hasStarted);
-
-  useEffect(() => {
-    if (status === TaskStatus.COMPLETED && !completedIds.has(task.id)) {
-      setCompletedIds((prev) => new Set(prev).add(task.id));
-      setTotalXp((prev) => prev + task.xpReward);
-    }
-  }, [status, task, completedIds]);
-
-  const isLastTask = taskIndex === TASKS.length - 1;
+export default function TaskPanel() {
+  const { taskIndex, task, totalXp, status, result, isLastTask, advance } = useTaskProgress();
 
   return (
     <div className="glass-panel rounded-2xl p-4" data-testid="task-panel">
       <div className="mb-3 flex items-center justify-between">
         <div className="font-mono text-xs uppercase tracking-widest text-slate-400">
-          Задание {taskIndex + 1} / {TASKS.length} · {DIFFICULTY_LABEL[task.difficulty]}
+          Задание {taskIndex + 1} / 6 · {DIFFICULTY_LABEL[task.difficulty]}
         </div>
         <div className="font-mono text-xs text-neon-violet" data-testid="task-xp">
           XP: {totalXp}
@@ -111,7 +83,7 @@ export default function TaskPanel({ components, connections, solution }: TaskPan
 
       <div className="mt-3 flex justify-end">
         <button
-          onClick={() => setTaskIndex((i) => Math.min(i + 1, TASKS.length - 1))}
+          onClick={advance}
           disabled={status !== TaskStatus.COMPLETED || isLastTask}
           data-testid="task-next-button"
           className="flex items-center gap-2 rounded-full border border-glass-border px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/5 disabled:opacity-40"
