@@ -15,17 +15,10 @@ SEED_SIMULATIONS = [
         "difficulty": 1,
     },
     {
-        "title": "Строение тела человека",
-        "module": SimulationModule.BIOBODY,
-        "subject": "Биология",
-        "config": {"expected_steps": []},
-        "difficulty": 1,
-    },
-    {
-        "title": "Площадь и объем куба",
+        "title": "Строение Земли: кора, мантия, ядро",
         "module": SimulationModule.GEO3D,
-        "subject": "Геометрия",
-        "config": {"expected_steps": ["compute_metrics"]},
+        "subject": "География и геология",
+        "config": {"expected_steps": ["explore_layer", "explore_layer", "explore_layer", "explore_layer"]},
         "difficulty": 1,
     },
 ]
