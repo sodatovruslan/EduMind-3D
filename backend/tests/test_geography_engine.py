@@ -1,4 +1,9 @@
-from app.services.geography_engine import classify_continent, get_continent_info, get_layer_info
+from app.services.geography_engine import (
+    classify_continent,
+    evaluate_climate_scenario,
+    get_continent_info,
+    get_layer_info,
+)
 
 
 def test_known_layer_returns_info():
@@ -32,3 +37,14 @@ def test_classify_continent_open_ocean_returns_none():
 def test_all_seven_continents_are_defined():
     for key in ("africa", "asia", "north_america", "south_america", "europe", "oceania", "antarctica"):
         assert get_continent_info(key) is not None
+
+
+def test_climate_scenario_below_threshold_returns_none():
+    assert evaluate_climate_scenario(1.5) is None
+
+
+def test_climate_scenario_above_threshold_triggers_sel():
+    event = evaluate_climate_scenario(3.5)
+    assert event is not None
+    assert event.phenomenon == "Сель"
+    assert "Памир" in event.location

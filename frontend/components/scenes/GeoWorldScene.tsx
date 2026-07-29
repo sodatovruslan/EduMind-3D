@@ -37,6 +37,26 @@ const OUTER_CORE_R = 0.58;
 const MANTLE_R = 0.9;
 const CRUST_R = 1.0;
 
+// порог аномалии потепления, при котором на бэкенде срабатывает сценарий
+// схода селя — держим в синхроне с CLIMATE_THRESHOLD_C в geography_engine.py,
+// чтобы визуальное таяние снега совпадало по темпу со срабатыванием сценария
+const CLIMATE_THRESHOLD_C = 3.0;
+const PAMIR_LAT = 38.5;
+const PAMIR_LNG = 72.0;
+
+// координаты клика (lat/lng) переводятся в 3D-точку на поверхности сферы
+// той же формулой, что и обратное преобразование клика в EarthLayers —
+// см. handleClick ниже
+function latLngToVector3(latDeg: number, lngDeg: number, radius: number): THREE.Vector3 {
+  const latRad = (latDeg * Math.PI) / 180;
+  const phiPositive = ((lngDeg + 180) / 360) * Math.PI * 2;
+  const cosLat = Math.cos(latRad);
+  const y = Math.sin(latRad) * radius;
+  const x = -Math.cos(phiPositive) * cosLat * radius;
+  const z = Math.sin(phiPositive) * cosLat * radius;
+  return new THREE.Vector3(x, y, z);
+}
+
 // реальные спутниковые текстуры (NASA Blue Marble, обработка three.js
 // examples, public domain) — сохранены локально в public/textures,
 // поэтому сцена не зависит от интернета в момент показа урока
@@ -83,10 +103,111 @@ function PlateBoundaries({ radius }: { radius: number }) {
   );
 }
 
+// полярная шапка льда — плавно уменьшается по мере роста аномалии
+// температуры (0 = нынешний климат, 1 = порог схода селя)
+function PolarIceCap({ position, meltProgress }: { position: THREE.Vector3; meltProgress: number }) {
+  const meshRef = useRef<THREE.Mesh>(null);
+
+  useFrame((_, delta) => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    const targetScale = THREE.MathUtils.lerp(1, 0.35, meltProgress);
+    const lerpFactor = Math.min(1, delta * 2);
+    mesh.scale.setScalar(THREE.MathUtils.lerp(mesh.scale.x, targetScale, lerpFactor));
+  });
+
+  return (
+    <mesh ref={meshRef} position={position}>
+      <sphereGeometry args={[0.16, 24, 24]} />
+      <meshStandardMaterial color="#f0f9ff" roughness={0.5} transparent opacity={0.9} />
+    </mesh>
+  );
+}
+
+interface MountainMarkerProps {
+  meltProgress: number;
+  isSelTriggered: boolean;
+}
+
+const MUD_PARTICLE_COUNT = 14;
+
+// маркер горного массива (Памир) со снежной шапкой и частицами селя —
+// снег тает по мере роста meltProgress, сель течет вниз по локальной оси
+// маркера (group ориентирован по нормали к поверхности сферы, поэтому
+// "вниз по склону" — это просто локальное направление, а не гео-точный
+// маршрут потока)
+function MountainMarker({ meltProgress, isSelTriggered }: MountainMarkerProps) {
+  const position = useMemo(() => latLngToVector3(PAMIR_LAT, PAMIR_LNG, CRUST_R * 1.01), []);
+  const quaternion = useMemo(() => {
+    const up = position.clone().normalize();
+    return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), up);
+  }, [position]);
+
+  const snowMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
+  const mudRef = useRef<THREE.InstancedMesh>(null);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+  const mudParticles = useMemo(
+    () =>
+      Array.from({ length: MUD_PARTICLE_COUNT }, () => ({
+        t: Math.random(),
+        speed: 0.4 + Math.random() * 0.3,
+        side: (Math.random() - 0.5) * 0.06,
+      })),
+    []
+  );
+
+  useFrame((_, delta) => {
+    if (snowMaterialRef.current) {
+      const targetOpacity = 1 - meltProgress;
+      snowMaterialRef.current.opacity = THREE.MathUtils.lerp(
+        snowMaterialRef.current.opacity,
+        targetOpacity,
+        Math.min(1, delta * 2)
+      );
+    }
+
+    const mesh = mudRef.current;
+    if (!mesh) return;
+    mudParticles.forEach((particle, i) => {
+      if (isSelTriggered) {
+        particle.t += delta * particle.speed;
+        if (particle.t > 1) particle.t = 0;
+      }
+      const localY = 0.08 - particle.t * 0.5;
+      const localZ = particle.t * 0.35;
+      const scale = isSelTriggered ? 0.03 * (1 - particle.t * 0.4) : 0.0001;
+      dummy.position.set(particle.side, localY, localZ);
+      dummy.scale.setScalar(scale);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+  });
+
+  return (
+    <group position={position} quaternion={quaternion}>
+      <mesh position={[0, 0.05, 0]}>
+        <coneGeometry args={[0.05, 0.1, 8]} />
+        <meshStandardMaterial color="#78716c" roughness={0.9} />
+      </mesh>
+      <mesh position={[0, 0.09, 0]}>
+        <coneGeometry args={[0.025, 0.035, 8]} />
+        <meshStandardMaterial ref={snowMaterialRef} color="#f8fafc" roughness={0.3} transparent opacity={1} />
+      </mesh>
+      <instancedMesh ref={mudRef} args={[undefined, undefined, MUD_PARTICLE_COUNT]}>
+        <sphereGeometry args={[1, 6, 6]} />
+        <meshStandardMaterial color="#78350f" roughness={0.8} />
+      </instancedMesh>
+    </group>
+  );
+}
+
 interface EarthLayersProps {
   isCutaway: boolean;
   onSelectLayer: (layer: LayerKey) => void;
   onSelectContinent: (lat: number, lng: number) => void;
+  meltProgress: number;
+  isSelTriggered: boolean;
 }
 
 type PendingAction = { kind: "layer"; layer: LayerKey } | { kind: "continent"; lat: number; lng: number };
@@ -95,7 +216,10 @@ type PendingAction = { kind: "layer"; layer: LayerKey } | { kind: "continent"; l
 // X-Ray в анатомии): внешние слои "призрачно" просвечивают, обнажая
 // более глубокие. Честная геометрическая "крышка" среза (clipping planes
 // + stencil-caps) требует отдельного рендер-прохода — за рамки MVP.
-function EarthLayers({ isCutaway, onSelectLayer, onSelectContinent }: EarthLayersProps) {
+const NORTH_POLE = latLngToVector3(90, 0, CRUST_R * 0.95);
+const SOUTH_POLE = latLngToVector3(-90, 0, CRUST_R * 0.95);
+
+function EarthLayers({ isCutaway, onSelectLayer, onSelectContinent, meltProgress, isSelTriggered }: EarthLayersProps) {
   const groupRef = useRef<THREE.Group>(null);
   const cloudsRef = useRef<THREE.Mesh>(null);
   const crustMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
@@ -251,8 +375,19 @@ function EarthLayers({ isCutaway, onSelectLayer, onSelectContinent }: EarthLayer
           metalness={0}
         />
       </mesh>
+
+      <PolarIceCap position={NORTH_POLE} meltProgress={meltProgress} />
+      <PolarIceCap position={SOUTH_POLE} meltProgress={meltProgress} />
+      <MountainMarker meltProgress={meltProgress} isSelTriggered={isSelTriggered} />
     </group>
   );
+}
+
+interface ClimateResult {
+  triggered: boolean;
+  location: string | null;
+  phenomenon: string | null;
+  description: string;
 }
 
 interface GeoWorldSceneProps {
@@ -267,7 +402,10 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
   const [actionsLog, setActionsLog] = useState<Record<string, unknown>[]>([]);
   const [completionScore, setCompletionScore] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [temperatureAnomaly, setTemperatureAnomaly] = useState(0);
+  const [climateResult, setClimateResult] = useState<ClimateResult | null>(null);
   const mountedAtRef = useRef(Date.now());
+  const wasAboveThresholdRef = useRef(false);
 
   async function handleSelectLayer(layer: LayerKey) {
     setError(null);
@@ -305,6 +443,31 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
     }
   }
 
+  async function handleTemperatureChange(value: number) {
+    setTemperatureAnomaly(value);
+    const isAboveThreshold = value >= CLIMATE_THRESHOLD_C;
+
+    if (!isAboveThreshold) {
+      wasAboveThresholdRef.current = false;
+      setClimateResult(null); // "перевзводим" сценарий, если температура снова упала
+      return;
+    }
+
+    if (wasAboveThresholdRef.current) return; // сценарий уже отыгран для текущего превышения порога
+    wasAboveThresholdRef.current = true;
+
+    try {
+      const response = await apiFetch<{ result: ClimateResult }>(`/api/simulations/${simulation.id}/action`, {
+        method: "POST",
+        body: JSON.stringify({ action_type: "trigger_climate_scenario", payload: { temperature_anomaly: value } }),
+      });
+      setClimateResult(response.result);
+      setActionsLog((prev) => [...prev, { action_type: "trigger_climate_scenario", temperature_anomaly: value }]);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Не удалось рассчитать климатический сценарий");
+    }
+  }
+
   async function handleComplete() {
     setError(null);
     try {
@@ -325,7 +488,9 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
     isCutaway ? "включен" : "выключен"
   }. ${selectedLayer ? `Выбранный слой: ${selectedLayer.name}.` : ""}${
     selectedContinent ? `Выбранный континент: ${selectedContinent.name}.` : ""
-  }${!selectedLayer && !selectedContinent ? "Ничего пока не выбрано." : ""}`;
+  }${!selectedLayer && !selectedContinent ? "Ничего пока не выбрано." : ""} Аномалия глобальной температуры: +${temperatureAnomaly}°C.${
+    climateResult?.triggered ? ` Произошло природное явление: ${climateResult.phenomenon} в регионе ${climateResult.location}.` : ""
+  }`;
 
   return (
     <div className="rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">
@@ -339,7 +504,13 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
           bloomIntensity={0.7}
         >
           <Stars radius={50} depth={30} count={1200} factor={2.5} fade speed={0.4} />
-          <EarthLayers isCutaway={isCutaway} onSelectLayer={handleSelectLayer} onSelectContinent={handleSelectContinent} />
+          <EarthLayers
+            isCutaway={isCutaway}
+            onSelectLayer={handleSelectLayer}
+            onSelectContinent={handleSelectContinent}
+            meltProgress={Math.min(1, temperatureAnomaly / CLIMATE_THRESHOLD_C)}
+            isSelTriggered={Boolean(climateResult?.triggered)}
+          />
         </CanvasShell>
 
         <AIAssistantChat simulationId={simulation.id} sceneStateDescription={sceneStateDescription} />
@@ -355,6 +526,40 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
             {isCutaway ? "Скрыть разрез слоев" : "Показать разрез слоев"}
           </button>
         </div>
+
+        <div className="sm:col-span-2">
+          <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+            Глобальное потепление: +{temperatureAnomaly.toFixed(1)}°C
+          </label>
+          <input
+            type="range"
+            min={0}
+            max={5}
+            step={0.5}
+            value={temperatureAnomaly}
+            onChange={(e) => handleTemperatureChange(Number(e.target.value))}
+            className="w-full accent-neon-cyan"
+          />
+        </div>
+
+        {climateResult && (
+          <div
+            className={`rim-light rounded-xl border p-3 text-sm sm:col-span-2 ${
+              climateResult.triggered
+                ? "border-amber-500/40 bg-amber-950/30 text-amber-200"
+                : "border-glass-border bg-surface-container-lowest/60 text-slate-300"
+            }`}
+          >
+            {climateResult.triggered && (
+              <p className="font-headline font-semibold">
+                ⚠ {climateResult.phenomenon} — {climateResult.location}
+              </p>
+            )}
+            <p className={climateResult.triggered ? "text-amber-300/90" : "text-slate-400"}>
+              {climateResult.description}
+            </p>
+          </div>
+        )}
 
         <div className="rim-light rounded-xl border border-glass-border bg-surface-container-lowest/60 p-3 text-sm text-slate-300 sm:col-span-2">
           {isLoadingLayer && <p className="text-slate-400">Загружаем данные...</p>}

@@ -14,7 +14,12 @@ from app.schemas.simulation import (
     SimulationCompleteRequest,
     SimulationRead,
 )
-from app.services.geography_engine import classify_continent, get_continent_info, get_layer_info
+from app.services.geography_engine import (
+    classify_continent,
+    evaluate_climate_scenario,
+    get_continent_info,
+    get_layer_info,
+)
 from app.services.grader_service import compute_score
 from app.services.simulation_engine import compute_reaction
 
@@ -102,6 +107,26 @@ async def run_action(
                 "area_million_km2": continent.area_million_km2,
                 "population_millions": continent.population_millions,
                 "fact": continent.fact,
+            },
+        )
+
+    if simulation.module == SimulationModule.GEO3D and action.action_type == "trigger_climate_scenario":
+        anomaly = action.payload.get("temperature_anomaly")
+        if not isinstance(anomaly, (int, float)):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нужно значение temperature_anomaly")
+
+        event = evaluate_climate_scenario(anomaly)
+        return SimulationActionResponse(
+            action_type=action.action_type,
+            result={
+                "triggered": event is not None,
+                "location": event.location if event else None,
+                "phenomenon": event.phenomenon if event else None,
+                "description": (
+                    event.description
+                    if event
+                    else "Пока стабильно — повышай температуру, чтобы увидеть последствия таяния ледников."
+                ),
             },
         )
 

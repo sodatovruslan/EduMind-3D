@@ -138,3 +138,35 @@ def classify_continent(lat: float, lng: float) -> str | None:
 def get_continent_info(key: str) -> ContinentInfo | None:
     """Справочная информация о континенте или None, если ключ неизвестен."""
     return CONTINENTS.get(key)
+
+
+# порог аномалии глобальной температуры (°C сверх нормы), после которого
+# в сценарии считаем, что таяние горных ледников вызывает сход селя —
+# упрощенная образовательная модель, не настоящий гидрологический расчет
+CLIMATE_THRESHOLD_C = 3.0
+
+
+@dataclass(frozen=True)
+class ClimateEvent:
+    location: str
+    phenomenon: str
+    description: str
+
+
+def evaluate_climate_scenario(temperature_anomaly: float) -> ClimateEvent | None:
+    """
+    Сценарий "таяние ледников -> сель": при аномалии потепления выше
+    CLIMATE_THRESHOLD_C возвращает событие схода селя в горах Памира
+    (реальная природная угроза для Центральной Азии), иначе None.
+    """
+    if temperature_anomaly < CLIMATE_THRESHOLD_C:
+        return None
+    return ClimateEvent(
+        location="Памир, Таджикистан",
+        phenomenon="Сель",
+        description=(
+            "Из-за ускоренного таяния горных ледников вода переполнила русла рек и "
+            "увлекла за собой камни и грунт — сошёл сель. Это одна из главных природных "
+            "угроз в горных регионах Центральной Азии при потеплении климата."
+        ),
+    )
