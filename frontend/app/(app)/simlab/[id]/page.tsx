@@ -13,12 +13,12 @@ export default function SimLabPage({ params }: { params: { id: string } }) {
   );
 
   if (isLoading) return <Loader />;
-  if (!simulation) return <p className="text-sm text-gray-500">Симуляция не найдена.</p>;
+  if (!simulation) return <p className="text-sm text-slate-400">Симуляция не найдена.</p>;
 
   return (
     <div>
-      <h1 className="mb-1 text-2xl font-bold text-gray-900">{simulation.title}</h1>
-      <p className="mb-6 text-sm text-gray-500">{simulation.subject}</p>
+      <h1 className="mb-1 font-headline text-2xl font-bold text-slate-100">{simulation.title}</h1>
+      <p className="mb-6 font-mono text-sm uppercase tracking-widest text-brand">{simulation.subject}</p>
 
       <SimLabScene simulation={simulation} />
     </div>

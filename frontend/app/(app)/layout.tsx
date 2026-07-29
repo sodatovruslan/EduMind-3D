@@ -5,12 +5,10 @@ import Sidebar from "@/components/ui/Sidebar";
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <ProtectedRoute>
-      <div className="flex min-h-screen flex-col">
+      <div className="min-h-screen bg-surface-deep">
+        <Sidebar />
         <Navbar />
-        <div className="flex flex-1">
-          <Sidebar />
-          <main className="flex-1 p-6">{children}</main>
-        </div>
+        <main className="ml-64 min-h-screen p-8 pt-24">{children}</main>
       </div>
     </ProtectedRoute>
   );

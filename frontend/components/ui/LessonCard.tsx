@@ -1,17 +1,26 @@
 import Link from "next/link";
-import { FlaskConical, Dna, Shapes } from "lucide-react";
+import { FlaskConical, Globe } from "lucide-react";
 import type { Simulation } from "@/lib/types";
 
 const MODULE_ICON = {
   simlab: FlaskConical,
-  biobody: Dna,
-  geo3d: Shapes,
+  geo3d: Globe,
 } as const;
 
 const MODULE_LABEL = {
   simlab: "SimLab 3D",
-  biobody: "BioBody 3D",
-  geo3d: "Geo3D",
+  geo3d: "GeoWorld",
+} as const;
+
+// у каждого модуля свой neon-акцент: SimLab — индиго, GeoWorld — циан
+const MODULE_ICON_COLOR = {
+  simlab: "text-brand",
+  geo3d: "text-neon-cyan",
+} as const;
+
+const MODULE_BORDER_HOVER = {
+  simlab: "border-brand/40 hover:border-brand/60",
+  geo3d: "border-neon-cyan/40 hover:border-neon-cyan/60",
 } as const;
 
 // карточка урока для дашборда — рендерим на каждую симуляцию из списка
@@ -21,17 +30,17 @@ export default function LessonCard({ simulation }: { simulation: Simulation }) {
   return (
     <Link
       href={`/${simulation.module}/${simulation.id}`}
-      className="block rounded-lg border border-gray-200 bg-white p-4 shadow-sm transition hover:shadow-md"
+      className={`glass-panel block rounded-2xl border p-6 transition-all duration-300 hover:-translate-y-1 ${MODULE_BORDER_HOVER[simulation.module]}`}
     >
-      <div className="mb-3 flex items-center gap-2 text-brand">
+      <div className={`mb-3 flex items-center gap-2 ${MODULE_ICON_COLOR[simulation.module]}`}>
         <Icon size={20} />
-        <span className="text-xs font-semibold uppercase tracking-wide">
+        <span className="font-mono text-xs font-semibold uppercase tracking-widest">
           {MODULE_LABEL[simulation.module]}
         </span>
       </div>
-      <h3 className="font-semibold text-gray-900">{simulation.title}</h3>
-      <p className="mt-1 text-sm text-gray-500">{simulation.subject}</p>
-      <div className="mt-3 text-xs text-gray-400">Сложность: {simulation.difficulty}/5</div>
+      <h3 className="font-headline font-semibold text-slate-100">{simulation.title}</h3>
+      <p className="mt-1 text-sm text-slate-400">{simulation.subject}</p>
+      <div className="mt-3 font-mono text-xs text-slate-500">Сложность: {simulation.difficulty}/5</div>
     </Link>
   );
 }

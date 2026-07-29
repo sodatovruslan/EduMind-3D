@@ -38,55 +38,55 @@ export default function RegisterPage() {
 
   return (
     <>
-      <h1 className="mb-6 text-xl font-bold text-gray-900">Регистрация в EduMind 3D</h1>
+      <h1 className="mb-6 font-headline text-xl font-bold text-slate-100">Регистрация в EduMind 3D</h1>
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">Имя</label>
+          <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">Имя</label>
           <input
             type="text"
             required
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+            className="w-full rounded-md border border-white/15 bg-surface-container-lowest/60 px-3 py-2 text-sm text-slate-100 focus:border-neon-cyan focus:outline-none focus:ring-1 focus:ring-neon-cyan"
           />
         </div>
 
         <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">Email</label>
+          <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">Email</label>
           <input
             type="email"
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+            className="w-full rounded-md border border-white/15 bg-surface-container-lowest/60 px-3 py-2 text-sm text-slate-100 focus:border-neon-cyan focus:outline-none focus:ring-1 focus:ring-neon-cyan"
           />
         </div>
 
         <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">Пароль</label>
+          <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">Пароль</label>
           <input
             type="password"
             required
             minLength={8}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+            className="w-full rounded-md border border-white/15 bg-surface-container-lowest/60 px-3 py-2 text-sm text-slate-100 focus:border-neon-cyan focus:outline-none focus:ring-1 focus:ring-neon-cyan"
           />
         </div>
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error && <p className="text-sm text-red-400">{error}</p>}
 
         <button
           type="submit"
           disabled={isSubmitting}
-          className="w-full rounded-md bg-brand py-2 text-sm font-medium text-white hover:bg-brand-dark disabled:opacity-50"
+          className="neon-glow-indigo w-full rounded-md bg-brand py-2 font-headline text-sm font-bold text-white transition hover:brightness-110 disabled:opacity-50"
         >
           {isSubmitting ? "Создаем аккаунт..." : "Зарегистрироваться"}
         </button>
       </form>
 
-      <p className="mt-4 text-center text-sm text-gray-500">
+      <p className="mt-4 text-center text-sm text-slate-400">
         Уже есть аккаунт?{" "}
         <Link href="/login" className="text-brand hover:underline">
           Войти
