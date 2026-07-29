@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { Canvas, useThree } from "@react-three/fiber";
 import { ContactShadows, Environment, Grid, Lightformer, OrbitControls } from "@react-three/drei";
 import { Bloom, EffectComposer } from "@react-three/postprocessing";
+import { QUALITY_PRESETS, type QualityLevel } from "@/lib/quality-context";
 
 interface CanvasShellProps {
   children: React.ReactNode;
@@ -15,6 +16,7 @@ interface CanvasShellProps {
   showFloor?: boolean;
   backgroundTop?: string;
   backgroundBottom?: string;
+  quality?: QualityLevel;
 }
 
 // вертикальный градиент вместо плоской заливки — рисуем на canvas и
@@ -69,13 +71,16 @@ export default function CanvasShell({
   showFloor = true,
   backgroundTop = "#1e2340",
   backgroundBottom = "#04050c",
+  quality = "medium",
 }: CanvasShellProps) {
+  const preset = QUALITY_PRESETS[quality];
+
   return (
     <div className="relative h-[34rem] w-full overflow-hidden rounded-2xl border border-white/10 shadow-2xl">
       <Canvas
         camera={{ position: cameraPosition, fov: 42 }}
         shadows
-        dpr={[1, 1.5]}
+        dpr={preset.dpr}
         gl={{ antialias: true }}
         onCreated={({ gl }) => {
           // localClippingEnabled — свойство инстанса рендерера, а не параметр
@@ -91,7 +96,7 @@ export default function CanvasShell({
           position={[5, 8, 5]}
           intensity={1.4}
           castShadow
-          shadow-mapSize={[512, 512]}
+          shadow-mapSize={[preset.shadowMapSize, preset.shadowMapSize]}
           shadow-bias={-0.0005}
         />
         <directionalLight position={[-6, 3, -4]} intensity={0.4} color="#818cf8" />
@@ -107,7 +112,9 @@ export default function CanvasShell({
 
         {showFloor && (
           <>
-            <ContactShadows position={[0, floorY, 0]} opacity={0.6} scale={14} blur={2.2} far={3} resolution={256} />
+            {preset.enableContactShadows && (
+              <ContactShadows position={[0, floorY, 0]} opacity={0.6} scale={14} blur={2.2} far={3} resolution={256} />
+            )}
             <Grid
               position={[0, floorY + 0.001, 0]}
               args={[20, 20]}
@@ -126,9 +133,11 @@ export default function CanvasShell({
 
         <OrbitControls enableDamping dampingFactor={0.08} minDistance={2} maxDistance={14} target={target} />
 
-        <EffectComposer multisampling={0}>
-          <Bloom luminanceThreshold={0.35} luminanceSmoothing={0.9} intensity={bloomIntensity} mipmapBlur radius={0.6} />
-        </EffectComposer>
+        {preset.enableBloom && (
+          <EffectComposer multisampling={0}>
+            <Bloom luminanceThreshold={0.35} luminanceSmoothing={0.9} intensity={bloomIntensity} mipmapBlur radius={0.6} />
+          </EffectComposer>
+        )}
       </Canvas>
     </div>
   );
