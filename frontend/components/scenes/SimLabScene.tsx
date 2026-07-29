@@ -22,6 +22,22 @@ const REAGENTS = [
   { value: "sodium_chloride", label: "Хлорид натрия (NaCl)" },
 ] as const;
 
+// приблизительный визуальный цвет реагента в мерном стакане до реакции —
+// не химически точный, только для правдоподобности анимации налива
+const REAGENT_POUR_COLOR: Record<string, string> = {
+  vinegar: "#fef9c3",
+  baking_soda: "#f8fafc",
+  hcl: "#e0f2fe",
+  naoh: "#e0f2fe",
+  copper_sulfate: "#38bdf8",
+  iron: "#94a3b8",
+  phenolphthalein: "#fdf4ff",
+  silver_nitrate: "#f1f5f9",
+  sodium_chloride: "#f8fafc",
+};
+
+const POUR_DURATION_S = 1.1;
+
 interface ReactionResult {
   product_name: string;
   result_color: string;
@@ -239,6 +255,90 @@ function Flask() {
   );
 }
 
+interface PourVesselProps {
+  isPouring: boolean;
+  reagentColor: string;
+  onPourComplete: () => void;
+}
+
+// мерный стакан, из которого реагент наливается в колбу: наклоняется,
+// пока видна струя, затем возвращается в исходное положение. Позиция
+// струи — фиксированный "коннектор" между стаканом и горлышком колбы,
+// не привязанный покадрово к движущемуся горлышку при наклоне — для
+// короткой (~1с) анимации этого упрощения достаточно, а полная
+// геометрическая точность потребовала бы отдельной калибровки на глаз.
+function PourVessel({ isPouring, reagentColor, onPourComplete }: PourVesselProps) {
+  const tiltRef = useRef<THREE.Group>(null);
+  const streamRef = useRef<THREE.Mesh>(null);
+  const streamMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
+  const startedAtRef = useRef<number | null>(null);
+  const completedRef = useRef(false);
+
+  useEffect(() => {
+    if (isPouring) {
+      startedAtRef.current = performance.now();
+      completedRef.current = false;
+    } else {
+      startedAtRef.current = null;
+    }
+  }, [isPouring]);
+
+  useFrame(() => {
+    const tilt = tiltRef.current;
+    if (!tilt) return;
+
+    if (isPouring && startedAtRef.current !== null) {
+      const elapsed = (performance.now() - startedAtRef.current) / 1000;
+      const t = THREE.MathUtils.clamp(elapsed / POUR_DURATION_S, 0, 1);
+      const eased = t * t * (3 - 2 * t); // smoothstep
+      tilt.rotation.z = THREE.MathUtils.lerp(0, -2.0, eased);
+
+      if (streamRef.current && streamMaterialRef.current) {
+        const streamActive = t > 0.2 && t < 0.92;
+        streamRef.current.visible = streamActive;
+        streamMaterialRef.current.opacity = streamActive ? 0.85 : 0;
+      }
+
+      if (t >= 1 && !completedRef.current) {
+        completedRef.current = true;
+        onPourComplete();
+      }
+    } else {
+      tilt.rotation.z = THREE.MathUtils.lerp(tilt.rotation.z, 0, 0.15);
+      if (streamRef.current) streamRef.current.visible = false;
+    }
+  });
+
+  return (
+    <group position={[1.0, 1.9, 0]}>
+      <group ref={tiltRef}>
+        <mesh position={[0, 0.22, 0]}>
+          <cylinderGeometry args={[0.15, 0.13, 0.42, 24]} />
+          <MeshTransmissionMaterial
+            thickness={0.05}
+            roughness={0.05}
+            transmission={0.9}
+            ior={1.4}
+            color="#eef6ff"
+            resolution={64}
+            samples={1}
+          />
+        </mesh>
+        <mesh position={[0, 0.13, 0]}>
+          <cylinderGeometry args={[0.135, 0.125, 0.2, 24]} />
+          <meshStandardMaterial color={reagentColor} roughness={0.2} />
+        </mesh>
+      </group>
+
+      {/* струя между стаканом и горлышком колбы */}
+      <mesh ref={streamRef} position={[-0.55, -0.35, 0]} rotation={[0, 0, 1.15]} visible={false}>
+        <cylinderGeometry args={[0.018, 0.032, 0.95, 8]} />
+        <meshStandardMaterial ref={streamMaterialRef} color={reagentColor} transparent opacity={0} roughness={0.1} />
+      </mesh>
+    </group>
+  );
+}
+
 // глянцевый лабораторный подиум под колбой — ловит отражения от Lightformer-света
 function LabBench() {
   return (
@@ -258,6 +358,7 @@ export default function SimLabScene({ simulation }: SimLabSceneProps) {
   const [reagentB, setReagentB] = useState<string>(REAGENTS[1].value);
   const [reaction, setReaction] = useState<ReactionResult | null>(null);
   const [isMixing, setIsMixing] = useState(false);
+  const [isPouring, setIsPouring] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionsLog, setActionsLog] = useState<Record<string, unknown>[]>([]);
   const [completionScore, setCompletionScore] = useState<number | null>(null);
@@ -292,8 +393,14 @@ export default function SimLabScene({ simulation }: SimLabSceneProps) {
 
   const pressureAtm = idealGasPressure(1, volumeL, celsiusToKelvin(displayedTempC));
 
-  async function handleMix() {
+  // кнопка запускает анимацию налива; сам запрос к API и обновление
+  // реакции происходят только когда струя долилась (onPourComplete)
+  function handleMix() {
     setError(null);
+    setIsPouring(true);
+  }
+
+  async function performMix() {
     setIsMixing(true);
     try {
       const response = await apiFetch<{ action_type: string; result: ReactionResult }>(
@@ -313,6 +420,7 @@ export default function SimLabScene({ simulation }: SimLabSceneProps) {
       setError(err instanceof ApiError ? err.message : "Не удалось выполнить реакцию");
     } finally {
       setIsMixing(false);
+      setIsPouring(false);
     }
   }
 
@@ -363,6 +471,11 @@ export default function SimLabScene({ simulation }: SimLabSceneProps) {
               color={reaction?.precipitate_color ?? "#ffffff"}
               timeScale={timeScale}
             />
+            <PourVessel
+              isPouring={isPouring}
+              reagentColor={REAGENT_POUR_COLOR[reagentA] ?? "#e0f2fe"}
+              onPourComplete={performMix}
+            />
           </group>
         </CanvasShell>
 
@@ -403,10 +516,10 @@ export default function SimLabScene({ simulation }: SimLabSceneProps) {
         <div className="sm:col-span-2">
           <button
             onClick={handleMix}
-            disabled={isMixing}
+            disabled={isPouring || isMixing}
             className="neon-glow-indigo w-full rounded-full bg-brand py-2 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
           >
-            {isMixing ? "Смешиваем..." : "Смешать реагенты"}
+            {isPouring ? "Наливаем..." : "Смешать реагенты"}
           </button>
         </div>
 
