@@ -6,7 +6,7 @@ from app.routers import ai, auth, results, simulations, users
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
-# разрешаем фронтенду (Next.js на localhost:3000) стучаться к API
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,

@@ -3,16 +3,17 @@
 Роутер вызывает эти функции и просто переводит их результат в HTTP-ответы.
 """
 from fastapi import HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password, verify_password
 from app.models.user import User, UserRole
 from app.schemas.user import UserCreate
 
 
-def register_user(db: Session, user_in: UserCreate) -> User:
-    existing = db.query(User).filter(User.email == user_in.email).first()
+async def register_user(db: AsyncSession, user_in: UserCreate) -> User:
+    existing = (await db.execute(select(User).where(User.email == user_in.email))).scalar_one_or_none()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -28,21 +29,21 @@ def register_user(db: Session, user_in: UserCreate) -> User:
 
     db.add(user)
     try:
-        db.commit()
+        await db.commit()
     except IntegrityError:
         # подстраховка от гонки: два одновременных запроса с одним email
-        db.rollback()
+        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Пользователь с таким email уже зарегистрирован",
         )
 
-    db.refresh(user)
+    await db.refresh(user)
     return user
 
 
-def authenticate_user(db: Session, email: str, password: str) -> User:
-    user = db.query(User).filter(User.email == email).first()
+async def authenticate_user(db: AsyncSession, email: str, password: str) -> User:
+    user = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
 
     if not user or not verify_password(password, user.hashed_password):
         raise HTTPException(

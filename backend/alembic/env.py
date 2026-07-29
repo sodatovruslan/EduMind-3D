@@ -4,6 +4,10 @@ Alembic env.py.
 sqlalchemy.url в alembic.ini переопределяется значением из app.config.settings,
 чтобы не дублировать DATABASE_URL в двух местах и не забыть синхронизировать
 .env с alembic.ini при переезде с SQLite на Postgres.
+
+Миграции гоняются синхронно (engine_from_config + psycopg2), даже когда
+само приложение работает на asyncpg — поэтому здесь берем
+database_url_sync, а не DATABASE_URL напрямую.
 """
 from logging.config import fileConfig
 
@@ -15,7 +19,7 @@ from app.database import Base
 from app import models  # noqa: F401 — регистрирует все модели в Base.metadata
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+config.set_main_option("sqlalchemy.url", settings.database_url_sync)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

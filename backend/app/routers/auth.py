@@ -9,7 +9,8 @@ grant_type=password form-data, а не произвольный JSON.
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import JWTError
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
 from app.core.security import create_access_token, create_refresh_token, decode_token
@@ -30,19 +31,19 @@ def _issue_tokens(user_id: str) -> Token:
 
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-def register(user_in: UserCreate, db: Session = Depends(get_db)):
-    user = register_user(db, user_in)
+async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
+    user = await register_user(db, user_in)
     return user
 
 
 @router.post("/login", response_model=Token)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = authenticate_user(db, email=form_data.username, password=form_data.password)
+async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
+    user = await authenticate_user(db, email=form_data.username, password=form_data.password)
     return _issue_tokens(user.id)
 
 
 @router.post("/refresh", response_model=Token)
-def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
+async def refresh(payload: RefreshRequest, db: AsyncSession = Depends(get_db)):
     try:
         user_id = decode_token(payload.refresh_token, expected_type="refresh")
     except JWTError:
@@ -51,7 +52,8 @@ def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
             detail="Невалидный или просроченный refresh-токен",
         )
 
-    user = db.query(User).filter(User.id == user_id).first()
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Пользователь не найден")
 
@@ -59,5 +61,5 @@ def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/me", response_model=UserRead)
-def read_current_user(current_user: User = Depends(get_current_user)):
+async def read_current_user(current_user: User = Depends(get_current_user)):
     return current_user

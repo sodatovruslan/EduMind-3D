@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, require_role
 from app.database import get_db
@@ -10,21 +11,23 @@ router = APIRouter(prefix="/api/users", tags=["users"])
 
 
 @router.get("/", response_model=list[UserRead])
-def list_users(
-    db: Session = Depends(get_db),
+async def list_users(
+    db: AsyncSession = Depends(get_db),
     _teacher: User = Depends(require_role(UserRole.TEACHER, UserRole.ADMIN)),
 ):
     # TODO: добавить пагинацию (limit/offset) и фильтр по классу, когда появится сущность Class
-    return db.query(User).filter(User.role == UserRole.STUDENT).all()
+    result = await db.execute(select(User).where(User.role == UserRole.STUDENT))
+    return result.scalars().all()
 
 
 @router.get("/{user_id}", response_model=UserRead)
-def get_user(user_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def get_user(user_id: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     # ученик может смотреть только себя, учитель/админ — любого
     if current_user.id != user_id and current_user.role == UserRole.STUDENT:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа к этому профилю")
 
-    user = db.query(User).filter(User.id == user_id).first()
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пользователь не найден")
 
@@ -32,16 +35,17 @@ def get_user(user_id: str, db: Session = Depends(get_db), current_user: User = D
 
 
 @router.patch("/{user_id}", response_model=UserRead)
-def update_user(
+async def update_user(
     user_id: str,
     user_update: UserUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     if current_user.id != user_id and current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа к этому профилю")
 
-    user = db.query(User).filter(User.id == user_id).first()
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пользователь не найден")
 
@@ -49,6 +53,6 @@ def update_user(
     if user_update.full_name is not None:
         user.full_name = user_update.full_name
 
-    db.commit()
-    db.refresh(user)
+    await db.commit()
+    await db.refresh(user)
     return user

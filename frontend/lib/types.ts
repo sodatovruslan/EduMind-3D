@@ -14,7 +14,7 @@ export interface TokenPair {
   token_type: string;
 }
 
-export type SimulationModule = "simlab" | "biobody" | "geo3d";
+export type SimulationModule = "simlab" | "geo3d";
 
 export interface Simulation {
   id: string;
@@ -30,9 +30,17 @@ export interface LabResult {
   id: string;
   user_id: string;
   simulation_id: string;
+  simulation_title: string;
   actions_log: Record<string, unknown>[];
   score: number | null;
   feedback: { text: string } | null;
   duration_seconds: number;
   completed_at: string;
+}
+
+export interface ClassStats {
+  average_score: number | null;
+  completion_rate: number;
+  active_students: number;
+  total_students: number;
 }

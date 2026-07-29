@@ -8,7 +8,7 @@ UUID хранится как String(36), а не через Postgres-специ�
 """
 import enum
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import Column, String, Enum, DateTime
 from sqlalchemy.orm import relationship
@@ -30,7 +30,7 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     full_name = Column(String(255), nullable=False)
     role = Column(Enum(UserRole), nullable=False, default=UserRole.STUDENT)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=datetime.utcnow)
 
     lab_results = relationship("LabResult", back_populates="user", cascade="all, delete-orphan")
     ai_logs = relationship("AILog", back_populates="user", cascade="all, delete-orphan")

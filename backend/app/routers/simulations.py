@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
 from app.database import get_db
@@ -13,7 +14,7 @@ from app.schemas.simulation import (
     SimulationCompleteRequest,
     SimulationRead,
 )
-from app.services.geo3d_engine import compute_shape_metrics
+from app.services.geography_engine import get_layer_info
 from app.services.grader_service import compute_score
 from app.services.simulation_engine import compute_reaction
 
@@ -21,34 +22,36 @@ router = APIRouter(prefix="/api/simulations", tags=["simulations"])
 
 
 @router.get("/", response_model=list[SimulationRead])
-def list_simulations(
+async def list_simulations(
     module: SimulationModule | None = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     _current_user: User = Depends(get_current_user),
 ):
-    query = db.query(Simulation)
+    query = select(Simulation)
     if module:
-        query = query.filter(Simulation.module == module)
-    return query.all()
+        query = query.where(Simulation.module == module)
+    result = await db.execute(query)
+    return result.scalars().all()
 
 
 @router.get("/{simulation_id}", response_model=SimulationRead)
-def get_simulation(
+async def get_simulation(
     simulation_id: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     _current_user: User = Depends(get_current_user),
 ):
-    simulation = db.query(Simulation).filter(Simulation.id == simulation_id).first()
+    result = await db.execute(select(Simulation).where(Simulation.id == simulation_id))
+    simulation = result.scalar_one_or_none()
     if simulation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Симуляция не найдена")
     return simulation
 
 
 @router.post("/{simulation_id}/action", response_model=SimulationActionResponse)
-def run_action(
+async def run_action(
     simulation_id: str,
     action: SimulationActionRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     _current_user: User = Depends(get_current_user),
 ):
     """
@@ -56,7 +59,8 @@ def run_action(
     action_type + payload, бэкенд считает результат по формулам и
     возвращает JSON — сам 3D-рендер этого результата целиком на фронтенде.
     """
-    simulation = db.query(Simulation).filter(Simulation.id == simulation_id).first()
+    result = await db.execute(select(Simulation).where(Simulation.id == simulation_id))
+    simulation = result.scalar_one_or_none()
     if simulation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Симуляция не найдена")
 
@@ -79,14 +83,22 @@ def run_action(
             },
         )
 
-    if simulation.module == SimulationModule.GEO3D and action.action_type == "compute_metrics":
-        shape = action.payload.get("shape")
-        shape_params = {key: value for key, value in action.payload.items() if key != "shape"}
-        try:
-            metrics = compute_shape_metrics(shape, **shape_params)
-        except (ValueError, TypeError) as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-        return SimulationActionResponse(action_type=action.action_type, result=metrics)
+    if simulation.module == SimulationModule.GEO3D and action.action_type == "explore_layer":
+        layer_key = action.payload.get("layer")
+        layer = get_layer_info(layer_key)
+        if layer is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Неизвестный слой Земли")
+        return SimulationActionResponse(
+            action_type=action.action_type,
+            result={
+                "layer": layer_key,
+                "name": layer.name,
+                "depth_km": layer.depth_km,
+                "temperature_c": layer.temperature_c,
+                "state": layer.state,
+                "composition": layer.composition,
+            },
+        )
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -95,10 +107,10 @@ def run_action(
 
 
 @router.post("/{simulation_id}/complete", response_model=LabResultRead, status_code=status.HTTP_201_CREATED)
-def complete_simulation(
+async def complete_simulation(
     simulation_id: str,
     payload: SimulationCompleteRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -107,7 +119,8 @@ def complete_simulation(
     отдельно через POST /api/ai/grade — так генерация фидбека не блокирует
     сохранение результата, если LLM недоступна/медленная.
     """
-    simulation = db.query(Simulation).filter(Simulation.id == simulation_id).first()
+    result = await db.execute(select(Simulation).where(Simulation.id == simulation_id))
+    simulation = result.scalar_one_or_none()
     if simulation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Симуляция не найдена")
 
@@ -121,7 +134,14 @@ def complete_simulation(
         score=score,
         duration_seconds=payload.duration_seconds,
     )
+    # simulation уже загружена выше — присваиваем в память, чтобы
+    # LabResultRead.simulation_title не дергал ленивую (недопустимую
+    # в async-сессии без await) подгрузку связи при сериализации ответа
+    lab_result.simulation = simulation
+
     db.add(lab_result)
-    db.commit()
-    db.refresh(lab_result)
+    await db.commit()
+    # id/completed_at — Python-side defaults (не server-generated), а сессия
+    # с expire_on_commit=False — поэтому refresh() не нужен, атрибуты и так
+    # на месте, включая вручную выставленный simulation
     return lab_result

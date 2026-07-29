@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
 from app.database import get_db
@@ -17,10 +18,11 @@ router = APIRouter(prefix="/api/ai", tags=["ai"])
 @router.post("/hint", response_model=HintResponse)
 async def ask_hint(
     payload: HintRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    simulation = db.query(Simulation).filter(Simulation.id == payload.simulation_id).first()
+    result = await db.execute(select(Simulation).where(Simulation.id == payload.simulation_id))
+    simulation = result.scalar_one_or_none()
     if simulation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Симуляция не найдена")
 
@@ -35,7 +37,7 @@ async def ask_hint(
             log_type="hint",
         )
     )
-    db.commit()
+    await db.commit()
 
     return HintResponse(hint=hint_text)
 
@@ -43,17 +45,19 @@ async def ask_hint(
 @router.post("/grade", response_model=GradeResponse)
 async def grade_lab_result(
     payload: GradeRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    lab_result = db.query(LabResult).filter(LabResult.id == payload.lab_result_id).first()
+    result = await db.execute(select(LabResult).where(LabResult.id == payload.lab_result_id))
+    lab_result = result.scalar_one_or_none()
     if lab_result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Результат не найден")
 
     if lab_result.user_id != current_user.id and current_user.role == UserRole.STUDENT:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа к этому результату")
 
-    simulation = db.query(Simulation).filter(Simulation.id == lab_result.simulation_id).first()
+    sim_result = await db.execute(select(Simulation).where(Simulation.id == lab_result.simulation_id))
+    simulation = sim_result.scalar_one_or_none()
 
     context = build_grading_context(simulation, lab_result.actions_log, lab_result.score or 0.0)
     feedback_text = await get_grading_feedback(context)
@@ -68,22 +72,23 @@ async def grade_lab_result(
             log_type="grading",
         )
     )
-    db.commit()
+    await db.commit()
 
     return GradeResponse(score=lab_result.score or 0.0, feedback=feedback_text)
 
 
 @router.get("/logs/{simulation_id}", response_model=list[dict])
-def get_ai_logs(
+async def get_ai_logs(
     simulation_id: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = db.query(AILog).filter(AILog.simulation_id == simulation_id)
+    query = select(AILog).where(AILog.simulation_id == simulation_id)
     if current_user.role == UserRole.STUDENT:
-        query = query.filter(AILog.user_id == current_user.id)
+        query = query.where(AILog.user_id == current_user.id)
 
-    logs = query.all()
+    result = await db.execute(query)
+    logs = result.scalars().all()
     return [
         {
             "id": log.id,

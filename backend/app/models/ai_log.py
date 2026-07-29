@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import Column, String, Text, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
@@ -16,7 +16,7 @@ class AILog(Base):
     prompt = Column(Text, nullable=False)
     response = Column(Text, nullable=False)
     log_type = Column(String(50), nullable=False)  # hint | grading | chat
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="ai_logs")
     simulation = relationship("Simulation", back_populates="ai_logs")

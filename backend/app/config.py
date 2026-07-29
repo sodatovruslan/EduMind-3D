@@ -9,7 +9,8 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "EduMind 3D"
     ENVIRONMENT: str = "development"
 
-    DATABASE_URL: str = "sqlite:///./edumind.db"
+    # async-драйвер (asyncpg) для рантайма приложения
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:2211@localhost:5432/edumind"
 
     SECRET_KEY: str = "change-me-in-prod-please"
     ALGORITHM: str = "HS256"
@@ -26,6 +27,14 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+
+    @property
+    def database_url_sync(self) -> str:
+        """
+        Alembic-миграции гоняются синхронно (это норма даже для async-приложений —
+        миграциям не нужен event loop), поэтому им нужен sync-драйвер, а не asyncpg.
+        """
+        return self.DATABASE_URL.replace("+asyncpg", "+psycopg2")
 
 
 settings = Settings()
