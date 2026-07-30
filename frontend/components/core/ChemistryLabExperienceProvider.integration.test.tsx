@@ -210,3 +210,45 @@ describe("ChemistryLabExperienceProvider — разблокировка слож
     expect(result3.current.isExperimentUnlockedFor(intermediateExp)).toBe(true);
   });
 });
+
+describe("Stage 5.7 audit — стресс-сценарии", () => {
+  it("быстрый повторный вызов completeExperiment в одном тике создает только ОДНУ запись в журнале", () => {
+    let container: Container = createEmptyContainer("beaker-1", "beaker", 20);
+    container = addSubstance(container, "water", 200);
+    container = heat(container, 85);
+    const ctx = makeContext({ activeContainer: container, isOnStand: true, burnerOn: true });
+    const { result } = renderHook(() => useChemistryLabExperience(), { wrapper: wrapperFor(ctx) });
+
+    act(() => result.current.selectExperiment("lab-beginner-heating-water"));
+    act(() => {
+      // имитация двойного клика/быстрого повторного нажатия — оба вызова
+      // происходят в рамках одного act(), т.е. до любого промежуточного рендера
+      result.current.completeExperiment();
+      result.current.completeExperiment();
+    });
+
+    expect(result.current.notebookEntries).toHaveLength(1);
+  });
+
+  it("resetLabSession выходит из эксперимента и очищает экран завершения (сценарий Emergency Stop -> Сбросить эксперимент)", () => {
+    let container: Container = createEmptyContainer("beaker-1", "beaker", 20);
+    container = addSubstance(container, "water", 200);
+    container = heat(container, 85);
+    const ctx = makeContext({ activeContainer: container, isOnStand: true, burnerOn: true });
+    const { result } = renderHook(() => useChemistryLabExperience(), { wrapper: wrapperFor(ctx) });
+
+    act(() => result.current.selectExperiment("lab-beginner-heating-water"));
+    act(() => result.current.completeExperiment());
+    expect(result.current.lastAssessment).not.toBeNull();
+
+    // студент начинает новый эксперимент, срабатывает Emergency Stop, вызывается сброс
+    act(() => result.current.selectExperiment("lab-beginner-state-changes"));
+    act(() => result.current.resetLabSession());
+
+    expect(result.current.selectedExperiment).toBeNull();
+    expect(result.current.lastAssessment).toBeNull();
+    expect(result.current.lastNotebookEntry).toBeNull();
+    // журнал уже сохраненных экспериментов не затрагивается сбросом текущей сессии
+    expect(result.current.notebookEntries).toHaveLength(1);
+  });
+});

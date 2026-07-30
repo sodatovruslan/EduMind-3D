@@ -21,6 +21,17 @@ const DIFFICULTY_LABEL: Record<LabDifficulty, string> = {
 
 const DIFFICULTY_FILTERS: ("all" | LabDifficulty)[] = ["all", "beginner", "intermediate", "advanced"];
 
+// Stage 5.7 audit — раньше заблокированная карточка показывала только
+// иконку замка без объяснения, что нужно сделать, чтобы её открыть;
+// уровень разблокировки реально определяется isDifficultyUnlocked()
+// (chemistry-lab-catalog.ts) — здесь только человекочитаемое объяснение
+// того же самого правила, ничего нового не решается
+const UNLOCK_HINT: Record<LabDifficulty, string | null> = {
+  beginner: null,
+  intermediate: "Заверши любой эксперимент уровня «Начальный», чтобы открыть",
+  advanced: "Заверши любой эксперимент уровня «Средний», чтобы открыть",
+};
+
 export default function ExperimentCatalogBrowser() {
   const { completedExperimentIds, notebookEntries, selectExperiment, isExperimentUnlockedFor } = useChemistryLabExperience();
   const [query, setQuery] = useState("");
@@ -96,6 +107,9 @@ export default function ExperimentCatalogBrowser() {
                   {completed && <span className="text-emerald-400">· пройдено</span>}
                 </div>
                 <p className="text-xs text-slate-400">{exp.description}</p>
+                {!unlocked && UNLOCK_HINT[exp.difficulty] && (
+                  <p className="mt-1 text-[11px] italic text-slate-500">{UNLOCK_HINT[exp.difficulty]}</p>
+                )}
                 {best !== null && (
                   <div className="mt-1 font-mono text-[10px] text-neon-violet">
                     Лучший результат: {best}/100 · попыток: {attempts}

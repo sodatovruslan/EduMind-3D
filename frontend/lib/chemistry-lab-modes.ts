@@ -15,8 +15,6 @@ export interface LabModeConfig {
   showAIExplanations: boolean;
   showStepHighlighting: boolean;
   showObjectivesOnly: boolean;
-  allowDirectAIAnswers: boolean;
-  showAssessmentDuringExperiment: boolean;
 }
 
 const MODE_CONFIGS: Record<LearningMode, LabModeConfig> = {
@@ -28,8 +26,6 @@ const MODE_CONFIGS: Record<LearningMode, LabModeConfig> = {
     showAIExplanations: true,
     showStepHighlighting: true,
     showObjectivesOnly: false,
-    allowDirectAIAnswers: false,
-    showAssessmentDuringExperiment: true,
   },
   practice: {
     mode: "practice",
@@ -39,8 +35,6 @@ const MODE_CONFIGS: Record<LearningMode, LabModeConfig> = {
     showAIExplanations: true,
     showStepHighlighting: false,
     showObjectivesOnly: true,
-    allowDirectAIAnswers: false,
-    showAssessmentDuringExperiment: false,
   },
   exam: {
     mode: "exam",
@@ -50,8 +44,6 @@ const MODE_CONFIGS: Record<LearningMode, LabModeConfig> = {
     showAIExplanations: false,
     showStepHighlighting: false,
     showObjectivesOnly: true,
-    allowDirectAIAnswers: false,
-    showAssessmentDuringExperiment: false,
   },
 };
 

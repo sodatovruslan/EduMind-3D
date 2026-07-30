@@ -59,6 +59,7 @@ interface ChemistryLabExperienceContextValue {
   selectedExperiment: LabExperiment | null;
   selectExperiment: (id: string) => void;
   exitExperiment: () => void;
+  resetLabSession: () => void;
   currentStepIndex: number;
   currentStep: LabStep | null;
   isCurrentStepUnlocked: boolean;
@@ -216,6 +217,19 @@ export function ChemistryLabExperienceProvider({
     setSelectedExperimentId(null);
   }
 
+  // Stage 5.7 audit — реальный сценарий: аварийная остановка сбрасывает
+  // состояние лаборатории (ChemistryWorkspaceProvider.resetExperiment), но
+  // сама по себе не знает про этот провайдер. Без явного вызова этой
+  // функции студент оставался бы на устаревшем шаге/экране завершения
+  // против уже сброшенного, пустого сосуда — реального краша это не
+  // вызывает, но UI вводит в заблуждение. Вызывается ровно в паре с
+  // resetExperiment() из кнопки "Сбросить эксперимент".
+  function resetLabSession() {
+    setSelectedExperimentId(null);
+    setLastAssessment(null);
+    setLastNotebookEntry(null);
+  }
+
   // "Максимально наблюдаемые" температура/давление за сессию текущего
   // эксперимента отслеживает ТОЛЬКО этот провайдер (через refs выше) —
   // родитель не может знать эту накопленную историю заранее, поэтому здесь
@@ -241,9 +255,17 @@ export function ChemistryLabExperienceProvider({
     hintsRef.current += 1;
   }
 
+  // Stage 5.7 audit — защита от повторного синхронного вызова (двойной
+  // клик/быстрый повторный тап): без этого флага два клика по кнопке
+  // "Завершить" в рамках одного тика могли создать две записи в журнале
+  // и дважды отправить событие в Learning Profile
+  const completingRef = useRef(false);
+
   function completeExperiment() {
+    if (completingRef.current) return;
     if (!selectedExperiment) return;
     if (!selectedExperiment.isComplete(effectiveStepContext)) return; // нельзя завершить без реального подтверждения
+    completingRef.current = true;
 
     const report = assessExperiment({
       totalSteps: selectedExperiment.steps.length,
@@ -296,6 +318,7 @@ export function ChemistryLabExperienceProvider({
       });
 
     setSelectedExperimentId(null);
+    completingRef.current = false;
   }
 
   function isExperimentUnlockedFor(experiment: LabExperiment): boolean {
@@ -311,6 +334,7 @@ export function ChemistryLabExperienceProvider({
     selectedExperiment,
     selectExperiment,
     exitExperiment,
+    resetLabSession,
     currentStepIndex,
     currentStep,
     isCurrentStepUnlocked,

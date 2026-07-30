@@ -1368,10 +1368,35 @@ const QUALITY_LABEL: Record<QualityLevel, string> = { low: "Низкое", mediu
 // AI Teacher (Chemistry World): собирает ChemistryAIContext из уже
 // посчитанного Chemistry/Reaction Engine + Experiment Validator + Safety
 // System — рендерится внутри ExperimentProgressProvider
+// Stage 5.7 audit — сброс лаборатории (ChemistryWorkspaceProvider) и сброс
+// учебной сессии (ChemistryLabExperienceProvider) должны происходить ВМЕСТЕ:
+// иначе после аварийного сброса студент оставался бы на устаревшем шаге
+// пошагового руководства против уже пустого, свежего сосуда
+function EmergencyStopResetButton() {
+  const { resetExperiment } = useChemistryWorkspace();
+  const { resetLabSession } = useChemistryLabExperience();
+  return (
+    <motion.button
+      whileHover={{ scale: 1.03 }}
+      whileTap={{ scale: 0.97 }}
+      onClick={() => {
+        resetExperiment();
+        resetLabSession();
+      }}
+      data-testid="emergency-stop-reset"
+      className="flex items-center gap-2 rounded-full bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-500"
+    >
+      <RotateCcw size={16} />
+      Сбросить эксперимент
+    </motion.button>
+  );
+}
+
 function ChemistryTeacherChatPanel({ simulationId, safetyWarnings }: { simulationId: string; safetyWarnings: SafetyWarning[] }) {
   const { state } = useChemistryWorkspace();
   const { experiment, status: experimentStatus, result } = useExperimentProgress();
-  const { mode, selectedExperiment, currentStep, isCurrentStepUnlocked, completedExperimentIds, recordHintUsed } = useChemistryLabExperience();
+  const { mode, modeConfig, selectedExperiment, currentStep, isCurrentStepUnlocked, completedExperimentIds, recordHintUsed } =
+    useChemistryLabExperience();
   const activeContainer = state.containers.find((c) => c.id === state.activeContainerId);
   const occurredReactionIds = useMemo(
     () => state.reactionLog.filter((e) => e.containerId === state.activeContainerId).map((e) => e.reactionId),
@@ -1413,8 +1438,20 @@ function ChemistryTeacherChatPanel({ simulationId, safetyWarnings }: { simulatio
     ]
   );
 
-  if (!context) return null;
-  return <ChemistryTeacherChat simulationId={simulationId} context={context} onMessageSent={recordHintUsed} />;
+  // Stage 5.7 audit — Exam Mode: "AI никогда не дает прямых ответов, только
+  // оценивает" (см. спецификацию режимов). Панель с чатом — это как раз
+  // канал прямых ответов, поэтому в Exam Mode она скрыта полностью;
+  // оценка результата студент получает через экран завершения/тетрадь,
+  // которые не зависят от этой панели.
+  if (!context || !modeConfig.showAIExplanations) return null;
+  return (
+    <ChemistryTeacherChat
+      simulationId={simulationId}
+      context={context}
+      onMessageSent={recordHintUsed}
+      showFullHints={modeConfig.showFullHints}
+    />
+  );
 }
 
 interface ChemistryWorldSceneProps {
@@ -1432,7 +1469,7 @@ export default function ChemistryWorldScene({ simulation }: ChemistryWorldSceneP
 const POUR_ANIMATION_MS = 750;
 
 function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
-  const { state, addSubstanceToContainer, pourInto, moveItem, setActiveContainer, resetExperiment } = useChemistryWorkspace();
+  const { state, addSubstanceToContainer, pourInto, moveItem, setActiveContainer } = useChemistryWorkspace();
   const { quality, setQuality } = useQuality();
   const [pourAnimation, setPourAnimation] = useState<PourAnimationState | null>(null);
   const [addAnimation, setAddAnimation] = useState<AddAnimationState | null>(null);
@@ -1462,7 +1499,7 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
   // шагов/завершения эксперимента, собранный целиком из уже посчитанных
   // данных (никаких новых вычислений физики/химии здесь)
   const allOccurredReactionIds = useMemo(() => state.reactionLog.map((e) => e.reactionId), [state.reactionLog]);
-  const labStepContext: LabStepContext = useMemo(
+  const rawLabStepContext: LabStepContext = useMemo(
     () => ({
       activeContainerId: activeContainer.id,
       activeContainer: activeContainer.data,
@@ -1480,6 +1517,41 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
     }),
     [activeContainer, state.tools, occurredReactionIds, allOccurredReactionIds, safetyWarnings, state.containers, state.pourLog]
   );
+
+  // Stage 5.7 audit — performance: HEAT_TICK диспетчерится каждый кадр
+  // (~60/сек) пока включена горелка, а activeContainer/state.containers
+  // получают новую ссылку на каждый такой тик. Без троттлинга это
+  // заставляло весь Guided Laboratory System (каталог, панель шагов,
+  // журнал, AI-контекст) перерендериваться 60 раз/сек даже когда
+  // реально меняется только температура. Троттлинг до ~300мс — та же
+  // частота, что уже используется для HAZARD_TICK (см. ChemistryScene) —
+  // не влияет на корректность (максимумы/детерминированность считает
+  // ChemistryLabExperienceProvider), только снижает частоту ре-рендера.
+  const LAB_CONTEXT_THROTTLE_MS = 300;
+  const [labStepContext, setLabStepContext] = useState<LabStepContext>(rawLabStepContext);
+  const lastLabContextCommitRef = useRef(0);
+  const pendingLabContextTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const elapsed = Date.now() - lastLabContextCommitRef.current;
+    if (elapsed >= LAB_CONTEXT_THROTTLE_MS) {
+      lastLabContextCommitRef.current = Date.now();
+      setLabStepContext(rawLabStepContext);
+      return;
+    }
+    // слишком рано с прошлого коммита — откладываем, но НЕ теряем самое
+    // свежее значение навсегда (trailing edge): без этого таймера
+    // последнее реальное изменение могло бы "застрять" непримененным,
+    // если поток обновлений обрывается ровно внутри окна троттлинга
+    if (pendingLabContextTimeoutRef.current) clearTimeout(pendingLabContextTimeoutRef.current);
+    const remaining = LAB_CONTEXT_THROTTLE_MS - elapsed;
+    pendingLabContextTimeoutRef.current = setTimeout(() => {
+      lastLabContextCommitRef.current = Date.now();
+      setLabStepContext(rawLabStepContext);
+    }, remaining);
+    return () => {
+      if (pendingLabContextTimeoutRef.current) clearTimeout(pendingLabContextTimeoutRef.current);
+    };
+  }, [rawLabStepContext]);
 
   // само переливание/добавление вещества откладывается на время визуальной
   // анимации (наклон + струя) — реальный расчет Chemistry/Reaction Engine
@@ -1642,16 +1714,7 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
                     <p className="mb-3 text-xs text-red-300/80">
                       Эксперимент остановлен. Новые действия (добавление веществ, переливание, нагрев) заблокированы.
                     </p>
-                    <motion.button
-                      whileHover={{ scale: 1.03 }}
-                      whileTap={{ scale: 0.97 }}
-                      onClick={resetExperiment}
-                      data-testid="emergency-stop-reset"
-                      className="flex items-center gap-2 rounded-full bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-500"
-                    >
-                      <RotateCcw size={16} />
-                      Сбросить эксперимент
-                    </motion.button>
+                    <EmergencyStopResetButton />
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -1768,7 +1831,13 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
                   )}
                 </AnimatePresence>
 
+                {/* Stage 5.7 audit — заголовок добавлен для ясности: без него
+                    на странице выглядело как два независимых счетчика
+                    прогресса ("Эксперимент 1/4" и отдельно каталог из 12
+                    работ) без объяснения, чем они отличаются. Чисто
+                    визуальное уточнение, логика ExperimentPanel не менялась. */}
                 <div className="sm:col-span-2">
+                  <h3 className="mb-2 font-mono text-xs uppercase tracking-widest text-slate-500">Быстрая проверка</h3>
                   <ExperimentPanel />
                 </div>
 

@@ -30,9 +30,14 @@ interface ChemistryTeacherChatProps {
   simulationId: string;
   context: ChemistryAIContext;
   onMessageSent?: () => void;
+  // Stage 5.7 audit — Guided Mode (showFullHints) показывает весь набор
+  // подсказок-вопросов; Practice Mode показывает укороченный набор, чтобы
+  // студент больше формулировал вопросы сам, а не выбирал готовые
+  showFullHints?: boolean;
 }
 
-export default function ChemistryTeacherChat({ simulationId, context, onMessageSent }: ChemistryTeacherChatProps) {
+export default function ChemistryTeacherChat({ simulationId, context, onMessageSent, showFullHints = true }: ChemistryTeacherChatProps) {
+  const suggestedQuestions = showFullHints ? SUGGESTED_QUESTIONS : SUGGESTED_QUESTIONS.slice(0, 3);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -106,7 +111,7 @@ export default function ChemistryTeacherChat({ simulationId, context, onMessageS
               ниже.
             </p>
             <div className="flex flex-wrap gap-1.5" data-testid="chemistry-teacher-suggested">
-              {SUGGESTED_QUESTIONS.map((q) => (
+              {suggestedQuestions.map((q) => (
                 <button
                   key={q}
                   onClick={() => sendMessage(q)}

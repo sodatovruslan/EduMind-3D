@@ -20,17 +20,10 @@ describe("chemistry-lab-modes", () => {
     expect(cfg.showStepHighlighting).toBe(false);
   });
 
-  it("Exam Mode: без подсказок, без подсветки, без объяснений ИИ, без прямых ответов", () => {
+  it("Exam Mode: без подсказок, без подсветки, без объяснений ИИ", () => {
     const cfg = getModeConfig("exam");
     expect(cfg.showFullHints).toBe(false);
     expect(cfg.showStepHighlighting).toBe(false);
     expect(cfg.showAIExplanations).toBe(false);
-    expect(cfg.allowDirectAIAnswers).toBe(false);
-  });
-
-  it("ни один режим не допускает прямых ответов ИИ", () => {
-    for (const mode of LEARNING_MODES) {
-      expect(getModeConfig(mode).allowDirectAIAnswers).toBe(false);
-    }
   });
 });
