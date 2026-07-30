@@ -1,31 +1,35 @@
 import Link from "next/link";
-import { FlaskConical, Globe, Zap } from "lucide-react";
+import { FlaskConical, Globe, TestTube, Zap } from "lucide-react";
 import type { Simulation } from "@/lib/types";
 
 const MODULE_ICON = {
   simlab: FlaskConical,
   geo3d: Globe,
   electricity_lab: Zap,
+  chemistry_world: TestTube,
 } as const;
 
 const MODULE_LABEL = {
   simlab: "SimLab 3D",
   geo3d: "GeoWorld",
   electricity_lab: "Electricity Lab",
+  chemistry_world: "Chemistry World",
 } as const;
 
 // у каждого модуля свой neon-акцент: SimLab — индиго, GeoWorld — циан,
-// Electricity Lab — фиолетовый
+// Electricity Lab — фиолетовый, Chemistry World — изумрудный
 const MODULE_ICON_COLOR = {
   simlab: "text-brand",
   geo3d: "text-neon-cyan",
   electricity_lab: "text-neon-violet",
+  chemistry_world: "text-emerald-400",
 } as const;
 
 const MODULE_BORDER_HOVER = {
   simlab: "border-brand/40 hover:border-brand/60",
   geo3d: "border-neon-cyan/40 hover:border-neon-cyan/60",
   electricity_lab: "border-neon-violet/40 hover:border-neon-violet/60",
+  chemistry_world: "border-emerald-400/40 hover:border-emerald-400/60",
 } as const;
 
 // карточка урока для дашборда — рендерим на каждую симуляцию из списка

@@ -32,6 +32,13 @@ SEED_SIMULATIONS = [
         "config": {"expected_steps": ["connect_circuit", "close_switch", "read_meters"]},
         "difficulty": 1,
     },
+    {
+        "title": "Chemistry World: первые эксперименты",
+        "module": SimulationModule.CHEMISTRY_WORLD,
+        "subject": "Химия",
+        "config": {"expected_steps": ["dissolve_salt", "neutralize", "precipitate", "heat_water"]},
+        "difficulty": 1,
+    },
 ]
 
 
