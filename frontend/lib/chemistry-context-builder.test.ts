@@ -7,6 +7,7 @@ import { buildChemistryAIContext } from "./chemistry-context-builder";
 import { CONTAINER_PHYSICS, createDefaultIntegrity } from "./container-physics";
 import { AMBIENT_PRESSURE_KPA } from "./pressure-engine";
 import { evaluateHazard } from "./hazard-engine";
+import { getLabExperiment } from "./chemistry-lab-catalog";
 
 describe("chemistry-context-builder — buildChemistryAIContext", () => {
   it("reflects real dissolved/precipitated substances and never invents an error absent from validation", () => {
@@ -125,5 +126,45 @@ describe("chemistry-context-builder — buildChemistryAIContext", () => {
     expect(ctx.hazard?.level).toBe(hazard.level);
     expect(ctx.hazard?.isSealed).toBe(true);
     expect(ctx.hazard?.pressureKPa).toBeCloseTo(hazard.pressureKPa, 5);
+  });
+
+  it("labExperience остается null, если режим не передан (обратная совместимость)", () => {
+    const c = createEmptyContainer("c1", "beaker", 20);
+    const experiment = EXPERIMENTS[0];
+    const validation = validateExperiment(experiment, { container: c, occurredReactionIds: [] });
+    const ctx = buildChemistryAIContext({
+      experiment,
+      experimentStatus: ExperimentStatus.NOT_STARTED,
+      container: c,
+      occurredReactionIds: [],
+      validation,
+      safetyWarnings: [],
+    });
+    expect(ctx.labExperience).toBeNull();
+  });
+
+  it("labExperience передает реальный выбранный эксперимент/шаг Guided Laboratory System", () => {
+    const c = createEmptyContainer("c1", "beaker", 20);
+    const experiment = EXPERIMENTS[0];
+    const validation = validateExperiment(experiment, { container: c, occurredReactionIds: [] });
+    const labExperiment = getLabExperiment("lab-beginner-heating-water")!;
+    const ctx = buildChemistryAIContext({
+      experiment,
+      experimentStatus: ExperimentStatus.NOT_STARTED,
+      container: c,
+      occurredReactionIds: [],
+      validation,
+      safetyWarnings: [],
+      labMode: "guided",
+      labExperiment,
+      labStep: labExperiment.steps[0],
+      labStepUnlocked: true,
+      labCompletedExperimentIds: [],
+    });
+
+    expect(ctx.labExperience).not.toBeNull();
+    expect(ctx.labExperience?.mode).toBe("guided");
+    expect(ctx.labExperience?.currentExperiment?.id).toBe("lab-beginner-heating-water");
+    expect(ctx.labExperience?.currentStep?.unlocked).toBe(true);
   });
 });

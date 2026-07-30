@@ -46,6 +46,13 @@ import {
 import { buildChemistryAIContext } from "@/lib/chemistry-context-builder";
 import { useQuality, type QualityLevel } from "@/lib/quality-context";
 import type { Simulation } from "@/lib/types";
+import type { LabStepContext } from "@/lib/chemistry-lab-catalog";
+import { ChemistryLabExperienceProvider, useChemistryLabExperience } from "@/components/core/ChemistryLabExperienceProvider";
+import LabModeSelector from "@/components/lab/LabModeSelector";
+import ExperimentCatalogBrowser from "@/components/lab/ExperimentCatalogBrowser";
+import GuidedLabPanel from "@/components/lab/GuidedLabPanel";
+import CompletionScreen from "@/components/lab/CompletionScreen";
+import LabNotebookPanel from "@/components/lab/LabNotebookPanel";
 
 // Stage 5.5 v2 — Hazard Simulation: доступность, без учета prefers-reduced-motion
 // нельзя показывать тряску камеры/агрессивные эффекты
@@ -1364,6 +1371,7 @@ const QUALITY_LABEL: Record<QualityLevel, string> = { low: "Низкое", mediu
 function ChemistryTeacherChatPanel({ simulationId, safetyWarnings }: { simulationId: string; safetyWarnings: SafetyWarning[] }) {
   const { state } = useChemistryWorkspace();
   const { experiment, status: experimentStatus, result } = useExperimentProgress();
+  const { mode, selectedExperiment, currentStep, isCurrentStepUnlocked, completedExperimentIds, recordHintUsed } = useChemistryLabExperience();
   const activeContainer = state.containers.find((c) => c.id === state.activeContainerId);
   const occurredReactionIds = useMemo(
     () => state.reactionLog.filter((e) => e.containerId === state.activeContainerId).map((e) => e.reactionId),
@@ -1382,13 +1390,31 @@ function ChemistryTeacherChatPanel({ simulationId, safetyWarnings }: { simulatio
             safetyWarnings,
             hazard: activeContainer.hazard,
             accidentLog: state.accidentLog,
+            labMode: mode,
+            labExperiment: selectedExperiment,
+            labStep: currentStep,
+            labStepUnlocked: isCurrentStepUnlocked,
+            labCompletedExperimentIds: completedExperimentIds,
           })
         : null,
-    [experiment, experimentStatus, activeContainer, occurredReactionIds, result, safetyWarnings, state.accidentLog]
+    [
+      experiment,
+      experimentStatus,
+      activeContainer,
+      occurredReactionIds,
+      result,
+      safetyWarnings,
+      state.accidentLog,
+      mode,
+      selectedExperiment,
+      currentStep,
+      isCurrentStepUnlocked,
+      completedExperimentIds,
+    ]
   );
 
   if (!context) return null;
-  return <ChemistryTeacherChat simulationId={simulationId} context={context} />;
+  return <ChemistryTeacherChat simulationId={simulationId} context={context} onMessageSent={recordHintUsed} />;
 }
 
 interface ChemistryWorldSceneProps {
@@ -1430,7 +1456,30 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
     });
     return map;
   }, [state.containers, state.firstAddedOrder]);
-  const safetyWarnings = safetyByContainer[activeContainer.id] ?? [];
+  const safetyWarnings = useMemo(() => safetyByContainer[activeContainer.id] ?? [], [safetyByContainer, activeContainer.id]);
+
+  // Stage 5.6 — Guided Laboratory System: единый контекст для проверки
+  // шагов/завершения эксперимента, собранный целиком из уже посчитанных
+  // данных (никаких новых вычислений физики/химии здесь)
+  const allOccurredReactionIds = useMemo(() => state.reactionLog.map((e) => e.reactionId), [state.reactionLog]);
+  const labStepContext: LabStepContext = useMemo(
+    () => ({
+      activeContainerId: activeContainer.id,
+      activeContainer: activeContainer.data,
+      isSealed: activeContainer.isSealed,
+      isOnStand: isContainerOnStand(activeContainer, state.tools),
+      burnerOn: state.tools.some((t) => t.kind === "burner" && t.isOn),
+      hazard: activeContainer.hazard,
+      occurredReactionIds,
+      allOccurredReactionIds,
+      safetyWarnings,
+      allContainers: state.containers.map((c) => ({ id: c.id, data: c.data })),
+      pourLog: state.pourLog,
+      maxTemperatureCObserved: activeContainer.data.temperatureC,
+      maxPressureRatioObserved: activeContainer.hazard.pressureRatio,
+    }),
+    [activeContainer, state.tools, occurredReactionIds, allOccurredReactionIds, safetyWarnings, state.containers, state.pourLog]
+  );
 
   // само переливание/добавление вещества откладывается на время визуальной
   // анимации (наклон + струя) — реальный расчет Chemistry/Reaction Engine
@@ -1553,6 +1602,7 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
   }
 
   return (
+    <ChemistryLabExperienceProvider simulationId={simulation.id} stepContext={labStepContext}>
     <ChemistryTutorialProvider container={activeContainer.data}>
       <ExperimentProgressProvider labState={{ container: activeContainer.data, occurredReactionIds }}>
         <ChemistryDragProvider>
@@ -1721,6 +1771,21 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
                 <div className="sm:col-span-2">
                   <ExperimentPanel />
                 </div>
+
+                {/* Stage 5.6 — Guided Laboratory System: отдельная, более
+                    богатая учебная надстройка поверх существующей лаборатории.
+                    Не заменяет ExperimentPanel выше (тот продолжает работать
+                    как раньше) — это дополнительный слой: каталог из 12
+                    экспериментов, режимы обучения, пошаговое руководство,
+                    оценка и Лабораторный журнал. */}
+                <div className="space-y-4 sm:col-span-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="font-headline text-lg font-semibold text-slate-100">Учебная лаборатория</h3>
+                    <LabModeSelector />
+                  </div>
+                  <GuidedLabExperienceSection />
+                  <LabNotebookPanel />
+                </div>
               </div>
             </div>
 
@@ -1729,5 +1794,19 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
         </ChemistryDragProvider>
       </ExperimentProgressProvider>
     </ChemistryTutorialProvider>
+    </ChemistryLabExperienceProvider>
+  );
+}
+
+// переключает каталог/пошаговую панель в зависимости от того, выбран ли
+// сейчас эксперимент — и всегда показывает CompletionScreen поверх, если
+// только что был завершен эксперимент
+function GuidedLabExperienceSection() {
+  const { selectedExperiment, lastAssessment } = useChemistryLabExperience();
+  return (
+    <>
+      {lastAssessment && <CompletionScreen />}
+      {selectedExperiment ? <GuidedLabPanel /> : <ExperimentCatalogBrowser />}
+    </>
   );
 }

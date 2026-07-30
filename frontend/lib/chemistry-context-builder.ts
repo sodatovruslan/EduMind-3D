@@ -11,6 +11,8 @@ import { getRegisteredReactions } from "./reaction-engine";
 import type { ExperimentDefinition, ExperimentStatus, ExperimentValidationResult } from "./experiment-validator";
 import type { SafetyWarning } from "./chemistry-safety";
 import type { AccidentLogEntry, HazardResult } from "./hazard-engine";
+import type { LabExperiment, LabStep } from "./chemistry-lab-catalog";
+import type { LearningMode } from "./chemistry-lab-modes";
 
 export interface ChemistrySubstanceInfo {
   id: string;
@@ -49,6 +51,35 @@ export interface ChemistryAIContext {
   // ровно как раньше — hazard будет null). AI Teacher получает ТОЛЬКО эти
   // уже посчитанные детерминированные причины, сам физику не определяет.
   hazard: ChemistryHazardAIContext | null;
+  // Stage 5.6 — Guided Laboratory System: опционально, как и hazard выше.
+  // AI Teacher получает только уже посчитанное состояние учебного слоя
+  // (какой эксперимент выбран, какой шаг сейчас, разблокирован ли он) —
+  // сам ничего не решает про прогресс/разблокировку.
+  labExperience: ChemistryLabExperienceAIContext | null;
+}
+
+export interface ChemistryLabExperienceAIContext {
+  mode: LearningMode;
+  currentExperiment: { id: string; title: string; difficulty: string; objectives: string[] } | null;
+  currentStep: { kind: string; instruction: string; unlocked: boolean } | null;
+  completedExperimentIds: string[];
+}
+
+function buildLabExperienceAIContext(
+  mode: LearningMode,
+  experiment: LabExperiment | null,
+  step: LabStep | null,
+  stepUnlocked: boolean,
+  completedExperimentIds: string[]
+): ChemistryLabExperienceAIContext {
+  return {
+    mode,
+    currentExperiment: experiment
+      ? { id: experiment.id, title: experiment.title, difficulty: experiment.difficulty, objectives: experiment.objectives }
+      : null,
+    currentStep: step ? { kind: step.kind, instruction: step.instruction, unlocked: stepUnlocked } : null,
+    completedExperimentIds,
+  };
 }
 
 export interface ChemistryHazardAIContext {
@@ -94,8 +125,27 @@ export function buildChemistryAIContext(params: {
   safetyWarnings: SafetyWarning[];
   hazard?: HazardResult | null;
   accidentLog?: AccidentLogEntry[];
+  labMode?: LearningMode;
+  labExperiment?: LabExperiment | null;
+  labStep?: LabStep | null;
+  labStepUnlocked?: boolean;
+  labCompletedExperimentIds?: string[];
 }): ChemistryAIContext {
-  const { experiment, experimentStatus, container, occurredReactionIds, validation, safetyWarnings, hazard, accidentLog } = params;
+  const {
+    experiment,
+    experimentStatus,
+    container,
+    occurredReactionIds,
+    validation,
+    safetyWarnings,
+    hazard,
+    accidentLog,
+    labMode,
+    labExperiment,
+    labStep,
+    labStepUnlocked,
+    labCompletedExperimentIds,
+  } = params;
 
   const substances: ChemistrySubstanceInfo[] = [
     ...container.contents.map((c) => ({ id: c.substanceId, amountG: c.grams, dissolved: true })),
@@ -129,5 +179,8 @@ export function buildChemistryAIContext(params: {
     },
     safetyWarnings,
     hazard: hazard ? buildHazardAIContext(hazard, accidentLog ?? []) : null,
+    labExperience: labMode
+      ? buildLabExperienceAIContext(labMode, labExperiment ?? null, labStep ?? null, labStepUnlocked ?? false, labCompletedExperimentIds ?? [])
+      : null,
   };
 }

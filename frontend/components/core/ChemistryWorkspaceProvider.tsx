@@ -114,6 +114,15 @@ export interface ReactionLogEntry {
   at: number;
 }
 
+// Stage 5.6 — реальная запись факта переливания (не путать с ReactionLogEntry:
+// переливание само по себе не реакция). Нужна Laboratory Experiment Catalog
+// как точный сигнал "переливание реально произошло", а не эвристика по массе
+export interface PourLogEntry {
+  sourceId: string;
+  targetId: string;
+  at: number;
+}
+
 interface WorkspaceState {
   containers: ContainerItem[];
   tools: ToolItem[];
@@ -121,6 +130,7 @@ interface WorkspaceState {
   selectedItemId: string | null;
   activeContainerId: string; // сосуд, который проверяет Experiment Validator
   reactionLog: ReactionLogEntry[]; // id реакций, реально сработавших за сессию (по всем сосудам)
+  pourLog: PourLogEntry[]; // реальные факты переливания за сессию
   firstAddedOrder: Record<string, string[]>; // containerId -> substanceId в порядке первого добавления (для Safety System)
   // Stage 5.5 v2 — Hazard Simulation
   emergencyStop: EmergencyStopState | null;
@@ -219,6 +229,7 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
           return c;
         }),
         reactionLog: log,
+        pourLog: [...state.pourLog, { sourceId: action.sourceId, targetId: action.targetId, at: Date.now() }],
         firstAddedOrder: { ...state.firstAddedOrder, [action.targetId]: mergedOrder },
       };
     }
@@ -357,6 +368,7 @@ function createInitialState(): WorkspaceState {
     selectedItemId: null,
     activeContainerId: beaker.id,
     reactionLog: [],
+    pourLog: [],
     firstAddedOrder: {},
     emergencyStop: null,
     accidentLog: [],
