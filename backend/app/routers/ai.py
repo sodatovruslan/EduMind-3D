@@ -105,7 +105,8 @@ async def ask_teacher(
 
     context_json = json.dumps(payload.context, ensure_ascii=False)
     history_payload = [{"role": m.role, "text": m.text} for m in payload.history]
-    reply_text = await get_teacher_response(context_json, payload.student_message, history_payload)
+    learning_profile_json = json.dumps(payload.learning_profile, ensure_ascii=False) if payload.learning_profile else None
+    reply_text = await get_teacher_response(context_json, payload.student_message, history_payload, learning_profile_json)
 
     db.add(
         AILog(

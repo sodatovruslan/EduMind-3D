@@ -32,6 +32,9 @@ class TeacherChatRequest(BaseModel):
     # о лаборатории, который получает AI Teacher. Backend его не пересчитывает.
     context: dict
     history: list[TeacherChatMessage] = []
+    # Stage 4, необязательно: уже посчитанный progress_service.py Learning
+    # Profile — тоже только готовые числа, backend их не пересчитывает.
+    learning_profile: dict | None = None
 
 
 class TeacherChatResponse(BaseModel):

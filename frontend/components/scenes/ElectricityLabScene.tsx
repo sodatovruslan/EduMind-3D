@@ -24,6 +24,9 @@ import { buildAIContext } from "@/lib/ai-context-builder";
 import { solveCircuit, bulbBrightness, type CircuitComponent, type CircuitSolution, type Connection } from "@/lib/circuit-engine";
 import { apiFetch, ApiError } from "@/lib/api";
 import { playConnect, playDisconnect, playFuseBlow, playPowerOn, playSwitchClick } from "@/lib/sound-effects";
+import { ACHIEVEMENTS } from "@/lib/achievements";
+import { explainError } from "@/lib/error-explanations";
+import { submitLabCompleted } from "@/lib/progress-client";
 import type { Simulation } from "@/lib/types";
 
 // Guided Onboarding: наведение курсора в любую точку компонента (не только
@@ -645,20 +648,154 @@ function TeacherChatPanel({
   connections: Connection[];
   solution: CircuitSolution;
 }) {
-  const { task, status, totalXp, result } = useTaskProgress();
+  const { task, status, totalXp, result, learningProfile, recordHintUsed } = useTaskProgress();
   const context = useMemo(
     () => buildAIContext({ task, taskStatus: status, xp: totalXp, components, connections, solution, validation: result }),
     [task, status, totalXp, components, connections, solution, result]
   );
-  return <AITeacherChat simulationId={simulationId} context={context} />;
+  return (
+    <AITeacherChat
+      simulationId={simulationId}
+      context={context}
+      learningProfile={learningProfile}
+      onMessageSent={recordHintUsed}
+    />
+  );
+}
+
+// Adaptive Learning (Stage 4): показывает реальные события из
+// TaskProgressProvider — новые достижения (уже разблокированные backend'ом
+// на основании реальной истории) и заметку о повторяющейся ошибке (backend
+// реально нашел 3 одинаковых кода ошибки подряд в LearningEvent).
+function ProgressBanners() {
+  const { newAchievements, clearNewAchievements, repeatedMistakeCode, dismissRepeatedMistake } = useTaskProgress();
+
+  if (newAchievements.length === 0 && !repeatedMistakeCode) return null;
+
+  return (
+    <div className="flex flex-col gap-2 sm:col-span-2">
+      {newAchievements.length > 0 && (
+        <div className="flex items-center justify-between rounded-xl border border-amber-400/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+          <span>
+            {newAchievements
+              .map((code) => `${ACHIEVEMENTS[code]?.emoji ?? "🏆"} ${ACHIEVEMENTS[code]?.title ?? code}`)
+              .join(", ")}{" "}
+            — новое достижение!
+          </span>
+          <button onClick={clearNewAchievements} className="text-amber-300/70 hover:text-amber-100">
+            ×
+          </button>
+        </div>
+      )}
+      {repeatedMistakeCode && (
+        <div className="flex items-center justify-between rounded-xl border border-sky-400/40 bg-sky-500/10 p-3 text-sm text-sky-200">
+          <span>
+            Я заметил, что ты уже несколько раз повторяешь одну и ту же ошибку: {explainError(repeatedMistakeCode, repeatedMistakeCode)}
+          </span>
+          <button onClick={dismissRepeatedMistake} className="ml-2 shrink-0 text-sky-300/70 hover:text-sky-100">
+            ×
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Adaptive Learning (Stage 4): после завершения попытки (существующий
+// /api/simulations/{id}/complete, не тронут) дополнительно отправляет
+// реальные накопленные за сессию счетчики (sessionTotals из
+// TaskProgressProvider — сколько подсказок/ошибок/попыток было по факту)
+// на /api/progress/lab-completed и показывает итог, который сгенерировал
+// AI Teacher строго на основании этих чисел.
+function CompleteLabSection({
+  simulationId,
+  actionsLog,
+  mountedAtRef,
+}: {
+  simulationId: string;
+  actionsLog: Record<string, unknown>[];
+  mountedAtRef: React.MutableRefObject<number>;
+}) {
+  const { state } = useExperimentState();
+  const { sessionTotals } = useTaskProgress();
+  const [error, setError] = useState<string | null>(null);
+  const [completionScore, setCompletionScore] = useState<number | null>(null);
+  const [labSummary, setLabSummary] = useState<{ summary: string; recommendedNext: string; achievements: string[] } | null>(
+    null
+  );
+
+  async function handleComplete() {
+    setError(null);
+    try {
+      const result = await apiFetch<{ score: number | null }>(`/api/simulations/${simulationId}/complete`, {
+        method: "POST",
+        body: JSON.stringify({
+          actions_log: actionsLog,
+          duration_seconds: Math.round((Date.now() - mountedAtRef.current) / 1000),
+        }),
+      });
+      setCompletionScore(result.score);
+
+      const labResult = await submitLabCompleted({
+        simulationId,
+        tasksCompleted: sessionTotals.tasksCompleted,
+        totalMistakes: sessionTotals.mistakes,
+        totalHints: sessionTotals.hints,
+        totalAttempts: sessionTotals.attempts,
+      });
+      setLabSummary({
+        summary: labResult.summary,
+        recommendedNext: labResult.recommended_next,
+        achievements: labResult.new_achievements,
+      });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Не удалось завершить попытку");
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3 sm:col-span-2">
+      {error && <p className="text-sm text-red-400">{error}</p>}
+
+      <div className="flex items-center gap-3">
+        <button
+          onClick={handleComplete}
+          disabled={state.connections.length === 0}
+          data-testid="complete-button"
+          className="rounded-full border border-glass-border px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/5 disabled:opacity-50"
+        >
+          Завершить попытку
+        </button>
+        {completionScore !== null && (
+          <span className="font-mono text-sm font-medium text-slate-100">Оценка: {completionScore}/100</span>
+        )}
+      </div>
+
+      {labSummary && (
+        <div
+          className="rounded-xl border border-neon-violet/40 bg-neon-violet/10 p-4 text-sm text-slate-200"
+          data-testid="lab-summary"
+        >
+          <p className="whitespace-pre-wrap">{labSummary.summary}</p>
+          {labSummary.recommendedNext && (
+            <p className="mt-2 text-neon-violet">Следующий шаг: {labSummary.recommendedNext}</p>
+          )}
+          {labSummary.achievements.length > 0 && (
+            <p className="mt-2 text-amber-300">
+              Новые достижения:{" "}
+              {labSummary.achievements.map((code) => ACHIEVEMENTS[code]?.title ?? code).join(", ")}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
   const { state, addConnection, updateComponent, resetExperiment, actionsLog, logEvent } = useExperimentState();
   const { quality, setQuality } = useQuality();
   const clock = useSimulationClock();
-  const [error, setError] = useState<string | null>(null);
-  const [completionScore, setCompletionScore] = useState<number | null>(null);
   const mountedAtRef = useRef(Date.now());
 
   const battery = state.components.find((c) => c.id === "battery");
@@ -683,7 +820,6 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
   function handleReset() {
     resetExperiment(INITIAL_COMPONENTS);
     clock.reset();
-    setCompletionScore(null);
   }
 
   function handleClockToggle() {
@@ -692,27 +828,16 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
     else clock.start();
   }
 
-  async function handleComplete() {
-    setError(null);
-    try {
-      const result = await apiFetch<{ score: number | null }>(`/api/simulations/${simulation.id}/complete`, {
-        method: "POST",
-        body: JSON.stringify({
-          actions_log: actionsLog,
-          duration_seconds: Math.round((Date.now() - mountedAtRef.current) / 1000),
-        }),
-      });
-      setCompletionScore(result.score);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Не удалось завершить попытку");
-    }
-  }
-
   const switchClosed = state.components.find((c) => c.id === "switch")?.isClosed ?? true;
 
   return (
     <TutorialProvider connections={state.connections} switchClosed={switchClosed} isCircuitActive={solution.isCircuitActive}>
-    <TaskProgressProvider components={state.components} connections={state.connections} solution={solution}>
+    <TaskProgressProvider
+      simulationId={simulation.id}
+      components={state.components}
+      connections={state.connections}
+      solution={solution}
+    >
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
     <div className="flex-1 rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">
       <div className="relative">
@@ -833,21 +958,9 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
           <TaskPanel />
         </div>
 
-        {error && <p className="text-sm text-red-400 sm:col-span-2">{error}</p>}
+        <ProgressBanners />
 
-        <div className="flex items-center gap-3 sm:col-span-2">
-          <button
-            onClick={handleComplete}
-            disabled={state.connections.length === 0}
-            data-testid="complete-button"
-            className="rounded-full border border-glass-border px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/5 disabled:opacity-50"
-          >
-            Завершить попытку
-          </button>
-          {completionScore !== null && (
-            <span className="font-mono text-sm font-medium text-slate-100">Оценка: {completionScore}/100</span>
-          )}
-        </div>
+        <CompleteLabSection simulationId={simulation.id} actionsLog={actionsLog} mountedAtRef={mountedAtRef} />
       </div>
     </div>
 

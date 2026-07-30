@@ -34,3 +34,7 @@ class User(Base):
 
     lab_results = relationship("LabResult", back_populates="user", cascade="all, delete-orphan")
     ai_logs = relationship("AILog", back_populates="user", cascade="all, delete-orphan")
+    learning_profile = relationship(
+        "LearningProfile", back_populates="user", uselist=False, cascade="all, delete-orphan"
+    )
+    learning_events = relationship("LearningEvent", back_populates="user", cascade="all, delete-orphan")

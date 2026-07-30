@@ -10,6 +10,8 @@ OpenAI Chat Completions — используется тот провайдер, 
 (эндпоинт -> AI_Log -> фронтенд) можно тестировать без сетевых вызовов
 и без траты денег на реальный API.
 """
+import json
+
 import httpx
 
 from app.config import settings
@@ -118,11 +120,58 @@ async def get_grading_feedback(context_description: str) -> str:
     return await _chat_completion(SYSTEM_PROMPT_GRADE, context_description)
 
 
-async def get_teacher_response(context_json: str, student_message: str, history: list[dict]) -> str:
+async def get_teacher_response(
+    context_json: str,
+    student_message: str,
+    history: list[dict],
+    learning_profile_json: str | None = None,
+) -> str:
+    # learning_profile_json — Stage 4, необязательный: та же строгая логика
+    # "AI не считает сам" — профиль уже целиком посчитан progress_service.py,
+    # сюда попадает только готовый JSON, промпт (SYSTEM_PROMPT_TEACHER) и его
+    # правила не меняются
     history_text = "\n".join(f"{h['role']}: {h['text']}" for h in history[-10:])
+    profile_block = f"Профиль обучения ученика (JSON):\n{learning_profile_json}\n\n" if learning_profile_json else ""
     user_prompt = (
         f"Состояние лаборатории (JSON, единственный источник фактов):\n{context_json}\n\n"
+        + profile_block
         + (f"История разговора:\n{history_text}\n\n" if history_text else "")
         + f"Вопрос ученика: {student_message}"
     )
     return await _chat_completion(SYSTEM_PROMPT_TEACHER, user_prompt)
+
+
+# Lab Summary + Teacher Notes (Stage 4) — отдельный промпт для итога
+# лабораторной, не трогает SYSTEM_PROMPT_TEACHER/get_teacher_response выше.
+# Тоже строго контекстный: только то, что уже посчитано Task Validator +
+# Learning Profile, никаких собственных оценок или придуманных фактов.
+SYSTEM_PROMPT_LAB_SUMMARY = (
+    "Ты — виртуальный преподаватель физики EduMind 3D. Ученик только что завершил лабораторную работу. "
+    "Тебе дан JSON с реальными фактами: какие задачи пройдены, сколько ошибок/подсказок потребовалось, "
+    "текущий Learning Profile (уровень, XP, сильные/слабые темы, рекомендованная сложность). "
+    "НИКОГДА не придумывай оценки, ошибки или темы, которых нет в этом JSON.\n\n"
+    "Ответь СТРОГО в формате JSON без markdown-разметки: "
+    '{"summary": "короткий дружелюбный итог 2-4 пунктами, что ученик сегодня освоил", '
+    '"recommended_next": "одна короткая рекомендация следующего шага на основе recommended_difficulty и weak_topics", '
+    '"note": "одна короткая (до 20 слов) заметка преподавателя об ученике для внутренней истории, по-деловому, без критики"}'
+)
+
+
+async def get_lab_summary(context_json: str) -> dict:
+    raw = await _chat_completion(SYSTEM_PROMPT_LAB_SUMMARY, context_json)
+    try:
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.strip("`")
+            if cleaned.startswith("json"):
+                cleaned = cleaned[4:]
+        parsed = json.loads(cleaned)
+        return {
+            "summary": str(parsed.get("summary", raw)),
+            "recommended_next": str(parsed.get("recommended_next", "")),
+            "note": parsed.get("note"),
+        }
+    except (json.JSONDecodeError, AttributeError):
+        # mock-режим (без ключей) и любой не-JSON ответ модели — отдаем как
+        # есть текстом, не выдумывая структуру, которой не было
+        return {"summary": raw, "recommended_next": "", "note": None}

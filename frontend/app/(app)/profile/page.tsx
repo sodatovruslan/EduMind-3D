@@ -7,6 +7,7 @@ import { apiFetch, ApiError } from "@/lib/api";
 import type { User } from "@/lib/types";
 import Loader from "@/components/ui/Loader";
 import ProtectedRoute from "@/components/ProtectedRoute";
+import ProgressDashboard from "@/components/progress/ProgressDashboard";
 
 const ROLE_LABEL = {
   student: "Ученик",
@@ -52,9 +53,10 @@ function ProfileContent() {
   }
 
   return (
-    <div className="max-w-lg">
-      <h1 className="mb-6 font-headline text-2xl font-bold text-slate-100">Профиль</h1>
+    <div className="max-w-3xl space-y-6">
+      <h1 className="font-headline text-2xl font-bold text-slate-100">Профиль</h1>
 
+      <div className="max-w-lg">
       <div className="glass-panel rim-light rounded-2xl p-6">
         <div className="mb-6 flex items-center gap-4">
           <div className="neon-glow-indigo flex h-14 w-14 items-center justify-center rounded-full bg-brand/20 text-brand">
@@ -109,6 +111,9 @@ function ProfileContent() {
           </button>
         </div>
       </div>
+      </div>
+
+      <ProgressDashboard />
     </div>
   );
 }

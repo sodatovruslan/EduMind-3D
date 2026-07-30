@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Bot, Check, Copy, GraduationCap, Send, Trash2 } from "lucide-react";
 import { apiFetch, ApiError } from "@/lib/api";
 import type { LabAIContext } from "@/lib/ai-context-builder";
+import type { LearningProfile } from "@/lib/progress-client";
 
 /**
  * AI Teacher (Stage 3) — виртуальный преподаватель, а не универсальный
@@ -32,9 +33,15 @@ const SUGGESTED_QUESTIONS = [
 interface AITeacherChatProps {
   simulationId: string;
   context: LabAIContext;
+  // Stage 4, необязательно: уже посчитанный Learning Profile — если есть,
+  // отправляется вместе с AI Context Builder, чтобы AI мог говорить про
+  // прогресс ("ты уже уверенно собираешь простые цепи"), а не только про
+  // текущее состояние схемы
+  learningProfile?: LearningProfile | null;
+  onMessageSent?: () => void;
 }
 
-export default function AITeacherChat({ simulationId, context }: AITeacherChatProps) {
+export default function AITeacherChat({ simulationId, context, learningProfile, onMessageSent }: AITeacherChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -53,6 +60,7 @@ export default function AITeacherChat({ simulationId, context }: AITeacherChatPr
     setMessages((prev) => [...prev, { role: "user", text: studentMessage }]);
     setInput("");
     setIsLoading(true);
+    onMessageSent?.();
 
     try {
       const response = await apiFetch<{ reply: string }>("/api/ai/teacher", {
@@ -62,6 +70,7 @@ export default function AITeacherChat({ simulationId, context }: AITeacherChatPr
           student_message: studentMessage,
           context,
           history,
+          learning_profile: learningProfile ?? null,
         }),
       });
       setMessages((prev) => [...prev, { role: "assistant", text: response.reply }]);
