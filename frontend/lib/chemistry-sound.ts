@@ -29,6 +29,19 @@ export function resumeAudioOnGesture(): void {
   }
 }
 
+// Stage 5.5 v2 — глобальное отключение звука (доступность/UX). Гейтится
+// внутри общих примитивов tone()/noiseBurst(), поэтому распространяется
+// сразу на ВСЕ звуки модуля, старые и новые, без правки каждой функции
+let masterMuted = false;
+
+export function setSoundMuted(muted: boolean): void {
+  masterMuted = muted;
+}
+
+export function isSoundMuted(): boolean {
+  return masterMuted;
+}
+
 function envelope(gain: GainNode, audio: AudioContext, peak: number, attack: number, release: number) {
   const now = audio.currentTime;
   gain.gain.cancelScheduledValues(now);
@@ -39,7 +52,7 @@ function envelope(gain: GainNode, audio: AudioContext, peak: number, attack: num
 
 function tone(freq: number, duration: number, type: OscillatorType = "sine", peak = 0.15): void {
   const audio = getContext();
-  if (!audio) return;
+  if (!audio || masterMuted) return;
   const osc = audio.createOscillator();
   const gain = audio.createGain();
   osc.type = type;
@@ -53,7 +66,7 @@ function tone(freq: number, duration: number, type: OscillatorType = "sine", pea
 
 function noiseBurst(duration: number, filterFreq: number, peak = 0.2): void {
   const audio = getContext();
-  if (!audio) return;
+  if (!audio || masterMuted) return;
   const bufferSize = Math.max(1, Math.floor(audio.sampleRate * duration));
   const buffer = audio.createBuffer(1, bufferSize, audio.sampleRate);
   const data = buffer.getChannelData(0);
@@ -117,6 +130,122 @@ export function startBoilingLoop(): () => void {
     if (stopped) return;
     noiseBurst(0.12, 500 + Math.random() * 400, 0.045);
     setTimeout(tick, 220 + Math.random() * 180);
+  }
+  tick();
+
+  return () => {
+    stopped = true;
+  };
+}
+
+/**
+ * Stage 5.5 v2 — Hazard Simulation sound events. Все переиспользуют тот же
+ * singleton AudioContext и общие примитивы tone()/noiseBurst() выше —
+ * новый AudioContext не создается. Одноразовые события (hiss/stress/snap/
+ * bang/whoosh/thud) вызываются вызывающим кодом РОВНО при реальном
+ * переходе состояния (см. ChemistryWorldScene), не на каждый рендер.
+ * Длящиеся эффекты (pressure hum, fire crackle, alarm) следуют тому же
+ * паттерну "stopped-флаг + setTimeout", что и startBoilingLoop — вызывающий
+ * код обязан вызвать возвращенную stop()-функцию, когда реальное условие
+ * (например, isSealed && pressureRatio>threshold) перестает выполняться.
+ */
+
+// выход газа из открытого сосуда — шипение
+export function playGasHiss(): void {
+  noiseBurst(0.35, 4000, 0.06);
+}
+
+// нарастающее давление в закрытом сосуде — тихий низкий гул, громкость
+// зависит от intensity (0..1), которую передает вызывающий код из
+// HazardResult.pressureRatio — само значение не выдумывается здесь
+export function startPressureHum(getIntensity: () => number): () => void {
+  const audio = getContext();
+  if (!audio) return () => {};
+  let stopped = false;
+
+  function tick() {
+    if (stopped) return;
+    const intensity = Math.max(0, Math.min(1, getIntensity()));
+    if (intensity > 0.01) {
+      tone(65 + intensity * 15, 0.5, "sine", 0.03 + intensity * 0.05);
+    }
+    setTimeout(tick, 450);
+  }
+  tick();
+
+  return () => {
+    stopped = true;
+  };
+}
+
+// напряжение стекла — короткий скрип (свип частоты через прямой доступ к осциллятору)
+export function playGlassStress(): void {
+  const audio = getContext();
+  if (!audio || masterMuted) return;
+  const osc = audio.createOscillator();
+  const gain = audio.createGain();
+  osc.type = "sawtooth";
+  osc.frequency.setValueAtTime(1200, audio.currentTime);
+  osc.frequency.linearRampToValueAtTime(900, audio.currentTime + 0.3);
+  osc.connect(gain);
+  gain.connect(audio.destination);
+  envelope(gain, audio, 0.04, 0.02, 0.3);
+  osc.start();
+  osc.stop(audio.currentTime + 0.35);
+}
+
+// микротрещина — короткий резкий щелчок
+export function playCrackSnap(): void {
+  noiseBurst(0.06, 3200, 0.18);
+}
+
+// разрушение сосуда — громкий низкочастотный удар + шум осколков
+export function playRuptureBang(): void {
+  noiseBurst(0.4, 300, 0.28);
+  tone(60, 0.35, "square", 0.15);
+}
+
+// вспышка — быстрый шумовой всплеск с высокочастотным фильтром
+export function playFlashWhoosh(): void {
+  noiseBurst(0.2, 5000, 0.2);
+}
+
+// пожар — неровное потрескивание, управляемый цикл (аналогично startBoilingLoop)
+export function startFireCrackle(): () => void {
+  const audio = getContext();
+  if (!audio) return () => {};
+  let stopped = false;
+
+  function tick() {
+    if (stopped) return;
+    noiseBurst(0.08, 700 + Math.random() * 900, 0.05);
+    setTimeout(tick, 90 + Math.random() * 120);
+  }
+  tick();
+
+  return () => {
+    stopped = true;
+  };
+}
+
+// короткий ударный "толчок" (для тряски камеры/шоковой волны)
+export function playShockThud(): void {
+  noiseBurst(0.15, 150, 0.22);
+}
+
+// аварийная сирена — управляемый цикл двух чередующихся тонов,
+// запускается при входе в Emergency Stop и останавливается при reset()
+export function startEmergencyAlarm(): () => void {
+  const audio = getContext();
+  if (!audio) return () => {};
+  let stopped = false;
+  let high = true;
+
+  function tick() {
+    if (stopped) return;
+    tone(high ? 880 : 660, 0.25, "square", 0.06);
+    high = !high;
+    setTimeout(tick, 300);
   }
   tick();
 

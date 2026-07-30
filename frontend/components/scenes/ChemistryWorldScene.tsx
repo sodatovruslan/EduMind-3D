@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import { AnimatePresence, motion } from "framer-motion";
-import { Flame, RotateCw } from "lucide-react";
+import { AlertOctagon, Flame, Lock, RotateCcw, RotateCw, Unlock, Volume2, VolumeX } from "lucide-react";
 import CanvasShell from "@/components/scenes/CanvasShell";
 import {
   ChemistryWorkspaceProvider,
@@ -26,16 +26,41 @@ import { getRegisteredReactions } from "@/lib/reaction-engine";
 import { checkSafety, type SafetyWarning } from "@/lib/chemistry-safety";
 import {
   playBurnerIgnite,
+  playCrackSnap,
+  playFlashWhoosh,
+  playGasHiss,
   playGlassClink,
+  playGlassStress,
   playPour,
   playReactionSuccess,
+  playRuptureBang,
   playSafetyWarning,
+  playShockThud,
   resumeAudioOnGesture,
+  setSoundMuted,
   startBoilingLoop,
+  startEmergencyAlarm,
+  startFireCrackle,
+  startPressureHum,
 } from "@/lib/chemistry-sound";
 import { buildChemistryAIContext } from "@/lib/chemistry-context-builder";
 import { useQuality, type QualityLevel } from "@/lib/quality-context";
 import type { Simulation } from "@/lib/types";
+
+// Stage 5.5 v2 — Hazard Simulation: доступность, без учета prefers-reduced-motion
+// нельзя показывать тряску камеры/агрессивные эффекты
+function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    setReduced(query.matches);
+    const listener = (e: MediaQueryListEvent) => setReduced(e.matches);
+    query.addEventListener("change", listener);
+    return () => query.removeEventListener("change", listener);
+  }, []);
+  return reduced;
+}
 
 const HEAT_RATE_C_PER_SEC = 12;
 const DROP_PROXIMITY_RADIUS = 0.5;
@@ -330,6 +355,31 @@ function RotateHandle({ id }: { id: string }) {
   );
 }
 
+// Stage 5.5 v2 — переключатель "герметично закрыт / открыт". Заблокирован
+// во время Emergency Stop (реальная блокировка в reducer'е, кнопка просто
+// это отражает — TOGGLE_SEAL с emergencyStop все равно не даст эффекта)
+function SealHandle({ id, isSealed, disabled }: { id: string; isSealed: boolean; disabled: boolean }) {
+  const { toggleSeal } = useChemistryWorkspace();
+  return (
+    <Html position={[0.35, 0.6, 0]} center distanceFactor={8} style={{ pointerEvents: "auto" }}>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          if (!disabled) toggleSeal(id);
+        }}
+        disabled={disabled}
+        data-testid={`seal-toggle-${id}`}
+        title={isSealed ? "Открыть сосуд" : "Герметично закрыть сосуд"}
+        className={`flex h-6 w-6 items-center justify-center rounded-full border text-white transition disabled:opacity-40 ${
+          isSealed ? "border-amber-400/60 bg-amber-900/70" : "border-white/20 bg-slate-900/85 hover:bg-slate-800"
+        }`}
+      >
+        {isSealed ? <Lock size={12} /> : <Unlock size={12} />}
+      </button>
+    </Html>
+  );
+}
+
 const REACTION_EFFECT_DURATION_MS = 2600;
 const STEAM_PREVIEW_START_C = 70;
 const STEAM_PREVIEW_FULL_C = 100;
@@ -453,6 +503,208 @@ function HeatingEffects({ item, halfHeight }: { item: ContainerItem; halfHeight:
   return <SteamMeshes refs={steamRefs} />;
 }
 
+function hazardEventIntensity(item: ContainerItem, type: string): number {
+  return item.hazard.visualEvents.find((e) => e.type === type)?.intensity ?? 0;
+}
+
+// Stage 5.5 v2 — визуальные эффекты Hazard Engine: газовое облако/дым,
+// напряжение стекла (трещины), осколки при разрушении, вспышка, ударная
+// волна. Все интенсивности читаются из уже посчитанного item.hazard —
+// компонент сам ничего не решает и не использует Math.random для самого
+// события или его силы (только для распределения частиц по кругу, что не
+// влияет на физический результат). Полностью отдельно от ReactionEffects/
+// HeatingEffects (Stage 5.5) — ничего там не меняет.
+function HazardEffects({ item, halfHeight }: { item: ContainerItem; halfHeight: number }) {
+  const gasCloudRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const smokeRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const crackRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const shardRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const flashRef = useRef<THREE.Mesh>(null);
+  const flashLightRef = useRef<THREE.PointLight>(null);
+  const shockwaveRef = useRef<THREE.Mesh>(null);
+
+  const shatterProgress = useRef(0);
+  const wasShatter = useRef(false);
+  const flashProgress = useRef(0);
+  const wasFlash = useRef(false);
+  const shockProgress = useRef(0);
+  const wasShockwave = useRef(false);
+
+  useFrame(({ clock }, delta) => {
+    driveSteamMeshes(gasCloudRefs.current, clock.elapsedTime * 0.7, hazardEventIntensity(item, "gas_cloud"), halfHeight);
+    driveSteamMeshes(smokeRefs.current, clock.elapsedTime * 0.5, hazardEventIntensity(item, "smoke"), halfHeight + 0.15);
+
+    const crackIntensity = hazardEventIntensity(item, "crack");
+    crackRefs.current.forEach((mesh) => {
+      if (!mesh) return;
+      mesh.visible = crackIntensity > 0.01;
+      const mat = mesh.material as THREE.MeshBasicMaterial;
+      mat.opacity = crackIntensity * 0.8;
+    });
+
+    // осколки — одноразовый всплеск по переднему фронту события "shatter"
+    const shatterNow = hazardEventIntensity(item, "shatter") > 0;
+    if (shatterNow && !wasShatter.current) shatterProgress.current = 1;
+    wasShatter.current = shatterNow;
+    if (shatterProgress.current > 0) {
+      shatterProgress.current = Math.max(0, shatterProgress.current - delta * 0.7);
+      const t = 1 - shatterProgress.current;
+      shardRefs.current.forEach((mesh, i) => {
+        if (!mesh) return;
+        const angle = (i / shardRefs.current.length) * Math.PI * 2 + i;
+        mesh.visible = true;
+        mesh.position.set(Math.cos(angle) * t * 0.6, halfHeight * t * 1.4, Math.sin(angle) * t * 0.6);
+        mesh.rotation.set(t * 4, t * 3, t * 2);
+        const mat = mesh.material as THREE.MeshBasicMaterial;
+        mat.opacity = shatterProgress.current;
+      });
+    } else {
+      shardRefs.current.forEach((mesh) => {
+        if (mesh) mesh.visible = false;
+      });
+    }
+
+    // вспышка — короткий яркий импульс
+    const flashNow = hazardEventIntensity(item, "flash") > 0;
+    if (flashNow && !wasFlash.current) flashProgress.current = 1;
+    wasFlash.current = flashNow;
+    flashProgress.current = Math.max(0, flashProgress.current - delta * 4);
+    if (flashRef.current) {
+      const mat = flashRef.current.material as THREE.MeshBasicMaterial;
+      mat.opacity = flashProgress.current * 0.9;
+    }
+    if (flashLightRef.current) flashLightRef.current.intensity = flashProgress.current * 6;
+
+    // ударная волна — расширяющееся кольцо, один проход на событие
+    const shockwaveNow = hazardEventIntensity(item, "shockwave") > 0;
+    if (shockwaveNow && !wasShockwave.current) shockProgress.current = 0.001;
+    wasShockwave.current = shockwaveNow;
+    if (shockProgress.current > 0) {
+      shockProgress.current = Math.min(1.001, shockProgress.current + delta * 2.2);
+      if (shockwaveRef.current) {
+        if (shockProgress.current >= 1) {
+          shockwaveRef.current.visible = false;
+          shockProgress.current = 0;
+        } else {
+          const scale = 0.2 + shockProgress.current * 2.6;
+          shockwaveRef.current.visible = true;
+          shockwaveRef.current.scale.set(scale, scale, scale);
+          const mat = shockwaveRef.current.material as THREE.MeshBasicMaterial;
+          mat.opacity = (1 - shockProgress.current) * 0.6;
+        }
+      }
+    }
+  });
+
+  return (
+    <>
+      <SteamMeshes refs={gasCloudRefs} />
+      {[0, 1, 2].map((i) => (
+        <mesh
+          key={`smoke-${i}`}
+          ref={(el) => {
+            smokeRefs.current[i] = el;
+          }}
+          visible={false}
+        >
+          <sphereGeometry args={[0.07, 8, 8]} />
+          <meshBasicMaterial color="#334155" transparent opacity={0} depthWrite={false} />
+        </mesh>
+      ))}
+      {[0, 1, 2, 3].map((i) => (
+        <mesh
+          key={`crack-${i}`}
+          ref={(el) => {
+            crackRefs.current[i] = el;
+          }}
+          position={[Math.cos((i * Math.PI) / 2) * 0.18, halfHeight * (0.1 + (i % 2) * 0.3), Math.sin((i * Math.PI) / 2) * 0.18]}
+          rotation={[0, (i * Math.PI) / 2, Math.PI / 5]}
+          visible={false}
+        >
+          <boxGeometry args={[0.015, 0.16, 0.005]} />
+          <meshBasicMaterial color="#0f172a" transparent opacity={0} depthWrite={false} />
+        </mesh>
+      ))}
+      {[0, 1, 2, 3, 4, 5].map((i) => (
+        <mesh
+          key={`shard-${i}`}
+          ref={(el) => {
+            shardRefs.current[i] = el;
+          }}
+          visible={false}
+        >
+          <tetrahedronGeometry args={[0.035]} />
+          <meshBasicMaterial color="#e0f2fe" transparent opacity={0} depthWrite={false} />
+        </mesh>
+      ))}
+      <mesh ref={flashRef} position={[0, halfHeight * 0.5, 0]}>
+        <sphereGeometry args={[0.4, 12, 12]} />
+        <meshBasicMaterial color="#fef3c7" transparent opacity={0} depthWrite={false} />
+      </mesh>
+      <pointLight ref={flashLightRef} position={[0, halfHeight, 0]} color="#fef3c7" intensity={0} distance={3} decay={2} />
+      <mesh ref={shockwaveRef} position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
+        <ringGeometry args={[0.3, 0.42, 32]} />
+        <meshBasicMaterial color="#fde68a" transparent opacity={0} depthWrite={false} />
+      </mesh>
+    </>
+  );
+}
+
+// Stage 5.5 v2 — звук Hazard Engine. Одноразовые события проигрываются
+// ровно тогда, когда меняется ссылка на item.hazard (то есть ровно один раз
+// на реальный тик Hazard Engine, а не на каждый React-рендер — HAZARD_TICK
+// в провайдере создает новый объект hazard только при фактическом
+// пересчете). Длящиеся эффекты (гул давления, треск огня) — управляемые
+// циклы, останавливаются сами, когда реальное условие исчезает.
+function HazardSoundEffects({ item }: { item: ContainerItem }) {
+  const hazardRef = useRef(item.hazard);
+  hazardRef.current = item.hazard;
+
+  useEffect(() => {
+    item.hazard.soundEvents.forEach((event) => {
+      switch (event.type) {
+        case "gas_hiss":
+          playGasHiss();
+          break;
+        case "glass_stress":
+          playGlassStress();
+          break;
+        case "crack_snap":
+          playCrackSnap();
+          break;
+        case "rupture_bang":
+          playRuptureBang();
+          break;
+        case "flash_whoosh":
+          playFlashWhoosh();
+          break;
+        case "shock_thud":
+          playShockThud();
+          break;
+        default:
+          break;
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.hazard]);
+
+  const pressureHumActive = item.hazard.soundEvents.some((e) => e.type === "pressure_hum");
+  useEffect(() => {
+    if (!pressureHumActive) return;
+    const stop = startPressureHum(() => hazardRef.current.pressureRatio);
+    return stop;
+  }, [pressureHumActive]);
+
+  const fireCrackleActive = item.hazard.soundEvents.some((e) => e.type === "fire_crackle");
+  useEffect(() => {
+    if (!fireCrackleActive) return;
+    const stop = startFireCrackle();
+    return stop;
+  }, [fireCrackleActive]);
+
+  return null;
+}
+
 function ContainerMesh({
   item,
   isSnapTarget,
@@ -551,8 +803,10 @@ function ContainerMesh({
 
           <ReactionEffects item={item} halfHeight={halfHeight} />
           <HeatingEffects item={item} halfHeight={halfHeight} />
+          <HazardEffects item={item} halfHeight={halfHeight} />
         </PourTilt>
       </GrabLift>
+      <HazardSoundEffects item={item} />
 
       {(isSelected || isActive) && (
         <mesh position={[0, -halfHeight - 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
@@ -576,6 +830,9 @@ function ContainerMesh({
       </mesh>
 
       {isSelected && <RotateHandle id={item.id} />}
+      {isSelected && (
+        <SealHandle id={item.id} isSealed={item.isSealed} disabled={state.emergencyStop !== null} />
+      )}
 
       <Html position={[0, halfHeight + 0.25, 0]} center distanceFactor={9} style={{ pointerEvents: "none" }}>
         <div className="pointer-events-none whitespace-nowrap rounded-md border border-white/10 bg-slate-900/85 px-2 py-0.5 text-[10px] text-slate-100">
@@ -884,33 +1141,59 @@ interface ChemistrySceneProps {
   debugMode: boolean;
 }
 
-// Interaction Debug Mode — компактная сводка текущего состояния
-// взаимодействия поверх сцены (только для разработки)
+// Interaction Debug Mode + Hazard Debug Mode (расширение того же
+// dev-only оверлея, не отдельная параллельная система) — компактная
+// сводка текущего состояния взаимодействия и реальных значений Hazard
+// Engine поверх сцены. Ничего здесь не влияет на расчеты — оверлей
+// только читает уже посчитанные данные.
 function DebugOverlay({
   draggingId,
   snapTargetId,
-  activeContainerId,
+  activeContainer,
+  emergencyStopActive,
 }: {
   draggingId: string | null;
   snapTargetId: string | null;
-  activeContainerId: string;
+  activeContainer: ContainerItem;
+  emergencyStopActive: boolean;
 }) {
+  const h = activeContainer.hazard;
   return (
     <Html fullscreen style={{ pointerEvents: "none" }}>
-      <div className="absolute left-2 top-2 rounded-md border border-cyan-400/40 bg-black/80 px-2 py-1 font-mono text-[10px] text-cyan-300">
-        drag: {draggingId ?? "—"} · snap: {snapTargetId ?? "—"} · active: {activeContainerId}
+      <div className="absolute left-2 top-2 flex flex-col gap-0.5 rounded-md border border-cyan-400/40 bg-black/85 px-2 py-1 font-mono text-[10px] text-cyan-300">
+        <div>
+          drag: {draggingId ?? "—"} · snap: {snapTargetId ?? "—"} · active: {activeContainer.id}
+        </div>
+        <div className="text-amber-300">
+          hazard: {h.level} · T={h.temperatureC.toFixed(1)}°C ({(h.temperatureRatio * 100).toFixed(0)}%) · P=
+          {h.pressureKPa.toFixed(1)}kPa ({(h.pressureRatio * 100).toFixed(0)}%) · gas={h.gasAmountG.toFixed(2)}г · свободный
+          объем={h.freeVolumeMl.toFixed(0)}мл · целостность={h.containerIntegrity.level} · sealed=
+          {activeContainer.isSealed ? "да" : "нет"} · e-stop={emergencyStopActive ? "АКТИВЕН" : "нет"}
+        </div>
+        {h.causes.length > 0 && <div className="text-red-300">причины: {h.causes.map((c) => c.code).join(", ")}</div>}
       </div>
     </Html>
   );
 }
 
+const HAZARD_TICK_INTERVAL_S = 0.4;
+
 function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer, debugMode }: ChemistrySceneProps) {
-  const { state, heatTick } = useChemistryWorkspace();
+  const { state, heatTick, hazardTick } = useChemistryWorkspace();
   const { draggingId } = useChemistryDrag();
+  const hazardAccumRef = useRef(0);
 
   useFrame((_, delta) => {
     const burnerOn = state.tools.some((t) => t.kind === "burner" && t.isOn);
     if (burnerOn) heatTick(delta * HEAT_RATE_C_PER_SEC);
+
+    // Hazard Engine — контролируемый шаг симуляции, НЕ каждый кадр рендера:
+    // копим прошедшее время и запускаем реальный расчет раз в ~0.4с
+    hazardAccumRef.current += delta;
+    if (hazardAccumRef.current >= HAZARD_TICK_INTERVAL_S) {
+      hazardTick(hazardAccumRef.current);
+      hazardAccumRef.current = 0;
+    }
   });
 
   // зона приема подсвечивается заранее, пока перетаскиваемый предмет еще
@@ -981,9 +1264,18 @@ function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer
 
         {pourStream && <PourStream from={pourStream.from} to={pourStream.to} colorHex={pourStream.colorHex} />}
 
-        {debugMode && (
-          <DebugOverlay draggingId={draggingId} snapTargetId={snapTargetId} activeContainerId={state.activeContainerId} />
-        )}
+        {debugMode &&
+          (() => {
+            const activeContainer = state.containers.find((c) => c.id === state.activeContainerId);
+            return activeContainer ? (
+              <DebugOverlay
+                draggingId={draggingId}
+                snapTargetId={snapTargetId}
+                activeContainer={activeContainer}
+                emergencyStopActive={state.emergencyStop !== null}
+              />
+            ) : null;
+          })()}
 
         <DragSurface onDrop={onDrop} />
       </group>
@@ -1001,29 +1293,65 @@ function ChemistryCanvas({
   addAnimation,
   safetyByContainer,
   debugMode,
+  shakeCounter,
+  reducedMotion,
 }: {
   quality: QualityLevel;
+  shakeCounter: number;
+  reducedMotion: boolean;
 } & ChemistrySceneProps) {
   const { draggingId } = useChemistryDrag();
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const prevShakeCounter = useRef(shakeCounter);
+
+  // контролируемая тряска камеры при взрыве/разрыве — чистый CSS-transform
+  // на DOM-обертке канваса, НЕ трогает камеру Three.js/OrbitControls
+  // напрямую (никакого конфликта с орбитальным управлением), короткая
+  // (400мс) и полностью отключается при prefers-reduced-motion
+  useEffect(() => {
+    if (shakeCounter === prevShakeCounter.current) return;
+    prevShakeCounter.current = shakeCounter;
+    if (reducedMotion) return;
+    const el = wrapperRef.current;
+    if (!el) return;
+    const start = performance.now();
+    const duration = 400;
+    let frameId: number;
+    function tick(now: number) {
+      const t = (now - start) / duration;
+      if (t >= 1) {
+        if (el) el.style.transform = "";
+        return;
+      }
+      const mag = (1 - t) * 8;
+      if (el) el.style.transform = `translate(${(Math.random() - 0.5) * mag}px, ${(Math.random() - 0.5) * mag}px)`;
+      frameId = requestAnimationFrame(tick);
+    }
+    frameId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frameId);
+  }, [shakeCounter, reducedMotion]);
+
   return (
-    <CanvasShell
-      cameraPosition={[0, 4.2, 5.6]}
-      target={[0, 0, 0]}
-      floorY={-0.1}
-      bloomIntensity={0.3}
-      quality={quality}
-      orbitEnabled={!draggingId}
-      minPolarAngle={Math.PI / 8}
-      maxPolarAngle={Math.PI / 2.3}
-    >
-      <ChemistryScene
-        onDrop={onDrop}
-        pourAnimation={pourAnimation}
-        addAnimation={addAnimation}
-        safetyByContainer={safetyByContainer}
-        debugMode={debugMode}
-      />
-    </CanvasShell>
+    <div ref={wrapperRef}>
+      <CanvasShell
+        cameraPosition={[0, 4.2, 5.6]}
+        target={[0, 0, 0]}
+        floorY={-0.1}
+        bloomIntensity={0.3}
+        quality={quality}
+        orbitEnabled={!draggingId}
+        minPolarAngle={Math.PI / 8}
+        maxPolarAngle={Math.PI / 2.3}
+      >
+        <ChemistryScene
+          onDrop={onDrop}
+          pourAnimation={pourAnimation}
+          addAnimation={addAnimation}
+          safetyByContainer={safetyByContainer}
+          debugMode={debugMode}
+        />
+      </CanvasShell>
+    </div>
   );
 }
 
@@ -1052,9 +1380,11 @@ function ChemistryTeacherChatPanel({ simulationId, safetyWarnings }: { simulatio
             occurredReactionIds,
             validation: result,
             safetyWarnings,
+            hazard: activeContainer.hazard,
+            accidentLog: state.accidentLog,
           })
         : null,
-    [experiment, experimentStatus, activeContainer, occurredReactionIds, result, safetyWarnings]
+    [experiment, experimentStatus, activeContainer, occurredReactionIds, result, safetyWarnings, state.accidentLog]
   );
 
   if (!context) return null;
@@ -1076,11 +1406,13 @@ export default function ChemistryWorldScene({ simulation }: ChemistryWorldSceneP
 const POUR_ANIMATION_MS = 750;
 
 function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
-  const { state, addSubstanceToContainer, pourInto, moveItem, setActiveContainer } = useChemistryWorkspace();
+  const { state, addSubstanceToContainer, pourInto, moveItem, setActiveContainer, resetExperiment } = useChemistryWorkspace();
   const { quality, setQuality } = useQuality();
   const [pourAnimation, setPourAnimation] = useState<PourAnimationState | null>(null);
   const [addAnimation, setAddAnimation] = useState<AddAnimationState | null>(null);
   const [debugMode, setDebugMode] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const reducedMotion = usePrefersReducedMotion();
 
   const activeContainer = state.containers.find((c) => c.id === state.activeContainerId) ?? state.containers[0];
   const occurredReactionIds = useMemo(
@@ -1157,7 +1489,40 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
     return stop;
   }, [anyBoiling]);
 
+  // Emergency Stop — часть состояния симуляции (не только оверлей): как
+  // только он сработал, немедленно корректно завершаем текущую визуальную
+  // анимацию переливания/добавления (реальный дозвон в reducer уже
+  // заблокирован там же, но визуально наклон должен вернуться в исходное
+  // положение сразу, а не доиграть до конца)
+  useEffect(() => {
+    if (state.emergencyStop) {
+      setPourAnimation(null);
+      setAddAnimation(null);
+    }
+  }, [state.emergencyStop]);
+
+  // аварийная сирена — управляемый цикл, идет пока Emergency Stop активен
+  const emergencyActive = state.emergencyStop !== null;
+  useEffect(() => {
+    if (!emergencyActive) return;
+    const stop = startEmergencyAlarm();
+    return stop;
+  }, [emergencyActive]);
+
+  // тряска камеры — только по факту реального события "shockwave" из
+  // HazardResult (не по любому рендеру), см. ChemistryCanvas
+  const anyShockwaveNow = state.containers.some((c) => c.hazard.visualEvents.some((e) => e.type === "shockwave"));
+  const [shakeCounter, setShakeCounter] = useState(0);
+  useEffect(() => {
+    if (anyShockwaveNow) setShakeCounter((v) => v + 1);
+  }, [anyShockwaveNow]);
+
+  useEffect(() => {
+    setSoundMuted(muted);
+  }, [muted]);
+
   function handleDrop(id: string, x: number, z: number) {
+    if (state.emergencyStop) return; // новые лабораторные действия заблокированы во время аварии
     const point: [number, number] = [x, z];
 
     const draggedContainer = state.containers.find((c) => c.id === id);
@@ -1200,17 +1565,71 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
                 addAnimation={addAnimation}
                 safetyByContainer={safetyByContainer}
                 debugMode={debugMode}
+                shakeCounter={shakeCounter}
+                reducedMotion={reducedMotion}
               />
+
+              <AnimatePresence>
+                {state.emergencyStop && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="mt-4 rounded-2xl border border-red-500/60 bg-red-950/40 p-4"
+                    data-testid="emergency-stop-panel"
+                  >
+                    <div className="mb-2 flex items-center gap-2 text-red-300">
+                      <AlertOctagon size={20} />
+                      <span className="font-mono text-sm font-semibold uppercase tracking-widest">
+                        Аварийная остановка — {state.emergencyStop.level}
+                      </span>
+                    </div>
+                    <ul className="mb-3 space-y-0.5 text-sm text-red-200" data-testid="emergency-stop-causes">
+                      {state.emergencyStop.causes.map((cause) => (
+                        <li key={cause.code}>⚠ {cause.message}</li>
+                      ))}
+                    </ul>
+                    <p className="mb-3 text-xs text-red-300/80">
+                      Эксперимент остановлен. Новые действия (добавление веществ, переливание, нагрев) заблокированы.
+                    </p>
+                    <motion.button
+                      whileHover={{ scale: 1.03 }}
+                      whileTap={{ scale: 0.97 }}
+                      onClick={resetExperiment}
+                      data-testid="emergency-stop-reset"
+                      className="flex items-center gap-2 rounded-full bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-500"
+                    >
+                      <RotateCcw size={16} />
+                      Сбросить эксперимент
+                    </motion.button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               <div className="glass-panel mt-4 grid grid-cols-1 gap-4 rounded-2xl p-4 sm:grid-cols-2">
                 <div className="flex items-center gap-2 text-xs text-slate-500 sm:col-span-2">
                   Перетаскивай бутылки с реактивами на сосуды, сосуды — друг на друга (чтобы перелить), нажми на горелку,
                   чтобы включить нагрев. Выбранный сосуд отмечен фиолетовым кольцом — именно его проверяет текущий
-                  эксперимент.
+                  эксперимент. Выбери сосуд, чтобы запечатать его (иконка замка) — герметичный сосуд накапливает
+                  давление при кипении.
                 </div>
 
-                {process.env.NODE_ENV !== "production" && (
-                  <div className="flex items-center gap-2 text-xs text-slate-500 sm:col-span-2">
+                <div className="flex items-center gap-2 text-xs text-slate-500 sm:col-span-2">
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => setMuted((v) => !v)}
+                    data-testid="sound-mute-toggle"
+                    title={muted ? "Включить звук" : "Отключить звук"}
+                    className={`flex items-center gap-1 rounded-full border px-3 py-1 transition ${
+                      muted ? "border-glass-border text-slate-500" : "border-neon-violet/50 text-neon-violet"
+                    }`}
+                  >
+                    {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                    {muted ? "Звук выключен" : "Звук включен"}
+                  </motion.button>
+
+                  {process.env.NODE_ENV !== "production" && (
                     <button
                       onClick={() => setDebugMode((v) => !v)}
                       data-testid="debug-mode-toggle"
@@ -1220,8 +1639,8 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
                     >
                       Interaction Debug Mode: {debugMode ? "on" : "off"}
                     </button>
-                  </div>
-                )}
+                  )}
+                </div>
 
                 <ChemistryTutorialPanel />
 

@@ -10,6 +10,16 @@ import {
   type ContainerKind,
 } from "@/lib/chemistry-engine";
 import { applyReactions, type Reaction } from "@/lib/reaction-engine";
+import { checkSafety } from "@/lib/chemistry-safety";
+import { CONTAINER_PHYSICS, createDefaultIntegrity, type IntegrityState } from "@/lib/container-physics";
+import {
+  createSafeHazardResult,
+  evaluateHazard,
+  type AccidentLogEntry,
+  type HazardCause,
+  type HazardLevel,
+  type HazardResult,
+} from "@/lib/hazard-engine";
 
 /**
  * Chemistry World — Laboratory Workspace state (Stage 5). Тот же принцип,
@@ -28,7 +38,47 @@ export interface ContainerItem {
   position: [number, number];
   rotationY: number;
   data: Container;
+  // Stage 5.5 v2 — Hazard Simulation: герметично закрыт (можно накапливать
+  // давление) или открыт (пар свободно выходит)
+  isSealed: boolean;
+  integrity: IntegrityState;
+  pressureKPa: number; // абсолютное, последнее посчитанное Pressure Engine
+  hazard: HazardResult; // последний результат Hazard Engine для этого сосуда
+  // температура сосуда на момент ПРЕДЫДУЩЕГО тика Hazard Engine — нужна
+  // только для расчета скорости изменения температуры (thermal shock),
+  // не дублирует текущую temperatureC (та по-прежнему единственный
+  // источник правды в Chemistry Engine)
+  lastHazardTemperatureC: number;
 }
+
+function createContainerItem(id: string, kind: ContainerVisualKind, position: [number, number], rotationY = 0): ContainerItem {
+  const data = createEmptyContainer(id, kind);
+  const profile = CONTAINER_PHYSICS[kind];
+  return {
+    id,
+    kind,
+    position,
+    rotationY,
+    data,
+    isSealed: false,
+    integrity: createDefaultIntegrity(profile),
+    pressureKPa: createSafeHazardResult(data, profile).pressureKPa,
+    hazard: createSafeHazardResult(data, profile),
+    lastHazardTemperatureC: data.temperatureC,
+  };
+}
+
+export interface EmergencyStopState {
+  containerId: string;
+  level: HazardLevel;
+  causes: HazardCause[];
+  at: number;
+}
+
+// AccidentLogEntry переиспользуется из hazard-engine.ts (см. import выше) —
+// определен там, а не здесь, чтобы Chemistry Context Builder мог ссылаться
+// на тот же тип без обратной зависимости lib -> components
+export type { AccidentLogEntry };
 
 const STAND_PROXIMITY_RADIUS = 0.55;
 
@@ -72,6 +122,10 @@ interface WorkspaceState {
   activeContainerId: string; // сосуд, который проверяет Experiment Validator
   reactionLog: ReactionLogEntry[]; // id реакций, реально сработавших за сессию (по всем сосудам)
   firstAddedOrder: Record<string, string[]>; // containerId -> substanceId в порядке первого добавления (для Safety System)
+  // Stage 5.5 v2 — Hazard Simulation
+  emergencyStop: EmergencyStopState | null;
+  accidentLog: AccidentLogEntry[];
+  elapsedSeconds: number;
 }
 
 type Action =
@@ -82,7 +136,10 @@ type Action =
   | { type: "ADD_SUBSTANCE"; containerId: string; substanceId: string; grams: number }
   | { type: "POUR"; sourceId: string; targetId: string }
   | { type: "HEAT_TICK"; deltaC: number }
-  | { type: "SET_ACTIVE_CONTAINER"; id: string };
+  | { type: "SET_ACTIVE_CONTAINER"; id: string }
+  | { type: "TOGGLE_SEAL"; id: string }
+  | { type: "HAZARD_TICK"; dtSeconds: number }
+  | { type: "RESET_EXPERIMENT" };
 
 function applyReactionsAndLog(container: Container, containerId: string, log: ReactionLogEntry[]): { container: Container; log: ReactionLogEntry[] } {
   const { container: reacted, occurredReactions } = applyReactions(container);
@@ -114,10 +171,18 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
       return { ...state, containers, tools };
     }
 
-    case "TOGGLE_BURNER":
+    case "TOGGLE_BURNER": {
+      // Emergency Stop блокирует новый нагрев, но не блокирует его выключение —
+      // выключить горелку разрешено всегда
+      if (state.emergencyStop) {
+        const tool = state.tools.find((t) => t.id === action.id);
+        if (tool && !tool.isOn) return state; // нельзя ВКЛЮЧИТЬ горелку во время аварии
+      }
       return { ...state, tools: state.tools.map((t) => (t.id === action.id ? { ...t, isOn: !t.isOn } : t)) };
+    }
 
     case "ADD_SUBSTANCE": {
+      if (state.emergencyStop) return state;
       const target = state.containers.find((c) => c.id === action.containerId);
       if (!target) return state;
       const updatedData = addSubstance(target.data, action.substanceId, action.grams);
@@ -135,6 +200,7 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
     }
 
     case "POUR": {
+      if (state.emergencyStop) return state;
       const source = state.containers.find((c) => c.id === action.sourceId);
       const target = state.containers.find((c) => c.id === action.targetId);
       if (!source || !target) return state;
@@ -174,33 +240,98 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
     case "SET_ACTIVE_CONTAINER":
       return { ...state, activeContainerId: action.id };
 
+    case "TOGGLE_SEAL": {
+      if (state.emergencyStop) return state;
+      return {
+        ...state,
+        containers: state.containers.map((c) => (c.id === action.id ? { ...c, isSealed: !c.isSealed } : c)),
+      };
+    }
+
+    // Контролируемый шаг симуляции Hazard Engine — вызывается с фиксированной
+    // частотой (см. ChemistryWorldScene), НЕ каждый кадр рендера. Реальный
+    // расчет физики (heatTick/addSubstance/pour) уже произошел раньше —
+    // здесь только оценка опасности по уже посчитанному состоянию.
+    case "HAZARD_TICK": {
+      let accidentLog = state.accidentLog;
+      let emergencyStop = state.emergencyStop;
+
+      const containers = state.containers.map((c) => {
+        const profile = CONTAINER_PHYSICS[c.kind];
+        const hasHeatSource = isContainerOnStand(c, state.tools) && state.tools.some((t) => t.kind === "burner" && t.isOn);
+        const safetyWarnings = checkSafety({ container: c.data, firstAddedOrder: state.firstAddedOrder[c.id] });
+        const reactionLogForContainer = state.reactionLog
+          .filter((e) => e.containerId === c.id)
+          .map((e) => ({ reactionId: e.reactionId, title: e.title, at: e.at }));
+
+        const hazard = evaluateHazard({
+          container: c.data,
+          profile,
+          isSealed: c.isSealed,
+          hasHeatSource,
+          safetyWarnings,
+          reactionLog: reactionLogForContainer,
+          previousIntegrity: c.integrity,
+          previousPressureKPa: c.pressureKPa,
+          previousTemperatureC: c.lastHazardTemperatureC,
+          dtSeconds: action.dtSeconds,
+        });
+
+        if (hazard.level !== c.hazard.level) {
+          accidentLog = [
+            ...accidentLog,
+            {
+              at: Date.now(),
+              containerId: c.id,
+              level: hazard.level,
+              causes: hazard.causes,
+              temperatureC: hazard.temperatureC,
+              pressureKPa: hazard.pressureKPa,
+              integrityLevel: hazard.containerIntegrity.level,
+              event: `Уровень опасности: ${c.hazard.level} → ${hazard.level}`,
+            },
+          ];
+        }
+
+        if (hazard.shouldStopExperiment && !emergencyStop) {
+          emergencyStop = { containerId: c.id, level: hazard.level, causes: hazard.causes, at: Date.now() };
+        }
+
+        return {
+          ...c,
+          integrity: hazard.containerIntegrity,
+          pressureKPa: hazard.pressureKPa,
+          hazard,
+          lastHazardTemperatureC: hazard.temperatureC,
+        };
+      });
+
+      // аварийная остановка гасит активный нагрев ровно в тот тик, когда сработала
+      const justTriggered = emergencyStop !== null && emergencyStop !== state.emergencyStop;
+      const tools = justTriggered ? state.tools.map((t) => (t.kind === "burner" ? { ...t, isOn: false } : t)) : state.tools;
+
+      return {
+        ...state,
+        containers,
+        tools,
+        accidentLog,
+        emergencyStop,
+        elapsedSeconds: state.elapsedSeconds + action.dtSeconds,
+      };
+    }
+
+    case "RESET_EXPERIMENT":
+      return createInitialState();
+
     default:
       return state;
   }
 }
 
 function createInitialState(): WorkspaceState {
-  const beaker: ContainerItem = {
-    id: "beaker-1",
-    kind: "beaker",
-    position: [0, 0],
-    rotationY: 0,
-    data: createEmptyContainer("beaker-1", "beaker"),
-  };
-  const testTube: ContainerItem = {
-    id: "test-tube-1",
-    kind: "test_tube",
-    position: [-1.2, 0.6],
-    rotationY: 0,
-    data: createEmptyContainer("test-tube-1", "test_tube"),
-  };
-  const flask: ContainerItem = {
-    id: "flask-1",
-    kind: "flask",
-    position: [1.2, 0.6],
-    rotationY: 0,
-    data: createEmptyContainer("flask-1", "flask"),
-  };
+  const beaker = createContainerItem("beaker-1", "beaker", [0, 0]);
+  const testTube = createContainerItem("test-tube-1", "test_tube", [-1.2, 0.6]);
+  const flask = createContainerItem("flask-1", "flask", [1.2, 0.6]);
 
   const stockBottles: StockBottle[] = [
     { id: "stock-water", substanceId: "water", position: [-3.2, -1.6] },
@@ -227,6 +358,9 @@ function createInitialState(): WorkspaceState {
     activeContainerId: beaker.id,
     reactionLog: [],
     firstAddedOrder: {},
+    emergencyStop: null,
+    accidentLog: [],
+    elapsedSeconds: 0,
   };
 }
 
@@ -240,6 +374,9 @@ interface WorkspaceContextValue {
   pourInto: (sourceId: string, targetId: string) => void;
   heatTick: (deltaC: number) => void;
   setActiveContainer: (id: string) => void;
+  toggleSeal: (id: string) => void;
+  hazardTick: (dtSeconds: number) => void;
+  resetExperiment: () => void;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue | undefined>(undefined);
@@ -260,6 +397,9 @@ export function ChemistryWorkspaceProvider({ children }: { children: React.React
     pourInto: useCallback((sourceId, targetId) => dispatch({ type: "POUR", sourceId, targetId }), []),
     heatTick: useCallback((deltaC) => dispatch({ type: "HEAT_TICK", deltaC }), []),
     setActiveContainer: useCallback((id) => dispatch({ type: "SET_ACTIVE_CONTAINER", id }), []),
+    toggleSeal: useCallback((id) => dispatch({ type: "TOGGLE_SEAL", id }), []),
+    hazardTick: useCallback((dtSeconds) => dispatch({ type: "HAZARD_TICK", dtSeconds }), []),
+    resetExperiment: useCallback(() => dispatch({ type: "RESET_EXPERIMENT" }), []),
   };
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;

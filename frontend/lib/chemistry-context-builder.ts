@@ -10,6 +10,7 @@ import { aggregateStateOf, computeColorHex, totalMassG, totalVolumeMl, type Aggr
 import { getRegisteredReactions } from "./reaction-engine";
 import type { ExperimentDefinition, ExperimentStatus, ExperimentValidationResult } from "./experiment-validator";
 import type { SafetyWarning } from "./chemistry-safety";
+import type { AccidentLogEntry, HazardResult } from "./hazard-engine";
 
 export interface ChemistrySubstanceInfo {
   id: string;
@@ -43,6 +44,45 @@ export interface ChemistryAIContext {
     aggregateState: AggregateState;
   };
   safetyWarnings: SafetyWarning[];
+  // Stage 5.5 v2 — Hazard Simulation: опционально, чтобы не ломать
+  // существующих вызывающих (buildChemistryAIContext без hazard работает
+  // ровно как раньше — hazard будет null). AI Teacher получает ТОЛЬКО эти
+  // уже посчитанные детерминированные причины, сам физику не определяет.
+  hazard: ChemistryHazardAIContext | null;
+}
+
+export interface ChemistryHazardAIContext {
+  level: HazardResult["level"];
+  causes: { code: string; message: string }[];
+  temperatureC: number;
+  pressureKPa: number;
+  gasAmountG: number;
+  pressureRatio: number;
+  temperatureRatio: number;
+  containerIntegrityLevel: string;
+  isSealed: boolean;
+  hasHeatSource: boolean;
+  shouldStopExperiment: boolean;
+  // последние несколько записей истории аварий этого эксперимента —
+  // обрезано, чтобы не раздувать промпт AI Teacher бесконечно растущей историей
+  recentAccidentLog: { at: number; level: string; event: string }[];
+}
+
+function buildHazardAIContext(hazard: HazardResult, accidentLog: AccidentLogEntry[]): ChemistryHazardAIContext {
+  return {
+    level: hazard.level,
+    causes: hazard.causes.map((c) => ({ code: c.code, message: c.message })),
+    temperatureC: hazard.temperatureC,
+    pressureKPa: hazard.pressureKPa,
+    gasAmountG: hazard.gasAmountG,
+    pressureRatio: hazard.pressureRatio,
+    temperatureRatio: hazard.temperatureRatio,
+    containerIntegrityLevel: hazard.containerIntegrity.level,
+    isSealed: hazard.explanationContext.isSealed,
+    hasHeatSource: hazard.explanationContext.hasHeatSource,
+    shouldStopExperiment: hazard.shouldStopExperiment,
+    recentAccidentLog: accidentLog.slice(-10).map((e) => ({ at: e.at, level: e.level, event: e.event })),
+  };
 }
 
 export function buildChemistryAIContext(params: {
@@ -52,8 +92,10 @@ export function buildChemistryAIContext(params: {
   occurredReactionIds: string[];
   validation: ExperimentValidationResult;
   safetyWarnings: SafetyWarning[];
+  hazard?: HazardResult | null;
+  accidentLog?: AccidentLogEntry[];
 }): ChemistryAIContext {
-  const { experiment, experimentStatus, container, occurredReactionIds, validation, safetyWarnings } = params;
+  const { experiment, experimentStatus, container, occurredReactionIds, validation, safetyWarnings, hazard, accidentLog } = params;
 
   const substances: ChemistrySubstanceInfo[] = [
     ...container.contents.map((c) => ({ id: c.substanceId, amountG: c.grams, dissolved: true })),
@@ -86,5 +128,6 @@ export function buildChemistryAIContext(params: {
       aggregateState: aggregateStateOf(container),
     },
     safetyWarnings,
+    hazard: hazard ? buildHazardAIContext(hazard, accidentLog ?? []) : null,
   };
 }
