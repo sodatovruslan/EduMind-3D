@@ -1,5 +1,6 @@
 "use client";
 
+import { motion } from "framer-motion";
 import { AlertTriangle, ArrowRight, CheckCircle2, XCircle } from "lucide-react";
 import { ExperimentStatus } from "@/lib/experiment-validator";
 import { useExperimentProgress } from "@/components/experiments/ExperimentProgressProvider";
@@ -46,7 +47,11 @@ export default function ExperimentPanel() {
       <p className="mt-1 text-sm text-slate-400">{experiment.description}</p>
       <p className="mt-1 text-xs text-slate-500">Цель: {experiment.goal}</p>
 
-      <div
+      <motion.div
+        key={status}
+        initial={{ opacity: 0, scale: 0.97 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.18, ease: "easeOut" }}
         className={`mt-3 rounded-xl border px-3 py-2 text-sm ${STATUS_COLOR[status]}`}
         data-testid="experiment-status"
         data-status={status}
@@ -70,10 +75,12 @@ export default function ExperimentPanel() {
             {result.errors.length === 0 && <li className="text-slate-500">Начни эксперимент, чтобы увидеть проверку.</li>}
           </ul>
         )}
-      </div>
+      </motion.div>
 
       <div className="mt-3 flex justify-end">
-        <button
+        <motion.button
+          whileHover={{ scale: 1.03 }}
+          whileTap={{ scale: 0.97 }}
           onClick={advance}
           disabled={status !== ExperimentStatus.COMPLETED || isLastExperiment}
           data-testid="experiment-next-button"
@@ -81,7 +88,7 @@ export default function ExperimentPanel() {
         >
           {isLastExperiment && status === ExperimentStatus.COMPLETED ? "Все эксперименты пройдены" : "Следующий эксперимент"}
           {!(isLastExperiment && status === ExperimentStatus.COMPLETED) && <ArrowRight size={16} />}
-        </button>
+        </motion.button>
       </div>
     </div>
   );
