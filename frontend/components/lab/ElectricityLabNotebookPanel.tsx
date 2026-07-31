@@ -31,6 +31,7 @@ export default function ElectricityLabNotebookPanel() {
                 onClick={() => setExpandedId(expanded ? null : entry.id)}
                 data-testid={`electricity-notebook-entry-${entry.id}`}
                 aria-expanded={expanded}
+                aria-controls={`electricity-notebook-entry-${entry.id}-details`}
                 className="flex w-full items-center justify-between gap-2 p-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-neon-violet"
               >
                 <div>
@@ -42,7 +43,7 @@ export default function ElectricityLabNotebookPanel() {
                 {expanded ? <ChevronUp size={16} className="shrink-0 text-slate-400" /> : <ChevronDown size={16} className="shrink-0 text-slate-400" />}
               </button>
               {expanded && (
-                <div className="space-y-2 border-t border-glass-border p-3 text-sm text-slate-300">
+                <div id={`electricity-notebook-entry-${entry.id}-details`} className="space-y-2 border-t border-glass-border p-3 text-sm text-slate-300">
                   <div>
                     <span className="text-slate-500">Цель:</span> {entry.objective}
                   </div>

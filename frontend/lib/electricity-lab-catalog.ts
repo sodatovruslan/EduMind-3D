@@ -20,7 +20,6 @@
  * сборки (Task 4).
  */
 import type { CircuitComponent, CircuitSolution, Connection } from "./circuit-engine";
-import { bulbBrightness } from "./circuit-engine";
 
 export type LabDifficulty = "beginner" | "intermediate" | "advanced";
 
@@ -308,7 +307,7 @@ const openCircuitExperiment: ElectricityLabExperiment = {
     {
       id: "measurement",
       kind: "measurement",
-      instruction: "Запиши измерение при разомкнутой цепи (ток должен быть 0).",
+      instruction: "Нажми «Записать измерение» при разомкнутой цепи (ток должен быть 0).",
       isUnlocked: (ctx) => ctx.openCircuitObserved && ctx.measurementsRecorded >= 1,
     },
     {
@@ -363,7 +362,7 @@ const lampBrightness: ElectricityLabExperiment = {
     {
       id: "measurement",
       kind: "measurement",
-      instruction: "Увеличивай напряжение батареи и записывай измерения, пока лампа не станет яркой.",
+      instruction: "Увеличивай напряжение батареи и нажимай «Записать измерение», пока лампа не станет яркой.",
       isUnlocked: (ctx) => ctx.maxBulbBrightnessObserved > 0.5 && ctx.measurementsRecorded >= 1,
     },
     {
@@ -420,7 +419,7 @@ const resistanceInfluence: ElectricityLabExperiment = {
     {
       id: "measurement",
       kind: "measurement",
-      instruction: "Запиши измерение, затем измени сопротивление резистором минимум на 10 Ом и запиши снова.",
+      instruction: "Нажми «Записать измерение», затем измени сопротивление резистором минимум на 10 Ом и нажми снова.",
       isUnlocked: (ctx) => ctx.maxResistanceOhmObserved - ctx.minResistanceOhmObserved >= 10 && ctx.measurementsRecorded >= 2,
     },
     {
@@ -476,7 +475,7 @@ const voltageInfluence: ElectricityLabExperiment = {
     {
       id: "measurement",
       kind: "measurement",
-      instruction: "Запиши измерение, затем измени напряжение батареи минимум на 8 В и запиши снова.",
+      instruction: "Нажми «Записать измерение», затем измени напряжение батареи минимум на 8 В и нажми снова.",
       isUnlocked: (ctx) => ctx.maxVoltageVObserved - ctx.minVoltageVObserved >= 8 && ctx.measurementsRecorded >= 2,
     },
     {
@@ -590,7 +589,7 @@ const shortCircuitInvestigation: ElectricityLabExperiment = {
     {
       id: "measurement",
       kind: "measurement",
-      instruction: "Запиши измерение при коротком замыкании (ток будет очень большим).",
+      instruction: "Нажми «Записать измерение» при коротком замыкании (ток будет очень большим).",
       isUnlocked: (ctx) => ctx.shortCircuitObserved && ctx.measurementsRecorded >= 1,
     },
     {
@@ -681,5 +680,3 @@ export function snapshotMeasurement(ctx: {
     powerW: resistorReading?.powerW ?? 0,
   };
 }
-
-export { bulbBrightness };

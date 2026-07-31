@@ -672,16 +672,18 @@ function TeacherChatPanel({
   solution: CircuitSolution;
 }) {
   const { task, status, totalXp, result, learningProfile, recordHintUsed } = useTaskProgress();
-  // Stage E-2 (Task 7 — AI Teacher Upgrade): AI получает ТОЛЬКО уже
+  // Stage E-2/E-3 (Task 7 — AI Teacher Upgrade): AI получает ТОЛЬКО уже
   // посчитанное состояние учебного слоя (выбранная лабораторная работа,
-  // текущий шаг, сколько измерений реально сделано) — ничего не решает
-  // само про прогресс/разблокировку.
+  // текущий шаг, реально записанные измерения, последняя запись
+  // журнала, черновик вывода) — ничего не решает само про прогресс.
   const {
     selectedExperiment,
     currentStep,
     isCurrentStepUnlocked,
     measurements,
     completedExperimentIds,
+    lastNotebookEntry,
+    conclusionDraft,
     recordHintUsed: recordLabHintUsed,
   } = useElectricityLabExperience();
   const context = useMemo(
@@ -697,8 +699,10 @@ function TeacherChatPanel({
         labExperiment: selectedExperiment,
         labStep: currentStep,
         labStepUnlocked: isCurrentStepUnlocked,
-        labMeasurementsRecorded: measurements.length,
+        labMeasurements: measurements,
         labCompletedExperimentIds: completedExperimentIds,
+        labLastNotebookEntry: lastNotebookEntry,
+        labConclusionDraft: conclusionDraft,
       }),
     [
       task,
@@ -711,8 +715,10 @@ function TeacherChatPanel({
       selectedExperiment,
       currentStep,
       isCurrentStepUnlocked,
-      measurements.length,
+      measurements,
       completedExperimentIds,
+      lastNotebookEntry,
+      conclusionDraft,
     ]
   );
   return (
@@ -959,10 +965,11 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
 
         <TutorialPanel />
         <div>
-          <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+          <label htmlFor="voltage-slider" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
             Напряжение источника: {(battery?.voltageV ?? 0).toFixed(1)} В
           </label>
           <input
+            id="voltage-slider"
             type="range"
             min={1}
             max={24}
@@ -975,10 +982,11 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
         </div>
 
         <div>
-          <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
+          <label htmlFor="resistance-slider" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
             Сопротивление резистора: {(resistor?.resistanceOhm ?? 0).toFixed(1)} Ом
           </label>
           <input
+            id="resistance-slider"
             type="range"
             min={1}
             max={40}
@@ -1004,11 +1012,13 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
             <ElectricityResetButton onReset={handleReset} />
           </div>
 
-          <div className="flex items-center gap-1 font-mono text-xs text-slate-500">
+          <div role="radiogroup" aria-label="Качество рендера" className="flex items-center gap-1 font-mono text-xs text-slate-500">
             {QUALITY_OPTIONS.map((level) => (
               <button
                 key={level}
                 onClick={() => setQuality(level)}
+                role="radio"
+                aria-checked={quality === level}
                 data-testid={`quality-${level}`}
                 title={QUALITY_LABEL[level]}
                 className={`rounded-full border px-2 py-1 uppercase transition ${

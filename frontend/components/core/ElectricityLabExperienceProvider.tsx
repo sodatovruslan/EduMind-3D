@@ -1,13 +1,12 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import type { CircuitComponent, CircuitSolution, Connection } from "@/lib/circuit-engine";
+import { bulbBrightness, type CircuitComponent, type CircuitSolution, type Connection } from "@/lib/circuit-engine";
 import {
   ELECTRICITY_LAB_CATALOG,
   getElectricityLabExperiment,
   isElectricityExperimentUnlocked,
   snapshotMeasurement,
-  bulbBrightness,
   type ElectricityLabExperiment,
   type ElectricityLabStep,
   type ElectricityLabStepContext,

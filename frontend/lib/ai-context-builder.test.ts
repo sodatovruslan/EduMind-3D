@@ -84,7 +84,7 @@ describe("ai-context-builder — buildAIContext", () => {
     expect(ctx.labExperience).toBeNull();
   });
 
-  it("labExperience reflects the real selected experiment/step/measurement count, never invented", () => {
+  it("labExperience reflects the real selected experiment/step/measurements, never invented", () => {
     const components = baseComponents();
     const connections: Connection[] = [];
     const solution = solveCircuit(components, connections);
@@ -92,6 +92,10 @@ describe("ai-context-builder — buildAIContext", () => {
     const validation = validateTask(task, { components, connections, solution });
     const experiment = getElectricityLabExperiment("elec-beginner-measure-current")!;
     const step = experiment.steps[0];
+    const measurements = [
+      { voltageV: 12, currentA: 2, resistanceOhm: 6, powerW: 24, at: 1000 },
+      { voltageV: 10, currentA: 1.5, resistanceOhm: 6, powerW: 15, at: 2000 },
+    ];
 
     const ctx = buildAIContext({
       task,
@@ -104,15 +108,66 @@ describe("ai-context-builder — buildAIContext", () => {
       labExperiment: experiment,
       labStep: step,
       labStepUnlocked: true,
-      labMeasurementsRecorded: 2,
+      labMeasurements: measurements,
       labCompletedExperimentIds: ["elec-beginner-measure-current"],
+      labConclusionDraft: "Ток уменьшился, когда я увеличил сопротивление.",
     });
 
     expect(ctx.labExperience).toEqual({
       currentExperiment: { id: experiment.id, title: experiment.title, difficulty: experiment.difficulty, goal: experiment.goal },
       currentStep: { kind: step.kind, instruction: step.instruction, unlocked: true },
       measurementsRecorded: 2,
+      recentMeasurements: [
+        { voltageV: 12, currentA: 2, resistanceOhm: 6, powerW: 24 },
+        { voltageV: 10, currentA: 1.5, resistanceOhm: 6, powerW: 15 },
+      ],
       completedExperimentIds: ["elec-beginner-measure-current"],
+      lastNotebookEntry: null,
+      conclusionDraft: "Ток уменьшился, когда я увеличил сопротивление.",
+    });
+  });
+
+  it("labExperience includes the last notebook entry (score/teacherNote/conclusion) when one exists — AI can reference past mistakes", () => {
+    const components = baseComponents();
+    const connections: Connection[] = [];
+    const solution = solveCircuit(components, connections);
+    const task = TASKS[0];
+    const validation = validateTask(task, { components, connections, solution });
+    const experiment = getElectricityLabExperiment("elec-beginner-measure-current")!;
+
+    const ctx = buildAIContext({
+      task,
+      taskStatus: TaskStatus.NOT_STARTED,
+      xp: 0,
+      components,
+      connections,
+      solution,
+      validation,
+      labExperiment: experiment,
+      labStep: experiment.steps[0],
+      labStepUnlocked: true,
+      labLastNotebookEntry: {
+        id: "e1-1000",
+        experimentId: experiment.id,
+        experimentTitle: experiment.title,
+        difficulty: experiment.difficulty,
+        dateIso: new Date(1000).toISOString(),
+        objective: experiment.goal,
+        circuitUsed: { componentKinds: ["battery"], connectionsCount: 3 },
+        measurements: [],
+        questionResults: [{ questionId: "q1", prompt: "?", selectedIndex: 1, correctIndex: 0, correct: false }],
+        observations: "",
+        conclusion: "Ток был низким.",
+        teacherNote: "Обрати внимание на вопрос: «?» — ответ был неверным.",
+        score: 62,
+      },
+    });
+
+    expect(ctx.labExperience?.lastNotebookEntry).toEqual({
+      experimentTitle: experiment.title,
+      score: 62,
+      teacherNote: "Обрати внимание на вопрос: «?» — ответ был неверным.",
+      conclusion: "Ток был низким.",
     });
   });
 });

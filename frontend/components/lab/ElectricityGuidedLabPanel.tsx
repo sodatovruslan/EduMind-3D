@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Gauge, X } from "lucide-react";
+import { ArrowRight, CheckCircle2, Gauge, X } from "lucide-react";
 import { useElectricityLabExperience } from "@/components/core/ElectricityLabExperienceProvider";
 import type { ElectricityLabStepKind } from "@/lib/electricity-lab-catalog";
 
@@ -88,7 +88,13 @@ export default function ElectricityGuidedLabPanel() {
         <p className="text-sm text-slate-300">{selectedExperiment.goal}</p>
       </div>
 
-      <div className="mb-3 rounded-xl border border-glass-border p-3 text-sm text-slate-300" data-testid="electricity-guided-lab-current-step">
+      <div
+        className={`mb-3 rounded-xl border p-3 text-sm transition ${
+          isCurrentStepUnlocked ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200" : "border-glass-border text-slate-300"
+        }`}
+        data-testid="electricity-guided-lab-current-step"
+      >
+        {isCurrentStepUnlocked && <CheckCircle2 size={14} className="mr-1 inline" aria-hidden="true" />}
         {currentStep.instruction}
       </div>
 
@@ -106,15 +112,19 @@ export default function ElectricityGuidedLabPanel() {
             type="button"
             onClick={recordMeasurement}
             data-testid="electricity-record-measurement"
-            className="flex items-center gap-2 rounded-full border border-neon-violet/60 px-3 py-1.5 text-sm text-neon-violet transition hover:bg-neon-violet/10"
+            className="flex items-center gap-2 rounded-full border border-neon-violet/60 px-3 py-1.5 text-sm text-neon-violet transition hover:bg-neon-violet/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-neon-violet"
           >
             <Gauge size={14} /> Записать измерение
           </button>
-          <div className="font-mono text-xs text-slate-500" data-testid="electricity-measurement-count">
+          <div className="font-mono text-xs text-slate-500" aria-live="polite" data-testid="electricity-measurement-count">
             Записано измерений: {measurements.length}
           </div>
           {lastMeasurement && (
-            <div className="rounded-lg border border-glass-border p-2 font-mono text-xs text-slate-300" data-testid="electricity-last-measurement">
+            <div
+              className="rounded-lg border border-glass-border p-2 font-mono text-xs text-slate-300"
+              aria-live="polite"
+              data-testid="electricity-last-measurement"
+            >
               U = {lastMeasurement.voltageV.toFixed(2)} В · I = {lastMeasurement.currentA.toFixed(3)} А · R = {lastMeasurement.resistanceOhm.toFixed(1)} Ом · P = {lastMeasurement.powerW.toFixed(2)} Вт
             </div>
           )}
@@ -124,8 +134,8 @@ export default function ElectricityGuidedLabPanel() {
       {currentStep.kind === "analysis" && selectedExperiment.questions.length > 0 && (
         <div className="mb-3 space-y-3" data-testid="electricity-questions">
           {selectedExperiment.questions.map((q) => (
-            <div key={q.id} className="rounded-xl border border-glass-border p-3">
-              <p className="mb-2 text-sm text-slate-200">{q.prompt}</p>
+            <fieldset key={q.id} className="rounded-xl border border-glass-border p-3">
+              <legend className="mb-2 px-0.5 text-sm text-slate-200">{q.prompt}</legend>
               <div className="space-y-1">
                 {q.options.map((option, i) => (
                   <label key={i} className="flex cursor-pointer items-center gap-2 text-sm text-slate-300">
@@ -135,13 +145,13 @@ export default function ElectricityGuidedLabPanel() {
                       checked={questionAnswers[q.id] === i}
                       onChange={() => answerQuestion(q.id, i)}
                       data-testid={`electricity-question-${q.id}-option-${i}`}
-                      className="accent-neon-violet"
+                      className="accent-neon-violet focus-visible:ring-2 focus-visible:ring-neon-violet"
                     />
                     {option}
                   </label>
                 ))}
               </div>
-            </div>
+            </fieldset>
           ))}
 
           <div>
@@ -188,6 +198,16 @@ export default function ElectricityGuidedLabPanel() {
         {isLastStep ? "Завершить лабораторную работу" : "Далее"}
         <ArrowRight size={16} />
       </button>
+      {/* Task 5 — Educational Feedback: кнопка просто задизейблена без
+          объяснения выглядит как "скрытая логика". Условие разблокировки
+          всегда совпадает с инструкцией шага выше — эта подсказка не
+          выдумывает новый текст, а прямо указывает, что дело именно в
+          невыполненном условии, а не в баге/зависшей кнопке. */}
+      {!isCurrentStepUnlocked && (
+        <p className="mt-1.5 text-xs text-slate-500" role="status" data-testid="electricity-guided-lab-locked-hint">
+          Кнопка станет активной, как только выполнится условие шага выше.
+        </p>
+      )}
     </div>
   );
 }

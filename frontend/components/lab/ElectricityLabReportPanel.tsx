@@ -69,10 +69,11 @@ export default function ElectricityLabReportPanel() {
             {lastNotebookEntry.questionResults.map((q) => (
               <li key={q.questionId} className="flex items-start gap-1.5">
                 {q.correct ? (
-                  <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-emerald-400" />
+                  <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-emerald-400" aria-hidden="true" />
                 ) : (
-                  <XCircle size={14} className="mt-0.5 shrink-0 text-red-400" />
+                  <XCircle size={14} className="mt-0.5 shrink-0 text-red-400" aria-hidden="true" />
                 )}
+                <span className="sr-only">{q.correct ? "Верно: " : "Неверно: "}</span>
                 {q.prompt}
               </li>
             ))}

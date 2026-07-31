@@ -1,9 +1,10 @@
 import type { CircuitComponent, CircuitSolution, Connection } from "@/lib/circuit-engine";
 import type { TaskDefinition, TaskStatus, TaskValidationResult } from "@/lib/task-engine";
 import type { ElectricityLabExperiment, ElectricityLabStep } from "@/lib/electricity-lab-catalog";
+import type { ElectricityMeasurement, ElectricityNotebookEntry } from "@/lib/electricity-notebook";
 
 /**
- * AI Context Builder (Stage 3, расширено в Stage E-2) — единственное
+ * AI Context Builder (Stage 3, расширено в Stage E-2/E-3) — единственное
  * место, где состояние лаборатории превращается в объект, отправляемый
  * AI Teacher. Чистая функция: только читает уже посчитанные Physics/
  * Circuit Engine (CircuitSolution) и Task Validator (TaskValidationResult)
@@ -15,6 +16,15 @@ import type { ElectricityLabExperiment, ElectricityLabStep } from "@/lib/electri
  * получает ТОЛЬКО уже посчитанное состояние учебного слоя (какая
  * лабораторная работа выбрана, какой шаг сейчас, разблокирован ли он,
  * сколько измерений сделано) — сам ничего не решает про прогресс.
+ *
+ * Stage E-3 (Task 6 — AI Teacher Review): labExperience дополнен реально
+ * записанными измерениями (recentMeasurements — те же значения, что
+ * видны в Измерительном журнале), последней записью Лабораторного
+ * журнала (lastNotebookEntry) и текущим черновиком вывода
+ * (conclusionDraft) — чтобы AI мог реально ссылаться на измерения,
+ * прошлые ошибки и вывод ученика, а не только на статичное описание
+ * эксперимента. Ничего не пересчитывается — те же самые объекты, что
+ * уже хранит ElectricityLabExperienceProvider.
  */
 export interface LabAIContext {
   currentTask: { id: string; title: string; difficulty: string } | null;
@@ -46,21 +56,43 @@ export interface LabExperienceAIContext {
   currentExperiment: { id: string; title: string; difficulty: string; goal: string } | null;
   currentStep: { kind: string; instruction: string; unlocked: boolean } | null;
   measurementsRecorded: number;
+  recentMeasurements: { voltageV: number; currentA: number; resistanceOhm: number; powerW: number }[];
   completedExperimentIds: string[];
+  lastNotebookEntry: { experimentTitle: string; score: number; teacherNote: string; conclusion: string } | null;
+  conclusionDraft: string;
 }
+
+const MAX_RECENT_MEASUREMENTS = 5;
 
 function buildLabExperienceAIContext(
   experiment: ElectricityLabExperiment | null,
   step: ElectricityLabStep | null,
   stepUnlocked: boolean,
-  measurementsRecorded: number,
-  completedExperimentIds: string[]
+  measurements: ElectricityMeasurement[],
+  completedExperimentIds: string[],
+  lastNotebookEntry: ElectricityNotebookEntry | null,
+  conclusionDraft: string
 ): LabExperienceAIContext {
   return {
     currentExperiment: experiment ? { id: experiment.id, title: experiment.title, difficulty: experiment.difficulty, goal: experiment.goal } : null,
     currentStep: step ? { kind: step.kind, instruction: step.instruction, unlocked: stepUnlocked } : null,
-    measurementsRecorded,
+    measurementsRecorded: measurements.length,
+    recentMeasurements: measurements.slice(-MAX_RECENT_MEASUREMENTS).map((m) => ({
+      voltageV: m.voltageV,
+      currentA: m.currentA,
+      resistanceOhm: m.resistanceOhm,
+      powerW: m.powerW,
+    })),
     completedExperimentIds,
+    lastNotebookEntry: lastNotebookEntry
+      ? {
+          experimentTitle: lastNotebookEntry.experimentTitle,
+          score: lastNotebookEntry.score,
+          teacherNote: lastNotebookEntry.teacherNote,
+          conclusion: lastNotebookEntry.conclusion,
+        }
+      : null,
+    conclusionDraft,
   };
 }
 
@@ -75,8 +107,10 @@ export function buildAIContext(params: {
   labExperiment?: ElectricityLabExperiment | null;
   labStep?: ElectricityLabStep | null;
   labStepUnlocked?: boolean;
-  labMeasurementsRecorded?: number;
+  labMeasurements?: ElectricityMeasurement[];
   labCompletedExperimentIds?: string[];
+  labLastNotebookEntry?: ElectricityNotebookEntry | null;
+  labConclusionDraft?: string;
 }): LabAIContext {
   const {
     task,
@@ -89,8 +123,10 @@ export function buildAIContext(params: {
     labExperiment,
     labStep,
     labStepUnlocked,
-    labMeasurementsRecorded,
+    labMeasurements,
     labCompletedExperimentIds,
+    labLastNotebookEntry,
+    labConclusionDraft,
   } = params;
 
   const battery = components.find((c) => c.kind === "battery");
@@ -128,8 +164,10 @@ export function buildAIContext(params: {
           labExperiment,
           labStep ?? null,
           labStepUnlocked ?? false,
-          labMeasurementsRecorded ?? 0,
-          labCompletedExperimentIds ?? []
+          labMeasurements ?? [],
+          labCompletedExperimentIds ?? [],
+          labLastNotebookEntry ?? null,
+          labConclusionDraft ?? ""
         )
       : null,
   };

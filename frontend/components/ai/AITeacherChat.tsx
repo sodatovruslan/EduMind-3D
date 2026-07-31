@@ -107,7 +107,13 @@ export default function AITeacherChat({ simulationId, context, learningProfile, 
         </button>
       </div>
 
-      <div ref={scrollRef} className="flex-1 space-y-2 overflow-y-auto p-3" data-testid="ai-teacher-history">
+      <div
+        ref={scrollRef}
+        role="log"
+        aria-live="polite"
+        className="flex-1 space-y-2 overflow-y-auto p-3"
+        data-testid="ai-teacher-history"
+      >
         {messages.length === 0 && (
           <div className="space-y-3">
             <p className="flex items-start gap-2 text-sm text-slate-400">
@@ -170,6 +176,7 @@ export default function AITeacherChat({ simulationId, context, learningProfile, 
         <button
           onClick={() => sendMessage(input)}
           disabled={isLoading || !input.trim()}
+          aria-label="Отправить сообщение"
           data-testid="ai-teacher-send"
           className="rounded-md bg-neon-violet px-3 py-2 text-white hover:brightness-110 disabled:opacity-50"
         >
