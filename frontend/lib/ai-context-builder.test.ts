@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { solveCircuit, type CircuitComponent, type Connection } from "./circuit-engine";
 import { TASKS, TaskStatus, validateTask } from "./task-engine";
 import { buildAIContext } from "./ai-context-builder";
+import { getElectricityLabExperiment } from "./electricity-lab-catalog";
 
 function baseComponents(overrides?: Partial<Record<string, unknown>>): CircuitComponent[] {
   return [
@@ -69,5 +70,49 @@ describe("ai-context-builder — buildAIContext", () => {
 
     expect(ctx.connections).toEqual([{ from: "battery_pos", to: "switch_a" }]);
     expect(ctx.components.find((c) => c.id === "battery")).toEqual({ id: "battery", kind: "battery" });
+  });
+
+  it("labExperience is null when no lab experiment is active (backward compatible with Stage 3)", () => {
+    const components = baseComponents();
+    const connections: Connection[] = [];
+    const solution = solveCircuit(components, connections);
+    const task = TASKS[0];
+    const validation = validateTask(task, { components, connections, solution });
+
+    const ctx = buildAIContext({ task, taskStatus: TaskStatus.NOT_STARTED, xp: 0, components, connections, solution, validation });
+
+    expect(ctx.labExperience).toBeNull();
+  });
+
+  it("labExperience reflects the real selected experiment/step/measurement count, never invented", () => {
+    const components = baseComponents();
+    const connections: Connection[] = [];
+    const solution = solveCircuit(components, connections);
+    const task = TASKS[0];
+    const validation = validateTask(task, { components, connections, solution });
+    const experiment = getElectricityLabExperiment("elec-beginner-measure-current")!;
+    const step = experiment.steps[0];
+
+    const ctx = buildAIContext({
+      task,
+      taskStatus: TaskStatus.NOT_STARTED,
+      xp: 0,
+      components,
+      connections,
+      solution,
+      validation,
+      labExperiment: experiment,
+      labStep: step,
+      labStepUnlocked: true,
+      labMeasurementsRecorded: 2,
+      labCompletedExperimentIds: ["elec-beginner-measure-current"],
+    });
+
+    expect(ctx.labExperience).toEqual({
+      currentExperiment: { id: experiment.id, title: experiment.title, difficulty: experiment.difficulty, goal: experiment.goal },
+      currentStep: { kind: step.kind, instruction: step.instruction, unlocked: true },
+      measurementsRecorded: 2,
+      completedExperimentIds: ["elec-beginner-measure-current"],
+    });
   });
 });

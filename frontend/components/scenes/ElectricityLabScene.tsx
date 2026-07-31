@@ -17,6 +17,11 @@ import { WireDragProvider, WireDragSurface, useWireDrag } from "@/components/cor
 import ConnectionPoint from "@/components/core/ConnectionPoint";
 import { TutorialProvider, useTutorial } from "@/components/tutorial/TutorialProvider";
 import TutorialPanel from "@/components/tutorial/TutorialPanel";
+import { ElectricityLabExperienceProvider, useElectricityLabExperience } from "@/components/core/ElectricityLabExperienceProvider";
+import ElectricityExperimentCatalogBrowser from "@/components/lab/ElectricityExperimentCatalogBrowser";
+import ElectricityGuidedLabPanel from "@/components/lab/ElectricityGuidedLabPanel";
+import ElectricityLabReportPanel from "@/components/lab/ElectricityLabReportPanel";
+import ElectricityLabNotebookPanel from "@/components/lab/ElectricityLabNotebookPanel";
 import { COMPONENT_INFO } from "@/lib/component-info";
 import { useSimulationClock } from "@/lib/use-simulation-clock";
 import { useQuality, type QualityLevel } from "@/lib/quality-context";
@@ -124,9 +129,22 @@ function Workbench() {
   );
 }
 
+// Stage E-2 (Task 4 — Interactive Guidance): подсветка нужной клеммы
+// теперь может приходить из двух источников — одноразового Guided
+// Onboarding (useTutorial) и текущего шага "Сборка" выбранной
+// лабораторной работы (useElectricityLabExperience). Оба читают только
+// реальное состояние (connections/шаг), никакого заскриптованного
+// сценария — просто объединяем, какую пару терминалов подсветить прямо
+// сейчас, не трогая ни один из двух источников по отдельности.
+function useSuggestedTerminals(): [string, string] | null {
+  const { suggestedTerminals: tutorialTerminals } = useTutorial();
+  const { suggestedTerminals: labTerminals } = useElectricityLabExperience();
+  return tutorialTerminals ?? labTerminals;
+}
+
 function Battery() {
   const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
-  const { suggestedTerminals } = useTutorial();
+  const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.battery;
   return (
     <group position={[-3.2, 0.28, 0]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
@@ -172,7 +190,7 @@ function Battery() {
 function Resistor() {
   const bandColors = ["#a16207", "#000000", "#dc2626"];
   const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
-  const { suggestedTerminals } = useTutorial();
+  const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.resistor;
   return (
     <group position={[-1.5, 0.28, 0]} rotation={[0, 0, Math.PI / 2]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
@@ -207,7 +225,7 @@ function Bulb({ brightness }: { brightness: number }) {
   const lightRef = useRef<THREE.PointLight>(null);
   const filamentRef = useRef<THREE.MeshStandardMaterial>(null);
   const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
-  const { suggestedTerminals } = useTutorial();
+  const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.bulb;
 
   useFrame((_, delta) => {
@@ -258,7 +276,7 @@ function Bulb({ brightness }: { brightness: number }) {
 function Switch({ isClosed, onToggle }: { isClosed: boolean; onToggle: () => void }) {
   const leverRef = useRef<THREE.Group>(null);
   const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
-  const { suggestedTerminals } = useTutorial();
+  const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.switch;
 
   useFrame((_, delta) => {
@@ -347,7 +365,7 @@ function MeterHousing({
 
 function Ammeter({ currentA }: { currentA: number }) {
   const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
-  const { suggestedTerminals } = useTutorial();
+  const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.ammeter;
   return (
     <group position={[3.2, 0.28, -0.45]} rotation={[0, Math.PI / 2, 0]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
@@ -361,7 +379,7 @@ function Ammeter({ currentA }: { currentA: number }) {
 
 function Voltmeter({ voltageV }: { voltageV: number }) {
   const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
-  const { suggestedTerminals } = useTutorial();
+  const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.voltmeter;
   return (
     <group position={[-1.5, 1.05, 0.9]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
@@ -416,7 +434,7 @@ function Fuse({ isBlown, justBlown, timeScale }: { isBlown: boolean; justBlown: 
   const { preset } = useQuality();
   const particleCount = Math.min(preset.maxParticles, 14);
   const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
-  const { suggestedTerminals } = useTutorial();
+  const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.fuse;
   return (
     <group position={[1.4, 0.28, -1.6]} rotation={[0, 0, Math.PI / 2]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
@@ -654,17 +672,94 @@ function TeacherChatPanel({
   solution: CircuitSolution;
 }) {
   const { task, status, totalXp, result, learningProfile, recordHintUsed } = useTaskProgress();
+  // Stage E-2 (Task 7 — AI Teacher Upgrade): AI получает ТОЛЬКО уже
+  // посчитанное состояние учебного слоя (выбранная лабораторная работа,
+  // текущий шаг, сколько измерений реально сделано) — ничего не решает
+  // само про прогресс/разблокировку.
+  const {
+    selectedExperiment,
+    currentStep,
+    isCurrentStepUnlocked,
+    measurements,
+    completedExperimentIds,
+    recordHintUsed: recordLabHintUsed,
+  } = useElectricityLabExperience();
   const context = useMemo(
-    () => buildAIContext({ task, taskStatus: status, xp: totalXp, components, connections, solution, validation: result }),
-    [task, status, totalXp, components, connections, solution, result]
+    () =>
+      buildAIContext({
+        task,
+        taskStatus: status,
+        xp: totalXp,
+        components,
+        connections,
+        solution,
+        validation: result,
+        labExperiment: selectedExperiment,
+        labStep: currentStep,
+        labStepUnlocked: isCurrentStepUnlocked,
+        labMeasurementsRecorded: measurements.length,
+        labCompletedExperimentIds: completedExperimentIds,
+      }),
+    [
+      task,
+      status,
+      totalXp,
+      components,
+      connections,
+      solution,
+      result,
+      selectedExperiment,
+      currentStep,
+      isCurrentStepUnlocked,
+      measurements.length,
+      completedExperimentIds,
+    ]
   );
   return (
     <AITeacherChat
       simulationId={simulationId}
       context={context}
       learningProfile={learningProfile}
-      onMessageSent={recordHintUsed}
+      onMessageSent={() => {
+        recordHintUsed();
+        recordLabHintUsed();
+      }}
     />
+  );
+}
+
+// Stage E-2 — то же самое, что Emergency Stop Reset в Chemistry World
+// Stage 5.7: сброс цепи (кнопка "Сбросить") должен сбрасывать И учебную
+// сессию, иначе студент останется на устаревшем шаге против уже
+// сброшенной, пустой цепи.
+function ElectricityResetButton({ onReset }: { onReset: () => void }) {
+  const { resetLabSession } = useElectricityLabExperience();
+  return (
+    <button
+      onClick={() => {
+        onReset();
+        resetLabSession();
+      }}
+      data-testid="reset-button"
+      className="flex items-center gap-2 rounded-full border border-glass-border px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/5"
+    >
+      <RotateCcw size={16} />
+      Сбросить
+    </button>
+  );
+}
+
+// переключает каталог/пошаговую панель в зависимости от того, выбрана ли
+// сейчас лабораторная работа — и всегда показывает отчёт поверх, если
+// только что была завершена работа (тот же паттерн, что
+// GuidedLabExperienceSection в Chemistry World)
+function ElectricityLabExperienceSection() {
+  const { selectedExperiment, lastNotebookEntry } = useElectricityLabExperience();
+  return (
+    <>
+      {lastNotebookEntry && <ElectricityLabReportPanel />}
+      {selectedExperiment ? <ElectricityGuidedLabPanel /> : <ElectricityExperimentCatalogBrowser />}
+    </>
   );
 }
 
@@ -843,6 +938,10 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
       connections={state.connections}
       solution={solution}
     >
+    <ElectricityLabExperienceProvider
+      simulationId={simulation.id}
+      stepContext={{ components: state.components, connections: state.connections, solution }}
+    >
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
     <div className="flex-1 rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">
       <div className="relative">
@@ -902,14 +1001,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
               {clock.isRunning ? <Pause size={16} /> : <Play size={16} />}
               {clock.isRunning ? "Пауза анимации" : "Старт анимации"}
             </button>
-            <button
-              onClick={handleReset}
-              data-testid="reset-button"
-              className="flex items-center gap-2 rounded-full border border-glass-border px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/5"
-            >
-              <RotateCcw size={16} />
-              Сбросить
-            </button>
+            <ElectricityResetButton onReset={handleReset} />
           </div>
 
           <div className="flex items-center gap-1 font-mono text-xs text-slate-500">
@@ -961,7 +1053,21 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
         </div>
 
         <div className="sm:col-span-2">
+          <h3 className="mb-2 font-mono text-xs uppercase tracking-widest text-slate-500">Быстрая проверка</h3>
           <TaskPanel />
+        </div>
+
+        {/* Stage E-2 — Advanced Laboratory Experience: отдельная, более
+            богатая учебная надстройка поверх существующей лаборатории.
+            Не заменяет TaskPanel выше (тот продолжает работать как
+            раньше) — это дополнительный слой: каталог из 8 лабораторных
+            работ с полным циклом (введение/теория/оборудование/сборка/
+            измерение/анализ/вывод), автоматический отчёт и Лабораторный
+            журнал измерений. */}
+        <div className="space-y-4 sm:col-span-2">
+          <h3 className="font-headline text-lg font-semibold text-slate-100">Лабораторные работы</h3>
+          <ElectricityLabExperienceSection />
+          <ElectricityLabNotebookPanel />
         </div>
 
         <ProgressBanners />
@@ -977,6 +1083,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
       solution={solution}
     />
     </div>
+    </ElectricityLabExperienceProvider>
     </TaskProgressProvider>
     </TutorialProvider>
   );
