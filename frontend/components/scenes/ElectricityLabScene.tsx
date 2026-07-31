@@ -534,12 +534,9 @@ function PendingWirePreview() {
   );
 }
 
-function CircuitScene() {
+function CircuitScene({ solution, timeScale }: { solution: CircuitSolution; timeScale: number }) {
   const { state, updateComponent, logEvent } = useExperimentState();
-  const clock = useSimulationClock();
   const shortLoggedRef = useRef(false);
-
-  const solution = useMemo(() => solveCircuit(state.components, state.connections), [state.components, state.connections]);
 
   useEffect(() => {
     if (solution.fuseToBlowId) {
@@ -588,7 +585,7 @@ function CircuitScene() {
       />
       <Ammeter currentA={ammeterReading} />
       <Voltmeter voltageV={voltmeterReading} />
-      <Fuse isBlown={fuse?.isBlown ?? false} justBlown={Boolean(solution.fuseToBlowId)} timeScale={clock.timeScale} />
+      <Fuse isBlown={fuse?.isBlown ?? false} justBlown={Boolean(solution.fuseToBlowId)} timeScale={timeScale} />
       <Wires />
       <PendingWirePreview />
       <WireDragSurface y={0.01} size={12} />
@@ -600,7 +597,15 @@ function CircuitScene() {
 // Canvas) и CanvasShell: пока пользователь тянет провод, OrbitControls
 // должен быть выключен — иначе тот же pointer-жест дополнительно крутит
 // камеру, и координаты терминалов "уезжают" прямо во время клика
-function ElectricityCanvas({ quality }: { quality: QualityLevel }) {
+function ElectricityCanvas({
+  quality,
+  solution,
+  timeScale,
+}: {
+  quality: QualityLevel;
+  solution: CircuitSolution;
+  timeScale: number;
+}) {
   const { draggingFrom } = useWireDrag();
   return (
     <CanvasShell
@@ -613,7 +618,7 @@ function ElectricityCanvas({ quality }: { quality: QualityLevel }) {
       minPolarAngle={Math.PI / 6}
       maxPolarAngle={Math.PI / 2.1}
     >
-      <CircuitScene />
+      <CircuitScene solution={solution} timeScale={timeScale} />
     </CanvasShell>
   );
 }
@@ -842,7 +847,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
     <div className="flex-1 rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">
       <div className="relative">
         <WireDragProvider onConnect={handleConnect}>
-          <ElectricityCanvas quality={quality} />
+          <ElectricityCanvas quality={quality} solution={solution} timeScale={clock.timeScale} />
         </WireDragProvider>
       </div>
 
@@ -891,10 +896,11 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
             <button
               onClick={handleClockToggle}
               data-testid="clock-toggle"
+              title="Управляет только анимацией искр и таймером сессии. Ток и напряжение считаются по закону Ома мгновенно и всегда, независимо от этой кнопки."
               className="neon-glow-indigo flex items-center gap-2 rounded-full bg-neon-violet px-4 py-2 text-sm font-medium text-white transition hover:brightness-110"
             >
               {clock.isRunning ? <Pause size={16} /> : <Play size={16} />}
-              {clock.isRunning ? "Пауза" : "Старт"}
+              {clock.isRunning ? "Пауза анимации" : "Старт анимации"}
             </button>
             <button
               onClick={handleReset}
