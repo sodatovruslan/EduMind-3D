@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";
-import { Html, QuadraticBezierLine, MeshTransmissionMaterial } from "@react-three/drei";
+import { Html, QuadraticBezierLine, MeshTransmissionMaterial, useGLTF } from "@react-three/drei";
 import { Play, Pause, RotateCcw } from "lucide-react";
 import CanvasShell from "@/components/scenes/CanvasShell";
 import AITeacherChat from "@/components/ai/AITeacherChat";
@@ -79,6 +79,102 @@ const INITIAL_COMPONENTS: CircuitComponent[] = [
 const BRASS_COLOR = "#c9a227";
 const COPPER_COLOR = "#b87333";
 
+// Visual Realism Upgrade: готовые CC0 GLB-модели (battery/bulb/switch/
+// multimeter) вместо части процедурных примитивов. Модели уже оптимизированы
+// офлайн через gltf-transform (resize+webp+meshopt: 36.6MB -> ~1.1MB суммарно)
+// — здесь только загрузка и подгонка масштаба/поворота под существующие
+// клеммы (ConnectionPoint) и анимации, физика/логика не тронуты.
+const MODEL_PATHS = {
+  battery: "/models/electricity/battery.glb",
+  bulb: "/models/electricity/bulb.glb",
+  switch: "/models/electricity/switch.glb",
+  multimeter: "/models/electricity/multimeter.glb",
+} as const;
+
+useGLTF.preload(MODEL_PATHS.battery);
+useGLTF.preload(MODEL_PATHS.bulb);
+useGLTF.preload(MODEL_PATHS.switch);
+useGLTF.preload(MODEL_PATHS.multimeter);
+
+// клонируем сцену модели (useGLTF кэширует и делит один и тот же граф между
+// вызовами), один раз включаем тени и клонируем материалы явно — Object3D.
+// clone(true) клонирует иерархию мешей, но НЕ материалы (они остаются общими
+// с закэшированным оригиналом useGLTF), а лампе ниже нужно менять
+// emissiveIntensity нити только у своего инстанса.
+function prepareClone(scene: THREE.Object3D): THREE.Object3D {
+  const clone = scene.clone(true);
+  clone.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (mesh.isMesh) {
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      // после meshopt/quantization у некоторых мешей боковая сфера отсечения
+      // (boundingSphere) считается неверно относительно родительского
+      // трансформа — отключаем frustum culling для надёжности, мешей в
+      // сцене мало, это не сказывается на производительности
+      mesh.frustumCulled = false;
+      if (Array.isArray(mesh.material)) {
+        mesh.material = mesh.material.map((m) => m.clone());
+      } else if (mesh.material) {
+        mesh.material = mesh.material.clone();
+      }
+    }
+  });
+  return clone;
+}
+
+// Честный автофит по РЕАЛЬНОМУ bounding box уже распакованной (dequantized)
+// three.js-геометрии — не по сырым числам из glTF JSON (которые после
+// KHR_mesh_quantization ничего не говорят без учёта per-node scale/offset).
+// targetSize — желаемый размер по самой длинной оси, тот же, что был у
+// процедурного меша, который эта модель заменяет (см. вызовы ниже), поэтому
+// существующие ConnectionPoint (клеммы) остаются на месте без пересчёта.
+// Модель всегда центрируется по X/Z и по умолчанию по Y тоже (так были
+// центрированы все заменяемые процедурные меши); yOffset — осознанный сдвиг
+// по Y там, где это нужно по композиции (напр. лампа — визуальная сборка
+// смещена вверх относительно точек подключения проводов снизу).
+function autoFit(clone: THREE.Object3D, targetSize: number, yOffset: number) {
+  const box = new THREE.Box3().setFromObject(clone);
+  const size = box.getSize(new THREE.Vector3());
+  const longestAxis = Math.max(size.x, size.y, size.z) || 1;
+  const scale = targetSize / longestAxis;
+  clone.scale.setScalar(scale);
+
+  const scaledBox = new THREE.Box3().setFromObject(clone);
+  const center = scaledBox.getCenter(new THREE.Vector3());
+  clone.position.x -= center.x;
+  clone.position.y -= center.y - yOffset;
+  clone.position.z -= center.z;
+}
+
+function usePreparedGLTF(path: string, targetSize: number, yOffset = 0) {
+  const { scene } = useGLTF(path);
+  return useMemo(() => {
+    const clone = prepareClone(scene);
+    autoFit(clone, targetSize, yOffset);
+    return clone;
+  }, [scene, targetSize, yOffset]);
+}
+
+// Рубильник — рычаг ("SwitchHandle") остаётся ровно там, где его поставил
+// автор модели, внутри общей иерархии; вращаем его СОБСТВЕННЫЙ rotation
+// (локальный, вокруг его же авторского шарнира), а не переносим меш в
+// отдельный узел — так исключён риск сломать позицию при репарентинге.
+// Рычаг приходит из glTF с ненулевым "родным" углом покоя (авторский
+// шарнир смонтирован под наклоном) — baseHandleRotationX запоминает этот
+// угол один раз при загрузке, чтобы анимация тумблера СМЕЩАЛА его, а не
+// затирала абсолютным значением (иначе рычаг проваливался в корпус).
+function useSwitchModel(targetSize: number) {
+  const { scene } = useGLTF(MODEL_PATHS.switch);
+  return useMemo(() => {
+    const clone = prepareClone(scene);
+    autoFit(clone, targetSize, 0);
+    const handle = clone.getObjectByName("SwitchHandle_SwitchHandle_0") as THREE.Object3D | null;
+    const baseHandleRotationX = handle?.rotation.x ?? 0;
+    return { base: clone, handle, baseHandleRotationX };
+  }, [scene, targetSize]);
+}
+
 // процедурная текстура столешницы (шум + пара царапин) — тот же прием,
 // что и градиентный фон в CanvasShell (CanvasTexture), без внешних файлов
 function useLabBenchTexture() {
@@ -146,22 +242,20 @@ function Battery() {
   const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
   const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.battery;
+  // targetSize=0.9 — та же длина, что была у процедурного cylinderGeometry
+  // (args={[0.22, 0.22, 0.9, 24]}), поэтому клеммы ниже остаются на месте.
+  // Модель уже авторски смоделирована лежащей на боку (её собственный
+  // bbox: X ±1.0, Y/Z ±0.25 — длинная ось УЖЕ совпадает со сценовой X,
+  // вдоль которой стоят клеммы), поэтому в отличие от старого
+  // cylinderGeometry (который по умолчанию стоял вдоль Y и требовал
+  // поворота на 90°) этой модели дополнительный поворот не нужен —
+  // с ним она вставала вертикально ("солдатиком").
+  const model = usePreparedGLTF(MODEL_PATHS.battery, 0.9);
   return (
     <group position={[-3.2, 0.28, 0]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
-      {/* пластиковый корпус — матовый, невысокая металличность */}
-      <mesh castShadow rotation={[0, 0, Math.PI / 2]}>
-        <cylinderGeometry args={[0.22, 0.22, 0.9, 24]} />
-        <meshStandardMaterial color="#1d4ed8" roughness={0.5} metalness={0.08} />
-      </mesh>
-      {/* латунные клеммы */}
-      <mesh rotation={[0, 0, Math.PI / 2]} position={[-0.42, 0, 0]}>
-        <cylinderGeometry args={[0.06, 0.06, 0.06, 16]} />
-        <meshStandardMaterial color="#1c1917" metalness={0.7} roughness={0.35} />
-      </mesh>
-      <mesh rotation={[0, 0, Math.PI / 2]} position={[0.42, 0, 0]}>
-        <cylinderGeometry args={[0.09, 0.09, 0.06, 16]} />
-        <meshStandardMaterial color={BRASS_COLOR} metalness={0.85} roughness={0.25} />
-      </mesh>
+      {/* реалистичная GLB-модель батареи вместо процедурного цилиндра —
+          масштаб посчитан автофитом, модель уже лежит вдоль нужной оси */}
+      <primitive object={model} />
       <ConnectionPoint
         id="battery_pos"
         position={[-0.4, 0, 0]}
@@ -223,10 +317,27 @@ function Resistor() {
 
 function Bulb({ brightness }: { brightness: number }) {
   const lightRef = useRef<THREE.PointLight>(null);
-  const filamentRef = useRef<THREE.MeshStandardMaterial>(null);
+  const filamentMaterialRef = useRef<THREE.MeshStandardMaterial | null>(null);
   const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
   const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.bulb;
+  // targetSize=0.68 — высота старой сборки (цоколь -0.4 .. верх стекла
+  // +0.28); yOffset=-0.06 ставит низ модели туда же, где был низ цоколя,
+  // чтобы клеммы ниже (провода-выводы) остались на прежнем месте
+  const model = usePreparedGLTF(MODEL_PATHS.bulb, 0.68, -0.06);
+
+  useEffect(() => {
+    // нить накала в GLB-модели — единственный меш, которому нужно реально
+    // светиться (управляется тем же brightness, что и раньше, ничего
+    // не заскриптовано)
+    const filament = model.getObjectByName("filament (lit)_0") as THREE.Mesh | undefined;
+    const material = filament?.material as THREE.MeshStandardMaterial | undefined;
+    if (material) {
+      material.emissive = new THREE.Color("#facc15");
+      material.emissiveIntensity = 0;
+      filamentMaterialRef.current = material;
+    }
+  }, [model]);
 
   useFrame((_, delta) => {
     // плавный разогрев/остывание — тот же easing-принцип для света и
@@ -236,10 +347,10 @@ function Bulb({ brightness }: { brightness: number }) {
     if (lightRef.current) {
       lightRef.current.intensity = THREE.MathUtils.lerp(lightRef.current.intensity, targetIntensity, Math.min(1, delta * 2.5));
     }
-    if (filamentRef.current) {
+    if (filamentMaterialRef.current) {
       // без базовой засветки — при нулевом токе нить должна быть полностью темной
-      filamentRef.current.emissiveIntensity = THREE.MathUtils.lerp(
-        filamentRef.current.emissiveIntensity,
+      filamentMaterialRef.current.emissiveIntensity = THREE.MathUtils.lerp(
+        filamentMaterialRef.current.emissiveIntensity,
         brightness * 3.5,
         Math.min(1, delta * 2.5)
       );
@@ -248,23 +359,9 @@ function Bulb({ brightness }: { brightness: number }) {
 
   return (
     <group position={[0.2, 0.6, 0]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
-      {/* алюминиевый цоколь */}
-      <mesh position={[0, -0.32, 0]} castShadow>
-        <cylinderGeometry args={[0.12, 0.14, 0.16, 16]} />
-        <meshStandardMaterial color="#9ca3af" metalness={0.9} roughness={0.28} />
-      </mesh>
-      <mesh position={[0, -0.24, 0]}>
-        <torusGeometry args={[0.125, 0.008, 8, 24]} />
-        <meshStandardMaterial color="#6b7280" metalness={0.9} roughness={0.35} />
-      </mesh>
-      <mesh castShadow>
-        <sphereGeometry args={[0.28, 32, 32]} />
-        <MeshTransmissionMaterial thickness={0.08} roughness={0.06} transmission={0.94} ior={1.45} color="#fefce8" resolution={128} samples={2} />
-      </mesh>
-      <mesh>
-        <torusGeometry args={[0.08, 0.012, 8, 24]} />
-        <meshStandardMaterial ref={filamentRef} color="#fde047" emissive="#facc15" emissiveIntensity={0} />
-      </mesh>
+      {/* реалистичная GLB-модель лампы накаливания (стекло/нить/цоколь уже
+          смоделированы отдельными мешами) вместо процедурного шара+тора */}
+      <primitive object={model} />
       <pointLight ref={lightRef} color="#fde047" intensity={0} distance={4} decay={2} />
       <ConnectionPoint id="bulb_a" position={[-0.42, -0.6, 0]} suggested={suggestedTerminals?.includes("bulb_a") ?? false} />
       <ConnectionPoint id="bulb_b" position={[0.42, -0.6, 0]} suggested={suggestedTerminals?.includes("bulb_b") ?? false} />
@@ -274,37 +371,29 @@ function Bulb({ brightness }: { brightness: number }) {
 }
 
 function Switch({ isClosed, onToggle }: { isClosed: boolean; onToggle: () => void }) {
-  const leverRef = useRef<THREE.Group>(null);
   const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
   const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.switch;
+  // targetSize=0.8 — модель это компактный тумблер (мировой bbox после
+  // авторской Z-up→Y-up коррекции: X≈0.13, Y≈0.23, Z≈0.13 — самая длинная
+  // ось "вверх", а не "вширь", как у старого плоского рычага box[0.9,...]),
+  // поэтому подгонка по длине всей модели к 0.9 раздувала её втрое; 0.8 по
+  // высоте даёт заметный, реалистично крупный корпус (явно больше клемм-
+  // маркеров ConnectionPoint радиусом 0.055–0.16), а не игрушечный кубик
+  const { base, handle, baseHandleRotationX } = useSwitchModel(0.8);
 
   useFrame((_, delta) => {
-    if (!leverRef.current) return;
-    const targetAngle = isClosed ? 0 : -0.7;
-    leverRef.current.rotation.z = THREE.MathUtils.lerp(leverRef.current.rotation.z, targetAngle, Math.min(1, delta * 6));
+    if (!handle) return;
+    // смещение ОТ авторского угла покоя рычага, а не абсолютный угол
+    const targetAngle = baseHandleRotationX + (isClosed ? 0 : -0.7);
+    handle.rotation.x = THREE.MathUtils.lerp(handle.rotation.x, targetAngle, Math.min(1, delta * 6));
   });
 
   return (
-    <group position={[1.9, 0.28, 0]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
-      {/* пластиковое основание */}
-      <mesh position={[0, -0.08, 0]} castShadow>
-        <boxGeometry args={[0.9, 0.08, 0.3]} />
-        <meshStandardMaterial color="#334155" roughness={0.55} metalness={0.15} />
-      </mesh>
-      <group ref={leverRef} position={[-0.35, 0, 0]}>
-        <mesh position={[0.35, 0.04, 0]} castShadow onClick={onToggle}>
-          <boxGeometry args={[0.7, 0.05, 0.06]} />
-          <meshStandardMaterial color={isClosed ? "#16a34a" : "#dc2626"} roughness={0.25} metalness={0.5} />
-        </mesh>
-        {/* металлическая шарнирная ось */}
-        <mesh>
-          <sphereGeometry args={[0.035, 10, 10]} />
-          <meshStandardMaterial color="#9ca3af" metalness={0.9} roughness={0.25} />
-        </mesh>
-      </group>
-      <ConnectionPoint id="switch_a" position={[-0.4, 0, 0]} suggested={suggestedTerminals?.includes("switch_a") ?? false} />
-      <ConnectionPoint id="switch_b" position={[0.4, 0, 0]} suggested={suggestedTerminals?.includes("switch_b") ?? false} />
+    <group position={[1.9, 0.1, 0]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
+      <primitive object={base} onClick={onToggle} />
+      <ConnectionPoint id="switch_a" position={[-0.4, 0.13, 0]} suggested={suggestedTerminals?.includes("switch_a") ?? false} />
+      <ConnectionPoint id="switch_b" position={[0.4, 0.13, 0]} suggested={suggestedTerminals?.includes("switch_b") ?? false} />
       {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.35, 0]} />}
     </group>
   );
@@ -337,17 +426,21 @@ function MeterHousing({
     }
   });
 
+  // targetSize=0.5 — примерно та же длина, что у старого box[0.55,0.4,0.3]
+  const model = usePreparedGLTF(MODEL_PATHS.multimeter, 0.5);
+
   return (
     <group position={position}>
-      <mesh castShadow>
-        <boxGeometry args={[0.55, 0.4, 0.3]} />
-        <meshStandardMaterial color="#0f172a" roughness={0.35} metalness={0.6} />
-      </mesh>
-      <mesh position={[0, 0, 0.151]}>
-        <planeGeometry args={[0.47, 0.33]} />
+      {/* реалистичная GLB-модель мультиметра как корпус для амперметра и
+          вольтметра — цифровое табло поверх (Html) остаётся как есть */}
+      <group rotation={[0, Math.PI / 2, 0]}>
+        <primitive object={model} />
+      </group>
+      <mesh position={[0, 0.06, 0.151]}>
+        <planeGeometry args={[0.34, 0.22]} />
         <meshStandardMaterial color="#052e1b" roughness={0.4} metalness={0.1} />
       </mesh>
-      <Html position={[0, 0, 0.16]} center distanceFactor={6} occlude>
+      <Html position={[0, 0.06, 0.16]} center distanceFactor={6} occlude>
         <div
           data-testid={testId}
           data-value={value}
