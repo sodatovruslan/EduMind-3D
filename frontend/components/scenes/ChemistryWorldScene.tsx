@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";
-import { Html } from "@react-three/drei";
+import { ContactShadows, Html, useGLTF } from "@react-three/drei";
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertOctagon, Flame, Lock, RotateCcw, RotateCw, Unlock, Volume2, VolumeX } from "lucide-react";
 import CanvasShell from "@/components/scenes/CanvasShell";
@@ -16,12 +16,18 @@ import {
   type StockBottle,
 } from "@/components/core/ChemistryWorkspaceProvider";
 import { ChemistryDragProvider, useChemistryDrag } from "@/components/core/ChemistryDragProvider";
+import {
+  ChemistryInteractionProvider,
+  useChemistryInteraction,
+  useInteractable,
+} from "@/components/core/ChemistryInteractionProvider";
+import { getInteractable } from "@/lib/interactables";
 import { ChemistryTutorialProvider } from "@/components/tutorial/ChemistryTutorialProvider";
 import ChemistryTutorialPanel from "@/components/tutorial/ChemistryTutorialPanel";
 import { ExperimentProgressProvider, useExperimentProgress } from "@/components/experiments/ExperimentProgressProvider";
 import ExperimentPanel from "@/components/experiments/ExperimentPanel";
 import ChemistryTeacherChat from "@/components/ai/ChemistryTeacherChat";
-import { SUBSTANCES, aggregateStateOf, computeColorHex, totalMassG, totalVolumeMl } from "@/lib/chemistry-engine";
+import { SUBSTANCES, aggregateStateOf, computeColorHex, totalMassG, totalVolumeMl, type AggregateState } from "@/lib/chemistry-engine";
 import { getRegisteredReactions } from "@/lib/reaction-engine";
 import { checkSafety, type SafetyWarning } from "@/lib/chemistry-safety";
 import {
@@ -88,6 +94,138 @@ const CONTAINER_LABEL: Record<string, string> = {
   test_tube: "Пробирка",
   flask: "Колба",
   beaker: "Стакан",
+};
+
+// Stage C-3 (реализм + переиспользуемость): вместо кода "как нарисовать
+// стакан" — общая библиотека стеклянных профилей (GLASS_LIBRARY) и один
+// рендер-компонент (GlassObject), который умеет показать ЛЮБОЙ профиль из
+// библиотеки: настоящую форму стекла через LatheGeometry (точки профиля
+// вращаются вокруг оси Y), жидкость, осадок — единообразно. Добавить новый
+// вид сосуда в будущем — это только новая запись в GLASS_LIBRARY, без нового
+// кода рендера. halfHeight каждого профиля — то же число, что и раньше в
+// ContainerMesh (0.25/0.2/0.21 для test_tube/beaker/flask) — оно завязано на
+// позиции жидкости/осадка/колец/хитбокса в ContainerMesh и НЕ меняется,
+// меняется только форма стекла внутри той же общей высоты.
+function latheGeometry(points: Array<[number, number]>, segments = 28): THREE.LatheGeometry {
+  return new THREE.LatheGeometry(
+    points.map(([x, y]) => new THREE.Vector2(x, y)),
+    segments
+  );
+}
+
+export interface GlassProfile {
+  geometry: THREE.LatheGeometry;
+  halfHeight: number;
+  liquidRadius: number;
+  precipitateRadius: number;
+  label: string;
+}
+
+// GLASS_LIBRARY — общая библиотека стеклянной посуды для всего Chemistry
+// World. test_tube/beaker/flask сейчас реально используются ContainerMesh
+// (это существующие виды сосудов на столе, item.kind в ChemistryWorkspace-
+// Provider). graduated_cylinder/round_flask/volumetric_flask — готовые
+// профили на будущее: чтобы реально появились на столе как новые
+// перетаскиваемые предметы, ContainerVisualKind в ChemistryWorkspaceProvider
+// нужно расширить этими значениями (отдельный шаг, не сделан сейчас
+// сознательно — это меняет форму данных, а не только визуал).
+export const GLASS_LIBRARY: Record<string, GlassProfile> = {
+  test_tube: {
+    label: "Пробирка",
+    halfHeight: 0.25,
+    liquidRadius: 0.075,
+    precipitateRadius: 0.065,
+    geometry: latheGeometry([
+      [0, -0.25],
+      [0.04, -0.248],
+      [0.075, -0.235],
+      [0.088, -0.21],
+      [0.09, -0.18],
+      [0.09, 0.21],
+      [0.086, 0.23],
+      [0.093, 0.25],
+    ]),
+  },
+  beaker: {
+    label: "Стакан",
+    halfHeight: 0.2,
+    liquidRadius: 0.21,
+    precipitateRadius: 0.19,
+    geometry: latheGeometry([
+      [0.22, -0.2],
+      [0.222, -0.19],
+      [0.235, -0.05],
+      [0.245, 0.08],
+      [0.255, 0.15],
+      [0.258, 0.18],
+      [0.245, 0.195],
+      [0.25, 0.2],
+    ]),
+  },
+  flask: {
+    label: "Колба",
+    halfHeight: 0.21,
+    liquidRadius: 0.21,
+    precipitateRadius: 0.19,
+    geometry: latheGeometry([
+      [0.24, -0.21],
+      [0.24, -0.14],
+      [0.2, -0.05],
+      [0.13, 0.06],
+      [0.075, 0.13],
+      [0.055, 0.16],
+      [0.055, 0.19],
+      [0.065, 0.21],
+    ]),
+  },
+  // ниже — готовые профили без активного предмета на столе (см. комментарий
+  // к GLASS_LIBRARY выше)
+  graduated_cylinder: {
+    label: "Мерный цилиндр",
+    halfHeight: 0.28,
+    liquidRadius: 0.095,
+    precipitateRadius: 0.085,
+    geometry: latheGeometry([
+      [0.1, -0.28],
+      [0.11, -0.27],
+      [0.115, 0.2],
+      [0.11, 0.25],
+      [0.13, 0.27],
+      [0.125, 0.28],
+    ]),
+  },
+  round_flask: {
+    label: "Круглодонная колба",
+    halfHeight: 0.24,
+    liquidRadius: 0.18,
+    precipitateRadius: 0.16,
+    geometry: latheGeometry([
+      [0, -0.22],
+      [0.12, -0.2],
+      [0.2, -0.1],
+      [0.2, 0.02],
+      [0.1, 0.1],
+      [0.045, 0.15],
+      [0.045, 0.22],
+      [0.055, 0.24],
+    ]),
+  },
+  volumetric_flask: {
+    label: "Мерная колба",
+    halfHeight: 0.26,
+    liquidRadius: 0.19,
+    precipitateRadius: 0.17,
+    geometry: latheGeometry([
+      [0.03, -0.22],
+      [0.15, -0.21],
+      [0.2, -0.1],
+      [0.2, 0],
+      [0.09, 0.09],
+      [0.035, 0.14],
+      [0.035, 0.24],
+      [0.045, 0.26],
+    ]),
+  },
 };
 
 // процедурная текстура столешницы — своя отдельная реализация (тот же
@@ -172,13 +310,339 @@ function useLabBenchTexture() {
   return texture;
 }
 
+// Stage C-3: большой удобный рабочий стол — приоритет свободное пространство,
+// не компактность. Реальные предметы стола (containers/bottles/tools) живут
+// в X:[-3.2,2.6], Z:[-1.6,1.4] (см. createInitialState в
+// ChemistryWorkspaceProvider) — эти координаты НЕ трогаем (интерактив/физика),
+// столешница просто щедро больше их разброса со всех сторон.
 function Workbench() {
   const texture = useLabBenchTexture();
   return (
     <mesh position={[0, -0.05, 0]} receiveShadow>
-      <boxGeometry args={[9, 0.1, 4]} />
+      <boxGeometry args={[9, 0.1, 4.2]} />
       <meshStandardMaterial map={texture} roughness={0.65} metalness={0.05} />
     </mesh>
+  );
+}
+
+// Stage C-2 (Visual Realism Upgrade): процедурная плитка пола — тот же
+// CanvasTexture-прием, что и у столешницы, отдельная реализация под
+// шахматный кафель вместо зерна дерева
+function useLabFloorTexture() {
+  const texture = useMemo(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 512;
+    canvas.height = 512;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      const tile = 64;
+      for (let y = 0; y < 512; y += tile) {
+        for (let x = 0; x < 512; x += tile) {
+          const even = ((x / tile) | 0) % 2 === ((y / tile) | 0) % 2;
+          ctx.fillStyle = even ? "#d8dce2" : "#c3c8d1";
+          ctx.fillRect(x, y, tile, tile);
+        }
+      }
+      ctx.strokeStyle = "rgba(148,163,184,0.35)";
+      ctx.lineWidth = 2;
+      for (let i = 0; i <= 512; i += tile) {
+        ctx.beginPath();
+        ctx.moveTo(i, 0);
+        ctx.lineTo(i, 512);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, i);
+        ctx.lineTo(512, i);
+        ctx.stroke();
+      }
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(5, 4);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }, []);
+  useEffect(() => () => texture.dispose(), [texture]);
+  return texture;
+}
+
+// процедурная покраска стен — светлая штукатурка с легким шумом, без
+// внешних текстур/сетевых запросов (тот же прием, что и у пола/стола)
+function useLabWallTexture() {
+  const texture = useMemo(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 512;
+    canvas.height = 256;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.fillStyle = "#eef1f5";
+      ctx.fillRect(0, 0, 512, 256);
+      for (let i = 0; i < 4000; i++) {
+        const x = Math.random() * 512;
+        const y = Math.random() * 256;
+        const shade = 200 + Math.random() * 30;
+        ctx.fillStyle = `rgba(${shade},${shade + 2},${shade + 6},0.15)`;
+        ctx.fillRect(x, y, 1, 1);
+      }
+      // нижний бордюр — кафельная "юбка" вдоль стены, как в реальной лаборатории
+      ctx.fillStyle = "#c7ccd6";
+      ctx.fillRect(0, 200, 512, 56);
+      ctx.strokeStyle = "rgba(100,110,130,0.3)";
+      ctx.lineWidth = 1;
+      for (let x = 0; x <= 512; x += 32) {
+        ctx.beginPath();
+        ctx.moveTo(x, 200);
+        ctx.lineTo(x, 256);
+        ctx.stroke();
+      }
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(3, 1);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }, []);
+  useEffect(() => () => texture.dispose(), [texture]);
+  return texture;
+}
+
+// процедурное дерево для шкафов/полок — теплый ламинат под дуб
+function useCabinetWoodTexture() {
+  const texture = useMemo(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.fillStyle = "#8a5a34";
+      ctx.fillRect(0, 0, 256, 256);
+      for (let i = 0; i < 40; i++) {
+        const y = Math.random() * 256;
+        ctx.strokeStyle = `rgba(60,35,18,${0.15 + Math.random() * 0.2})`;
+        ctx.lineWidth = 1 + Math.random() * 2;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.bezierCurveTo(64, y + (Math.random() - 0.5) * 20, 192, y + (Math.random() - 0.5) * 20, 256, y);
+        ctx.stroke();
+      }
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(2, 1);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }, []);
+  useEffect(() => () => texture.dispose(), [texture]);
+  return texture;
+}
+
+// Stage C-3 (эргономика): комната уменьшена и подогнана вплотную к столу
+// Stage C-3 (пересмотр после отзыва — приоритет простора, не тесноты):
+// комната достаточно большая, чтобы камера свободно вращалась и приближалась/
+// отдалялась в разумных пределах (см. minDistance/maxDistance/azimuth в
+// ChemistryCanvas ниже) и НИКОГДА не пересекала боковые/заднюю стены —
+// ROOM_HALF_WIDTH/DEPTH подобраны так, чтобы худший случай (макс. дистанция
+// камеры × макс. допустимые polar/azimuth углы) оставался внутри с запасом.
+const ROOM_HALF_WIDTH = 7.0;
+const ROOM_HALF_DEPTH = 3.2;
+const ROOM_HEIGHT = 3.0;
+const ROOM_FLOOR_Y = -0.1;
+// пол/боковые стены тянутся вперед (к зрителю, +Z) намного дальше половины
+// глубины комнаты — с этой стороны нет стены (открытая сторона для камеры),
+// но камера все равно должна видеть пол/стены под собой на всей дистанции,
+// на которую ей позволено отъехать (см. maxDistance) — иначе там, где раньше
+// стояла камера, открывался бы черный "провал" в полу
+const ROOM_FRONT_REACH = 8.0;
+const ROOM_Z_LENGTH = ROOM_HALF_DEPTH + ROOM_FRONT_REACH;
+const ROOM_Z_CENTER = (ROOM_FRONT_REACH - ROOM_HALF_DEPTH) / 2;
+
+// Stage C-2 (Visual Realism Upgrade): помещение вокруг рабочего стола —
+// пол/стены/потолок/шкафы/потолочные светильники. Полностью декоративно —
+// не участвует ни в DragSurface, ни в снапе, ни в физике; предметы стола
+// (containers/bottles/tools) продолжают жить в тех же мировых координатах,
+// что и раньше, комната просто обрамляет ту же самую рабочую зону.
+// Stage C-3: страховка поверх геометрических допусков OrbitControls (см.
+// расчет у ROOM_HALF_WIDTH/DEPTH) — если камера все же окажется ближе
+// FADE_START к стене (не должно случаться при штатных minDistance/
+// maxDistance/azimuth, но дешево подстраховаться), эта стена плавно
+// прозрачнеет, а не "хлопает" перед лицом пользователя. Порог отсчитан
+// от плоскости стены, а не от центра комнаты.
+const WALL_FADE_START = 1.1;
+const WALL_FADE_END = 0.25;
+
+function useWallProximityFade() {
+  const backRef = useRef<THREE.MeshStandardMaterial>(null);
+  const leftRef = useRef<THREE.MeshStandardMaterial>(null);
+  const rightRef = useRef<THREE.MeshStandardMaterial>(null);
+
+  useFrame(({ camera }) => {
+    const fade = (distanceToWall: number) => {
+      const t = (distanceToWall - WALL_FADE_END) / (WALL_FADE_START - WALL_FADE_END);
+      return Math.max(0.08, Math.min(1, t));
+    };
+    const backDist = camera.position.z - -ROOM_HALF_DEPTH;
+    const leftDist = camera.position.x - -ROOM_HALF_WIDTH;
+    const rightDist = ROOM_HALF_WIDTH - camera.position.x;
+    if (backRef.current) backRef.current.opacity = fade(backDist);
+    if (leftRef.current) leftRef.current.opacity = fade(leftDist);
+    if (rightRef.current) rightRef.current.opacity = fade(rightDist);
+  });
+
+  return { backRef, leftRef, rightRef };
+}
+
+function Room() {
+  const floorTex = useLabFloorTexture();
+  const wallTex = useLabWallTexture();
+  const woodTex = useCabinetWoodTexture();
+  const { backRef, leftRef, rightRef } = useWallProximityFade();
+
+  // навесные (верхние) шкафы — подняты над столом (y=1.7, стол/предметы
+  // не поднимаются выше ~0.9), поэтому не пересекаются со столом ни по
+  // X, ни по Z
+  const cabinetPositions: Array<[number, number, number]> = [
+    [-4.6, 1.8, -ROOM_HALF_DEPTH + 0.28],
+    [-3.0, 1.8, -ROOM_HALF_DEPTH + 0.28],
+    [3.0, 1.8, -ROOM_HALF_DEPTH + 0.28],
+    [4.6, 1.8, -ROOM_HALF_DEPTH + 0.28],
+  ];
+
+  return (
+    <group>
+      {/* пол — сплошная кафельная плитка вместо grid-оверлея CanvasShell
+          (showFloor={false} передан из ChemistryCanvas специально для этой сцены).
+          Пол/стены тянутся вперед (к зрителю) на ROOM_FRONT_REACH, а не только
+          на половину глубины комнаты — иначе на максимальной дистанции камеры
+          под ней открывался бы черный "провал" (там, где раньше стояла камера,
+          пол físически не доходил). DoubleSide — на случай, если камера все
+          же окажется у самого края допустимой дистанции/угла и почти коснется
+          стены: односторонний материал в этот момент показал бы черную дыру
+          вместо самой стены. */}
+      <mesh position={[0, ROOM_FLOOR_Y, ROOM_Z_CENTER]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[ROOM_HALF_WIDTH * 2, ROOM_Z_LENGTH]} />
+        <meshStandardMaterial map={floorTex} roughness={0.5} metalness={0.05} side={THREE.DoubleSide} />
+      </mesh>
+      <ContactShadows position={[0, ROOM_FLOOR_Y + 0.001, 0]} opacity={0.55} scale={16} blur={2.4} far={3} resolution={256} />
+
+      {/* задняя стена */}
+      <mesh position={[0, ROOM_FLOOR_Y + ROOM_HEIGHT / 2, -ROOM_HALF_DEPTH]} receiveShadow>
+        <planeGeometry args={[ROOM_HALF_WIDTH * 2, ROOM_HEIGHT]} />
+        <meshStandardMaterial ref={backRef} map={wallTex} roughness={0.85} metalness={0} side={THREE.DoubleSide} transparent />
+      </mesh>
+      {/* боковые стены — та же Z-протяженность, что и у пола */}
+      <mesh position={[-ROOM_HALF_WIDTH, ROOM_FLOOR_Y + ROOM_HEIGHT / 2, ROOM_Z_CENTER]} rotation={[0, Math.PI / 2, 0]} receiveShadow>
+        <planeGeometry args={[ROOM_Z_LENGTH, ROOM_HEIGHT]} />
+        <meshStandardMaterial ref={leftRef} map={wallTex} roughness={0.85} metalness={0} side={THREE.DoubleSide} transparent />
+      </mesh>
+      <mesh position={[ROOM_HALF_WIDTH, ROOM_FLOOR_Y + ROOM_HEIGHT / 2, ROOM_Z_CENTER]} rotation={[0, -Math.PI / 2, 0]} receiveShadow>
+        <planeGeometry args={[ROOM_Z_LENGTH, ROOM_HEIGHT]} />
+        <meshStandardMaterial ref={rightRef} map={wallTex} roughness={0.85} metalness={0} side={THREE.DoubleSide} transparent />
+      </mesh>
+
+      {/* потолочные светильники — без сплошного потолка (сознательно): при
+          щедрых maxDistance/minPolarAngle камера может подняться выше
+          ROOM_HEIGHT, и сплошной потолок в этот момент пришлось бы либо
+          прятать, либо показывать его изнанку. Ни один сценарий использования
+          не требует смотреть вверх на потолок — просто не рендерим его,
+          светильники остаются как источники света и визуальный ориентир */}
+      {[-2.4, 0, 2.4].map((x) => (
+        <mesh key={x} position={[x, ROOM_FLOOR_Y + ROOM_HEIGHT - 0.02, 0]} rotation={[Math.PI / 2, 0, 0]}>
+          <planeGeometry args={[1.6, 0.4]} />
+          <meshStandardMaterial color="#fffef4" emissive="#fffef0" emissiveIntensity={1.4} toneMapped={false} side={THREE.DoubleSide} />
+        </mesh>
+      ))}
+
+      {/* настенные шкафы вдоль задней стены — по бокам от рабочей зоны,
+          не пересекаются с предметами стола (те не выходят за X:[-3.2,2.6]) */}
+      {cabinetPositions.map((pos, i) => (
+        <group key={i} position={pos}>
+          <mesh castShadow receiveShadow>
+            <boxGeometry args={[1.1, 0.7, 0.55]} />
+            <meshStandardMaterial map={woodTex} roughness={0.55} metalness={0.1} />
+          </mesh>
+          <mesh position={[0, 0, 0.28]}>
+            <boxGeometry args={[1.02, 0.62, 0.02]} />
+            <meshStandardMaterial color="#5c3a20" roughness={0.4} metalness={0.15} />
+          </mesh>
+          <mesh position={[0.4, 0, 0.29]}>
+            <cylinderGeometry args={[0.015, 0.015, 0.12, 8]} />
+            <meshStandardMaterial color="#d4d4d8" metalness={0.8} roughness={0.3} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
+// Stage C-2: реалистичная GLB-модель мойки/тумбы (Sketchfab CC0, оптимизирована
+// офлайн через gltf-transform: dedup+join+simplify+meshopt, 3.8MB -> ~192KB) —
+// декоративная мебель у боковой стены, вне рабочей зоны предметов
+// (containers/bottles/tools живут в X:[-3.2,2.6], Z:[-1.6,1.4]), поэтому не
+// пересекается ни с чем интерактивным и не участвует в drag/snap-логике.
+function prepareChemistryClone(scene: THREE.Object3D): THREE.Object3D {
+  const clone = scene.clone(true);
+  clone.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (mesh.isMesh) {
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.frustumCulled = false;
+    }
+  });
+  return clone;
+}
+
+// Stage C-3: общий helper для GLB-моделей стола (не только мойки) —
+// вписывает по самой длинной оси в targetSize и ставит НИЗ модели на
+// заданную высоту yBase (а не центр bbox), чтобы предмет стоял основанием
+// на поверхности, а не проваливался/парил над ней
+function useFittedGLTF(path: string, targetSize: number, yBase: number) {
+  const { scene } = useGLTF(path);
+  return useMemo(() => {
+    const clone = prepareChemistryClone(scene);
+    const box = new THREE.Box3().setFromObject(clone);
+    const size = box.getSize(new THREE.Vector3());
+    const longest = Math.max(size.x, size.y, size.z) || 1;
+    const scale = targetSize / longest;
+    clone.scale.setScalar(scale);
+    const scaledBox = new THREE.Box3().setFromObject(clone);
+    const center = scaledBox.getCenter(new THREE.Vector3());
+    clone.position.x -= center.x;
+    clone.position.z -= center.z;
+    clone.position.y -= scaledBox.min.y - yBase;
+    return clone;
+  }, [scene, targetSize, yBase]);
+}
+
+function useSinkCounterModel(targetWidth: number) {
+  const { scene } = useGLTF("/models/chemistry/lab-table.glb");
+  return useMemo(() => {
+    const clone = prepareChemistryClone(scene);
+    const box = new THREE.Box3().setFromObject(clone);
+    const size = box.getSize(new THREE.Vector3());
+    const scale = targetWidth / (size.x || 1);
+    clone.scale.setScalar(scale);
+    const scaledBox = new THREE.Box3().setFromObject(clone);
+    const center = scaledBox.getCenter(new THREE.Vector3());
+    // центрируем по X/Z, но по Y ставим на пол (низ модели -> floorY), а не
+    // по центру bbox — это цельный шкаф с раковиной, стоящий на полу
+    clone.position.x -= center.x;
+    clone.position.z -= center.z;
+    clone.position.y -= scaledBox.min.y - ROOM_FLOOR_Y;
+    return clone;
+  }, [scene, targetWidth]);
+}
+useGLTF.preload("/models/chemistry/lab-table.glb");
+
+function SinkCounter() {
+  // Мойка на боковой (правой) стене, за пределами рабочего стола
+  // (тот заканчивается на X=4.5) — полный реалистичный масштаб оригинала,
+  // комната теперь достаточно просторная, чтобы не пришлось его ужимать
+  const model = useSinkCounterModel(2.6);
+  return (
+    <group position={[ROOM_HALF_WIDTH - 0.45, 0, -0.6]} rotation={[0, Math.PI / 2, 0]}>
+      <primitive object={model} />
+    </group>
   );
 }
 
@@ -340,6 +804,95 @@ function Hitbox({ radius, height = 0.5 }: { radius: number; height?: number }) {
         depthWrite={false}
       />
     </mesh>
+  );
+}
+
+// Stage S-1 — Interaction Core (Focus & Pickup): пока предмет держат (active),
+// его мировая позиция/ориентация пересчитывается каждый кадр от ТЕКУЩЕЙ камеры
+// (handOffset/handRotation берутся из per-предметной конфигурации в
+// lib/interactables.ts), а НЕ от item.position в ChemistryWorkspaceProvider —
+// домен остается полностью нетронутым все время удержания, см.
+// ChemistryInteractionProvider. yawOffset — чисто визуальное ручное вращение
+// в руке (стрелки влево/вправо), тоже нигде не сохраняется в домен и
+// сбрасывается при отпускании. Работает независимо от того, что двигает
+// камеру (сейчас OrbitControls, что угодно другое после Stage S-7) —
+// зависимость только от camera.position/camera.quaternion.
+//
+// Родительский <group>, в который вложен этот компонент, должен сам обнулять
+// свои position/rotation, пока active===true (см. ContainerMesh/StockBottleMesh) —
+// иначе позиция руки сложится с позицией предмета на столе.
+function HeldObjectRig({
+  active,
+  handOffset,
+  handRotation,
+  yawOffset,
+  children,
+}: {
+  active: boolean;
+  handOffset: [number, number, number];
+  handRotation: [number, number, number];
+  yawOffset: number;
+  children: React.ReactNode;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const localAnchor = useMemo(() => new THREE.Vector3(...handOffset), [handOffset]);
+  const baseQuat = useMemo(
+    () => new THREE.Quaternion().setFromEuler(new THREE.Euler(...handRotation)),
+    [handRotation]
+  );
+
+  useFrame(({ camera }) => {
+    if (!active || !groupRef.current) return;
+    groupRef.current.position.copy(camera.localToWorld(localAnchor.clone()));
+    const yawQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yawOffset);
+    groupRef.current.quaternion.copy(camera.quaternion).multiply(baseQuat).multiply(yawQuat);
+  });
+
+  if (!active) return <>{children}</>;
+  return <group ref={groupRef}>{children}</group>;
+}
+
+// Stage S-1 — кольцо фокуса под наведенным предметом (тот же прием, что
+// snapRingRef/unsafeRingRef выше, отдельный цвет — не путать с уже
+// существующими selection/snap/unsafe кольцами)
+function FocusRing({ halfHeight, radius = 0.36 }: { halfHeight: number; radius?: number }) {
+  const ref = useRef<THREE.Mesh>(null);
+  useFrame(({ clock }) => {
+    const mat = ref.current?.material as THREE.MeshBasicMaterial | undefined;
+    if (mat) mat.opacity = 0.45 + (0.5 + Math.sin(clock.elapsedTime * 6) * 0.5) * 0.35;
+  });
+  return (
+    <mesh ref={ref} position={[0, -halfHeight - 0.025, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      <ringGeometry args={[radius, radius + 0.05, 32]} />
+      <meshBasicMaterial color="#fbbf24" transparent opacity={0} depthWrite={false} />
+    </mesh>
+  );
+}
+
+// Stage S-1 — фиксированная HUD-подсказка действия ("E — Взять: ...").
+// <Html fullscreen> рисует оверлей на весь канвас (не привязан к 3D-точке),
+// поэтому не требует изменений в общем CanvasShell.tsx. Стиль намеренно
+// повторяет уже существующие подсказки (rounded-md/bg-slate-900/85/text-xs) —
+// редизайн интерфейса Stage S-1 не делает.
+function InteractionPrompt() {
+  const { focusedId, heldId } = useChemistryInteraction();
+
+  let text: string | null = null;
+  if (heldId) {
+    const cap = getInteractable(heldId);
+    text = `E — Отпустить${cap ? `: ${cap.displayName}` : ""}  ·  ←/→ — повернуть`;
+  } else if (focusedId) {
+    const cap = getInteractable(focusedId);
+    if (cap) text = `E — Взять: ${cap.displayName}`;
+  }
+
+  if (!text) return null;
+  return (
+    <Html fullscreen style={{ pointerEvents: "none" }}>
+      <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md border border-white/10 bg-slate-900/85 px-3 py-1.5 text-xs text-slate-100">
+        {text}
+      </div>
+    </Html>
   );
 }
 
@@ -712,6 +1265,68 @@ function HazardSoundEffects({ item }: { item: ContainerItem }) {
   return null;
 }
 
+// GlassObject — единый рендер для ЛЮБОГО профиля из GLASS_LIBRARY: стекло +
+// жидкость + осадок. ContainerMesh вокруг него добавляет только то, что не
+// зависит от формы сосуда (хитбокс, drag/pour, кольца выбора/safety,
+// эффекты реакции/нагрева/hazard, подписи) — сама форма стекла отсюда не
+// видна и не важна для остальной сцены, только через объект profile.
+function GlassObject({
+  profile,
+  hovered,
+  displayColorHex,
+  volumeMl,
+  fillHeight,
+  aggregateState,
+  hasPrecipitate,
+  precipitateColorHex,
+}: {
+  profile: GlassProfile;
+  hovered: boolean;
+  displayColorHex: string;
+  volumeMl: number;
+  fillHeight: number;
+  aggregateState: AggregateState;
+  hasPrecipitate: boolean;
+  precipitateColorHex: string;
+}) {
+  return (
+    <>
+      {/* прозрачное "стекло" — при наведении чуть светлее, чтобы предмет
+          читался как интерактивный еще до того, как его возьмут */}
+      <mesh castShadow geometry={profile.geometry}>
+        <meshPhysicalMaterial
+          color={hovered ? "#eff6ff" : "#dbeafe"}
+          transparent
+          opacity={hovered ? 0.4 : 0.28}
+          roughness={0.1}
+          transmission={0.6}
+          thickness={0.05}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+
+      {/* жидкость внутри — цвет и уровень посчитаны Chemistry Engine, но и
+          цвет, и высота столба плавно интерполируются на экране. Радиус —
+          из того же профиля, что и стекло (liquidRadius), поэтому для любого
+          нового вида сосуда жидкость автоматически не торчит сквозь стенки */}
+      {volumeMl > 0 && (
+        <mesh position={[0, -profile.halfHeight + fillHeight / 2, 0]}>
+          <cylinderGeometry args={[profile.liquidRadius, profile.liquidRadius, Math.max(0.02, fillHeight), 20]} />
+          <meshStandardMaterial color={displayColorHex} transparent opacity={aggregateState === "gas" ? 0.35 : 0.85} />
+        </mesh>
+      )}
+
+      {/* осадок на дне — реальный, только если Chemistry Engine его посчитал */}
+      {hasPrecipitate && (
+        <mesh position={[0, -profile.halfHeight + 0.015, 0]}>
+          <cylinderGeometry args={[profile.precipitateRadius, profile.precipitateRadius, 0.03, 20]} />
+          <meshStandardMaterial color={precipitateColorHex} roughness={0.8} />
+        </mesh>
+      )}
+    </>
+  );
+}
+
 function ContainerMesh({
   item,
   isSnapTarget,
@@ -725,6 +1340,7 @@ function ContainerMesh({
 }) {
   const { state } = useChemistryWorkspace();
   const { onPointerDown, isDragging } = useDragHandlers(item.id);
+  const { capability, isFocused, isHeld, heldYawOffset, pointerHandlers } = useInteractable(item.id);
   const [hovered, setHovered] = useState(false);
   const isSelected = state.selectedItemId === item.id;
   const isActive = state.activeContainerId === item.id;
@@ -751,109 +1367,95 @@ function ContainerMesh({
     }
   });
 
-  const outerGeometry =
-    item.kind === "test_tube" ? (
-      <cylinderGeometry args={[0.09, 0.09, 0.5, 16]} />
-    ) : item.kind === "flask" ? (
-      <coneGeometry args={[0.26, 0.42, 20]} />
-    ) : (
-      <cylinderGeometry args={[0.26, 0.22, 0.4, 20]} />
-    );
-
-  const halfHeight = item.kind === "test_tube" ? 0.25 : item.kind === "flask" ? 0.21 : 0.2;
+  const profile = GLASS_LIBRARY[item.kind] ?? GLASS_LIBRARY.beaker;
+  const halfHeight = profile.halfHeight;
 
   return (
     <group
-      position={[item.position[0], 0.05, item.position[1]]}
-      rotation={[0, item.rotationY, 0]}
-      onPointerDown={onPointerDown}
+      position={isHeld ? [0, 0, 0] : [item.position[0], 0.05, item.position[1]]}
+      rotation={isHeld ? [0, 0, 0] : [0, item.rotationY, 0]}
+      onPointerDown={capability ? undefined : onPointerDown}
       onPointerOver={(e: ThreeEvent<PointerEvent>) => {
         e.stopPropagation();
         setHovered(true);
+        pointerHandlers?.onPointerOver();
       }}
-      onPointerOut={() => setHovered(false)}
+      onPointerOut={() => {
+        setHovered(false);
+        pointerHandlers?.onPointerOut();
+      }}
     >
-      <Hitbox radius={0.32} height={halfHeight * 2 + 0.1} />
+      <HeldObjectRig
+        active={isHeld}
+        handOffset={capability?.handOffset ?? [0, 0, 0]}
+        handRotation={capability?.handRotation ?? [0, 0, 0]}
+        yawOffset={heldYawOffset}
+      >
+        <Hitbox radius={0.32} height={halfHeight * 2 + 0.1} />
 
-      <GrabLift isDragging={isDragging}>
-        <PourTilt active={isPouring}>
-          {/* прозрачное "стекло" — при наведении чуть светлее, чтобы предмет
-              читался как интерактивный еще до того, как его возьмут */}
-          <mesh castShadow>
-            {outerGeometry}
-            <meshPhysicalMaterial
-              color={hovered ? "#eff6ff" : "#dbeafe"}
-              transparent
-              opacity={hovered ? 0.4 : 0.28}
-              roughness={0.1}
-              transmission={0.6}
-              thickness={0.05}
+        <GrabLift isDragging={isDragging}>
+          <PourTilt active={isPouring}>
+            <GlassObject
+              profile={profile}
+              hovered={hovered}
+              displayColorHex={displayColorHex}
+              volumeMl={volumeMl}
+              fillHeight={fillHeight}
+              aggregateState={aggregateState}
+              hasPrecipitate={hasPrecipitate}
+              precipitateColorHex={SUBSTANCES[item.data.precipitate[0]?.substanceId]?.colorHex ?? "#f5f5f4"}
             />
+
+            <ReactionEffects item={item} halfHeight={halfHeight} />
+            <HeatingEffects item={item} halfHeight={halfHeight} />
+            <HazardEffects item={item} halfHeight={halfHeight} />
+          </PourTilt>
+        </GrabLift>
+        <HazardSoundEffects item={item} />
+
+        {(isSelected || isActive) && (
+          <mesh position={[0, -halfHeight - 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[0.28, 0.32, 24]} />
+            <meshBasicMaterial color={isActive ? "#a78bfa" : "#38bdf8"} transparent opacity={0.7} />
           </mesh>
+        )}
 
-          {/* жидкость внутри — цвет и уровень посчитаны Chemistry Engine,
-              но и цвет, и высота столба плавно интерполируются на экране */}
-          {volumeMl > 0 && (
-            <mesh position={[0, -halfHeight + fillHeight / 2, 0]}>
-              <cylinderGeometry args={[0.2, 0.2, Math.max(0.02, fillHeight), 20]} />
-              <meshStandardMaterial color={displayColorHex} transparent opacity={aggregateState === "gas" ? 0.35 : 0.85} />
-            </mesh>
-          )}
-
-          {/* осадок на дне — реальный, только если Chemistry Engine его посчитал */}
-          {hasPrecipitate && (
-            <mesh position={[0, -halfHeight + 0.015, 0]}>
-              <cylinderGeometry args={[0.18, 0.18, 0.03, 20]} />
-              <meshStandardMaterial color={SUBSTANCES[item.data.precipitate[0].substanceId]?.colorHex ?? "#f5f5f4"} roughness={0.8} />
-            </mesh>
-          )}
-
-          <ReactionEffects item={item} halfHeight={halfHeight} />
-          <HeatingEffects item={item} halfHeight={halfHeight} />
-          <HazardEffects item={item} halfHeight={halfHeight} />
-        </PourTilt>
-      </GrabLift>
-      <HazardSoundEffects item={item} />
-
-      {(isSelected || isActive) && (
-        <mesh position={[0, -halfHeight - 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[0.28, 0.32, 24]} />
-          <meshBasicMaterial color={isActive ? "#a78bfa" : "#38bdf8"} transparent opacity={0.7} />
+        {/* зона приема — подсвечивается заранее, пока перетаскиваемый предмет
+            еще над столом и не отпущен, чтобы было понятно куда можно бросить */}
+        <mesh ref={snapRingRef} position={[0, -halfHeight - 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[0.34, 0.42, 32]} />
+          <meshBasicMaterial color="#34d399" transparent opacity={0} depthWrite={false} />
         </mesh>
-      )}
 
-      {/* зона приема — подсвечивается заранее, пока перетаскиваемый предмет
-          еще над столом и не отпущен, чтобы было понятно куда можно бросить */}
-      <mesh ref={snapRingRef} position={[0, -halfHeight - 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[0.34, 0.42, 32]} />
-        <meshBasicMaterial color="#34d399" transparent opacity={0} depthWrite={false} />
-      </mesh>
+        {/* предупреждение Safety System — подсветка только по реальному
+            результату checkSafety(), никаких выдуманных состояний */}
+        <mesh ref={unsafeRingRef} position={[0, -halfHeight - 0.035, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[0.3, 0.45, 32]} />
+          <meshBasicMaterial color="#f87171" transparent opacity={0} depthWrite={false} />
+        </mesh>
 
-      {/* предупреждение Safety System — подсветка только по реальному
-          результату checkSafety(), никаких выдуманных состояний */}
-      <mesh ref={unsafeRingRef} position={[0, -halfHeight - 0.035, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[0.3, 0.45, 32]} />
-        <meshBasicMaterial color="#f87171" transparent opacity={0} depthWrite={false} />
-      </mesh>
+        {/* Stage S-1 — фокус наведения (Interaction Core), только пока не в руке */}
+        {isFocused && !isHeld && <FocusRing halfHeight={halfHeight} />}
 
-      {isSelected && <RotateHandle id={item.id} />}
-      {isSelected && (
-        <SealHandle id={item.id} isSealed={item.isSealed} disabled={state.emergencyStop !== null} />
-      )}
+        {isSelected && <RotateHandle id={item.id} />}
+        {isSelected && (
+          <SealHandle id={item.id} isSealed={item.isSealed} disabled={state.emergencyStop !== null} />
+        )}
 
-      <Html position={[0, halfHeight + 0.25, 0]} center distanceFactor={9} style={{ pointerEvents: "none" }}>
-        <div className="pointer-events-none whitespace-nowrap rounded-md border border-white/10 bg-slate-900/85 px-2 py-0.5 text-[10px] text-slate-100">
-          {item.data.temperatureC.toFixed(0)}°C
-        </div>
-      </Html>
-
-      {hovered && !isDragging && (
-        <Html position={[0, halfHeight + 0.45, 0]} center distanceFactor={9} style={{ pointerEvents: "none" }}>
-          <div className="pointer-events-none whitespace-nowrap rounded-md border border-white/10 bg-slate-900/90 px-2 py-1 text-xs text-slate-100">
-            {CONTAINER_LABEL[item.kind]}
+        <Html position={[0, halfHeight + 0.25, 0]} center distanceFactor={9} style={{ pointerEvents: "none" }}>
+          <div className="pointer-events-none whitespace-nowrap rounded-md border border-white/10 bg-slate-900/85 px-2 py-0.5 text-[10px] text-slate-100">
+            {item.data.temperatureC.toFixed(0)}°C
           </div>
         </Html>
-      )}
+
+        {hovered && !isDragging && !isHeld && (
+          <Html position={[0, halfHeight + 0.45, 0]} center distanceFactor={9} style={{ pointerEvents: "none" }}>
+            <div className="pointer-events-none whitespace-nowrap rounded-md border border-white/10 bg-slate-900/90 px-2 py-1 text-xs text-slate-100">
+              {CONTAINER_LABEL[item.kind]}
+            </div>
+          </Html>
+        )}
+      </HeldObjectRig>
     </group>
   );
 }
@@ -861,52 +1463,67 @@ function ContainerMesh({
 function StockBottleMesh({ bottle, isPouring }: { bottle: StockBottle; isPouring: boolean }) {
   const [hovered, setHovered] = useState(false);
   const { onPointerDown, isDragging } = useDragHandlers(bottle.id);
+  const { capability, isFocused, isHeld, heldYawOffset, pointerHandlers } = useInteractable(bottle.id);
   const substance = SUBSTANCES[bottle.substanceId];
 
   return (
     <group
-      position={[bottle.position[0], 0.16, bottle.position[1]]}
-      onPointerDown={onPointerDown}
+      position={isHeld ? [0, 0, 0] : [bottle.position[0], 0.16, bottle.position[1]]}
+      onPointerDown={capability ? undefined : onPointerDown}
       onPointerOver={(e: ThreeEvent<PointerEvent>) => {
         e.stopPropagation();
         setHovered(true);
+        pointerHandlers?.onPointerOver();
       }}
-      onPointerOut={() => setHovered(false)}
+      onPointerOut={() => {
+        setHovered(false);
+        pointerHandlers?.onPointerOut();
+      }}
     >
-      <Hitbox radius={0.17} height={0.5} />
+      <HeldObjectRig
+        active={isHeld}
+        handOffset={capability?.handOffset ?? [0, 0, 0]}
+        handRotation={capability?.handRotation ?? [0, 0, 0]}
+        yawOffset={heldYawOffset}
+      >
+        <Hitbox radius={0.17} height={0.5} />
 
-      <GrabLift isDragging={isDragging}>
-        <PourTilt active={isPouring}>
-          <mesh castShadow>
-            <cylinderGeometry args={[0.09, 0.09, 0.32, 16]} />
-            <meshStandardMaterial
-              color={hovered ? "#f8fafc" : "#e2e8f0"}
-              roughness={0.3}
-              metalness={0.1}
-              transparent
-              opacity={0.85}
-            />
-          </mesh>
-          <mesh position={[0, 0.19, 0]}>
-            <cylinderGeometry args={[0.05, 0.05, 0.06, 12]} />
-            <meshStandardMaterial
-              color={substance?.colorHex ?? "#94a3b8"}
-              emissive={substance?.colorHex ?? "#94a3b8"}
-              emissiveIntensity={hovered ? 0.35 : 0}
-              metalness={0.4}
-              roughness={0.4}
-            />
-          </mesh>
-        </PourTilt>
-      </GrabLift>
+        <GrabLift isDragging={isDragging}>
+          <PourTilt active={isPouring}>
+            <mesh castShadow>
+              <cylinderGeometry args={[0.09, 0.09, 0.32, 16]} />
+              <meshStandardMaterial
+                color={hovered ? "#f8fafc" : "#e2e8f0"}
+                roughness={0.3}
+                metalness={0.1}
+                transparent
+                opacity={0.85}
+              />
+            </mesh>
+            <mesh position={[0, 0.19, 0]}>
+              <cylinderGeometry args={[0.05, 0.05, 0.06, 12]} />
+              <meshStandardMaterial
+                color={substance?.colorHex ?? "#94a3b8"}
+                emissive={substance?.colorHex ?? "#94a3b8"}
+                emissiveIntensity={hovered ? 0.35 : 0}
+                metalness={0.4}
+                roughness={0.4}
+              />
+            </mesh>
+          </PourTilt>
+        </GrabLift>
 
-      {hovered && !isDragging && (
-        <Html position={[0, 0.35, 0]} center distanceFactor={9} style={{ pointerEvents: "none" }}>
-          <div className="pointer-events-none whitespace-nowrap rounded-md border border-white/10 bg-slate-900/90 px-2 py-1 text-xs text-slate-100">
-            {substance?.name} ({substance?.formula})
-          </div>
-        </Html>
-      )}
+        {/* Stage S-1 — фокус наведения (Interaction Core), только пока не в руке */}
+        {isFocused && !isHeld && <FocusRing halfHeight={0.16} radius={0.2} />}
+
+        {hovered && !isDragging && !isHeld && (
+          <Html position={[0, 0.35, 0]} center distanceFactor={9} style={{ pointerEvents: "none" }}>
+            <div className="pointer-events-none whitespace-nowrap rounded-md border border-white/10 bg-slate-900/90 px-2 py-1 text-xs text-slate-100">
+              {substance?.name} ({substance?.formula})
+            </div>
+          </Html>
+        )}
+      </HeldObjectRig>
     </group>
   );
 }
@@ -923,11 +1540,18 @@ function ToolHoverLabel({ tool, y }: { tool: ToolItem; y: number }) {
   );
 }
 
+useGLTF.preload("/models/chemistry/bunsen-burner.glb");
+
 function BurnerMesh({ tool }: { tool: ToolItem }) {
   const { toggleBurner } = useChemistryWorkspace();
   const { onPointerDown, isDragging } = useDragHandlers(tool.id);
   const [hovered, setHovered] = useState(false);
   const flameRef = useRef<THREE.Mesh>(null);
+  // Stage C-3: настоящая GLB-модель горелки (Poly Haven "Bunsen Burner",
+  // CC0, PBR-материалы) вместо процедурного цилиндра. targetSize=0.34 —
+  // высота, сопоставимая с соседней посудой на столе (стакан/колба ~0.4);
+  // модель встает основанием на столешницу (yBase=0), а не по центру bbox
+  const model = useFittedGLTF("/models/chemistry/bunsen-burner.glb", 0.34, 0);
 
   useFrame(({ clock }) => {
     if (!flameRef.current) return;
@@ -948,32 +1572,36 @@ function BurnerMesh({ tool }: { tool: ToolItem }) {
     >
       <Hitbox radius={0.3} height={0.5} />
       <GrabLift isDragging={isDragging}>
-        <mesh castShadow>
-          <cylinderGeometry args={[0.22, 0.26, 0.18, 20]} />
-          <meshStandardMaterial color={hovered ? "#475569" : "#334155"} metalness={0.6} roughness={0.4} />
-        </mesh>
+        <primitive object={model} />
+        {/* клик-таргет + всегда видимый индикатор вкл/выкл — та же логика,
+            что и раньше (цвет меняется по tool.isOn), просто перенесен
+            пониже, к основанию горелки, под реальную модель */}
         <mesh
-          position={[0, 0.12, 0]}
+          position={[0, 0.03, 0]}
           onClick={(e) => {
             e.stopPropagation();
             if (!tool.isOn) playBurnerIgnite();
             toggleBurner(tool.id);
           }}
         >
-          <cylinderGeometry args={[0.18, 0.18, 0.04, 20]} />
-          <meshStandardMaterial color={tool.isOn ? "#f97316" : "#1e293b"} emissive={tool.isOn ? "#f97316" : "#000000"} emissiveIntensity={tool.isOn ? 0.8 : 0} />
+          <cylinderGeometry args={[0.1, 0.1, 0.03, 20]} />
+          <meshStandardMaterial
+            color={tool.isOn ? "#f97316" : "#1e293b"}
+            emissive={tool.isOn ? "#f97316" : "#000000"}
+            emissiveIntensity={tool.isOn ? 0.8 : 0}
+          />
         </mesh>
         {/* data-testid нельзя ставить прямо на <mesh> — R3F интерпретирует
             дефис в имени пропса как вложенный путь (data.testid) и падает на
             mesh.data === undefined; реальный testid — через невидимый Html-маркер */}
-        <Html position={[0, 0.12, 0]} center distanceFactor={9} style={{ pointerEvents: "none" }}>
+        <Html position={[0, 0.03, 0]} center distanceFactor={9} style={{ pointerEvents: "none" }}>
           <div data-testid={`burner-toggle-${tool.id}`} style={{ width: 1, height: 1 }} />
         </Html>
-        <mesh ref={flameRef} position={[0, 0.32, 0]} scale={0.001}>
-          <coneGeometry args={[0.08, 0.24, 12]} />
+        <mesh ref={flameRef} position={[0, 0.36, 0]} scale={0.001}>
+          <coneGeometry args={[0.06, 0.2, 12]} />
           <meshStandardMaterial color="#fb923c" emissive="#f97316" emissiveIntensity={2} transparent opacity={0.85} />
         </mesh>
-        {tool.isOn && <pointLight position={[0, 0.3, 0]} color="#f97316" intensity={1.2} distance={2} decay={2} />}
+        {tool.isOn && <pointLight position={[0, 0.34, 0]} color="#f97316" intensity={1.2} distance={2} decay={2} />}
       </GrabLift>
       {hovered && !isDragging && <ToolHoverLabel tool={tool} y={0.5} />}
     </group>
@@ -1014,6 +1642,21 @@ function StandMesh({ tool }: { tool: ToolItem }) {
   );
 }
 
+// Stage C-3 (реализм): настоящий профиль пипетки через LatheGeometry —
+// стеклянная трубка сужается к кончику (не одинаковый конус, как раньше),
+// плюс отдельная резиновая груша сверху (сплюснутая сфера + узкая шейка),
+// а не идеальный шар "на глаз"
+const PIPETTE_TUBE_GEOMETRY = latheGeometry(
+  [
+    [0.008, 0],
+    [0.012, 0.02],
+    [0.022, 0.05],
+    [0.024, 0.35],
+    [0.026, 0.4],
+  ],
+  16
+);
+
 function PipetteMesh({ tool }: { tool: ToolItem }) {
   const { onPointerDown, isDragging } = useDragHandlers(tool.id);
   const [hovered, setHovered] = useState(false);
@@ -1030,16 +1673,28 @@ function PipetteMesh({ tool }: { tool: ToolItem }) {
     >
       <Hitbox radius={0.12} height={0.55} />
       <GrabLift isDragging={isDragging}>
-        <mesh castShadow>
-          <cylinderGeometry args={[0.02, 0.03, 0.5, 12]} />
-          <meshStandardMaterial color={hovered ? "#f1f5f9" : "#cbd5e1"} transparent opacity={0.5} roughness={0.2} />
+        <mesh castShadow geometry={PIPETTE_TUBE_GEOMETRY}>
+          <meshPhysicalMaterial
+            color={hovered ? "#f1f5f9" : "#cbd5e1"}
+            transparent
+            opacity={0.45}
+            roughness={0.15}
+            transmission={0.7}
+            thickness={0.02}
+            side={THREE.DoubleSide}
+          />
         </mesh>
-        <mesh position={[0, 0.28, 0]}>
-          <sphereGeometry args={[0.05, 12, 12]} />
-          <meshStandardMaterial color="#f87171" roughness={0.6} />
+        {/* резиновая груша — шейка + сплюснутая сфера, а не идеальный шар */}
+        <mesh position={[0, 0.41, 0]}>
+          <cylinderGeometry args={[0.014, 0.02, 0.03, 12]} />
+          <meshStandardMaterial color="#7f1d1d" roughness={0.7} />
+        </mesh>
+        <mesh position={[0, 0.48, 0]} scale={[1, 0.85, 1]}>
+          <sphereGeometry args={[0.05, 14, 14]} />
+          <meshStandardMaterial color="#dc2626" roughness={0.55} />
         </mesh>
       </GrabLift>
-      {hovered && !isDragging && <ToolHoverLabel tool={tool} y={0.45} />}
+      {hovered && !isDragging && <ToolHoverLabel tool={tool} y={0.6} />}
     </group>
   );
 }
@@ -1245,7 +1900,16 @@ function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer
       <group>
         <directionalLight position={[2, 4, 3]} intensity={0.4} color="#fff7ed" />
         <pointLight position={[-2, 2.5, 2]} intensity={0.2} color="#e0f2fe" distance={8} decay={2} />
+        {/* Stage C-2: потолочные светильники — реальный свет от тех же
+            позиций, что и эмиссивные панели в Room, плюс мягкое верхнее
+            заполнение для менее "прожекторного" вида (ambient уже есть
+            в CanvasShell, это дополнительный, специфичный для комнаты свет) */}
+        {[-2.4, 0, 2.4].map((x) => (
+          <pointLight key={x} position={[x, ROOM_FLOOR_Y + ROOM_HEIGHT - 0.3, 0]} intensity={0.55} color="#fffaf0" distance={7} decay={2} />
+        ))}
 
+        <Room />
+        <SinkCounter />
         <Workbench />
 
         {state.containers.map((c) => (
@@ -1285,6 +1949,7 @@ function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer
           })()}
 
         <DragSurface onDrop={onDrop} />
+        <InteractionPrompt />
       </group>
     </ChemistryDebugContext.Provider>
   );
@@ -1308,6 +1973,7 @@ function ChemistryCanvas({
   reducedMotion: boolean;
 } & ChemistrySceneProps) {
   const { draggingId } = useChemistryDrag();
+  const { heldId } = useChemistryInteraction();
   const wrapperRef = useRef<HTMLDivElement>(null);
   const prevShakeCounter = useRef(shakeCounter);
 
@@ -1341,14 +2007,24 @@ function ChemistryCanvas({
   return (
     <div ref={wrapperRef}>
       <CanvasShell
-        cameraPosition={[0, 4.2, 5.6]}
-        target={[0, 0, 0]}
+        cameraPosition={[0.4, 3.6, 6.4]}
+        target={[0, 0.1, 0]}
         floorY={-0.1}
         bloomIntensity={0.3}
         quality={quality}
-        orbitEnabled={!draggingId}
-        minPolarAngle={Math.PI / 8}
-        maxPolarAngle={Math.PI / 2.3}
+        orbitEnabled={!draggingId && !heldId}
+        // target — центр рабочего стола (см. Workbench), не центр комнаты и
+        // не мировой origin (совпадают здесь, но нарочно к столу). Дистанция
+        // и углы подобраны так, чтобы при ЛЮБОЙ комбинации (max дистанция +
+        // крайние polar/azimuth) камера оставалась строго внутри стен
+        // (см. расчет допусков в комментарии у ROOM_HALF_WIDTH/DEPTH выше)
+        minPolarAngle={Math.PI / 7}
+        maxPolarAngle={1.42}
+        minDistance={2.2}
+        maxDistance={7}
+        minAzimuthAngle={-Math.PI / 2.8}
+        maxAzimuthAngle={Math.PI / 2.8}
+        showFloor={false}
       >
         <ChemistryScene
           onDrop={onDrop}
@@ -1678,6 +2354,7 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
     <ChemistryTutorialProvider container={activeContainer.data}>
       <ExperimentProgressProvider labState={{ container: activeContainer.data, occurredReactionIds }}>
         <ChemistryDragProvider>
+        <ChemistryInteractionProvider>
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
             <div className="flex-1 rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">
               <ChemistryCanvas
@@ -1860,6 +2537,7 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
 
             <ChemistryTeacherChatPanel simulationId={simulation.id} safetyWarnings={safetyWarnings} />
           </div>
+        </ChemistryInteractionProvider>
         </ChemistryDragProvider>
       </ExperimentProgressProvider>
     </ChemistryTutorialProvider>

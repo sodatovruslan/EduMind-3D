@@ -24,6 +24,16 @@ interface CanvasShellProps {
   // вращение на 360°, как и раньше, для SimLab/GeoWorld ничего не меняется)
   minPolarAngle?: number;
   maxPolarAngle?: number;
+  // опциональные ограничения дистанции камеры (по умолчанию 2/14, как и
+  // раньше) — Chemistry World сужает диапазон, чтобы нельзя было "улететь"
+  // далеко от маленькой комнаты и увидеть ее со стороны
+  minDistance?: number;
+  maxDistance?: number;
+  // опциональные ограничения по азимуту (по умолчанию не заданы — полный
+  // оборот на 360°, как и раньше) — Chemistry World ограничивает передней
+  // дугой, чтобы камера не могла обогнуть комнату и посмотреть на нее снаружи
+  minAzimuthAngle?: number;
+  maxAzimuthAngle?: number;
 }
 
 // вертикальный градиент вместо плоской заливки — рисуем на canvas и
@@ -82,6 +92,10 @@ export default function CanvasShell({
   orbitEnabled = true,
   minPolarAngle,
   maxPolarAngle,
+  minDistance = 2,
+  maxDistance = 14,
+  minAzimuthAngle,
+  maxAzimuthAngle,
 }: CanvasShellProps) {
   const preset = QUALITY_PRESETS[quality];
 
@@ -145,10 +159,12 @@ export default function CanvasShell({
           enabled={orbitEnabled}
           enableDamping
           dampingFactor={0.08}
-          minDistance={2}
-          maxDistance={14}
+          minDistance={minDistance}
+          maxDistance={maxDistance}
           minPolarAngle={minPolarAngle}
           maxPolarAngle={maxPolarAngle}
+          minAzimuthAngle={minAzimuthAngle}
+          maxAzimuthAngle={maxAzimuthAngle}
           target={target}
         />
 
