@@ -105,6 +105,11 @@ export interface StockBottle {
   id: string;
   substanceId: string;
   position: [number, number];
+  // Stage S-2 — Free Placement: поворот бутылки на столе, тот же смысл, что
+  // rotationY у ContainerItem/ToolItem. Раньше отсутствовал, потому что
+  // бутылки нельзя было ни повернуть, ни (из-за пробела в MOVE_ITEM ниже)
+  // реально передвинуть — оба этих ограничения снимает Stage S-2.
+  rotationY: number;
 }
 
 export interface ReactionLogEntry {
@@ -142,6 +147,11 @@ type Action =
   | { type: "SELECT"; id: string | null }
   | { type: "MOVE_ITEM"; id: string; position: [number, number] }
   | { type: "ROTATE_ITEM"; id: string }
+  // Stage S-2 — Free Placement: атомарно пишет и позицию, и произвольный
+  // (не дискретный) поворот в момент подтверждённого размещения — ROTATE_ITEM
+  // выше умеет только шаг +45°, для размещения нужен ровно накопленный в
+  // руке поворот
+  | { type: "SET_ITEM_TRANSFORM"; id: string; position: [number, number]; rotationY: number }
   | { type: "TOGGLE_BURNER"; id: string }
   | { type: "ADD_SUBSTANCE"; containerId: string; substanceId: string; grams: number }
   | { type: "POUR"; sourceId: string; targetId: string }
@@ -171,7 +181,12 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
     case "MOVE_ITEM": {
       const containers = state.containers.map((c) => (c.id === action.id ? { ...c, position: action.position } : c));
       const tools = state.tools.map((t) => (t.id === action.id ? { ...t, position: action.position } : t));
-      return { ...state, containers, tools };
+      // Stage S-2: раньше stockBottles здесь не обновлялись вовсе — бутылку
+      // нельзя было реально передвинуть старым drag&drop (только визуально
+      // "поднималась" при захвате). Аддитивный фикс, поведение containers/
+      // tools выше не меняется ни на строку.
+      const stockBottles = state.stockBottles.map((b) => (b.id === action.id ? { ...b, position: action.position } : b));
+      return { ...state, containers, tools, stockBottles };
     }
 
     case "ROTATE_ITEM": {
@@ -179,6 +194,23 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
       const containers = state.containers.map((c) => (c.id === action.id ? { ...c, rotationY: rotate(c.rotationY) } : c));
       const tools = state.tools.map((t) => (t.id === action.id ? { ...t, rotationY: rotate(t.rotationY) } : t));
       return { ...state, containers, tools };
+    }
+
+    // Stage S-2 — Free Placement: единственная точка, где Interaction Core
+    // пишет в домен (см. ChemistryInteractionProvider.confirmPlacement) —
+    // атомарно задаёт позицию и произвольный поворот, ничего не трогая в
+    // data (химия) удерживаемого предмета
+    case "SET_ITEM_TRANSFORM": {
+      const containers = state.containers.map((c) =>
+        c.id === action.id ? { ...c, position: action.position, rotationY: action.rotationY } : c
+      );
+      const tools = state.tools.map((t) =>
+        t.id === action.id ? { ...t, position: action.position, rotationY: action.rotationY } : t
+      );
+      const stockBottles = state.stockBottles.map((b) =>
+        b.id === action.id ? { ...b, position: action.position, rotationY: action.rotationY } : b
+      );
+      return { ...state, containers, tools, stockBottles };
     }
 
     case "TOGGLE_BURNER": {
@@ -345,12 +377,12 @@ function createInitialState(): WorkspaceState {
   const flask = createContainerItem("flask-1", "flask", [1.2, 0.6]);
 
   const stockBottles: StockBottle[] = [
-    { id: "stock-water", substanceId: "water", position: [-3.2, -1.6] },
-    { id: "stock-nacl", substanceId: "nacl", position: [-2.1, -1.6] },
-    { id: "stock-hcl", substanceId: "hcl", position: [-1.0, -1.6] },
-    { id: "stock-naoh", substanceId: "naoh", position: [0.1, -1.6] },
-    { id: "stock-cuso4", substanceId: "cuso4", position: [1.2, -1.6] },
-    { id: "stock-agno3", substanceId: "agno3", position: [2.3, -1.6] },
+    { id: "stock-water", substanceId: "water", position: [-3.2, -1.6], rotationY: 0 },
+    { id: "stock-nacl", substanceId: "nacl", position: [-2.1, -1.6], rotationY: 0 },
+    { id: "stock-hcl", substanceId: "hcl", position: [-1.0, -1.6], rotationY: 0 },
+    { id: "stock-naoh", substanceId: "naoh", position: [0.1, -1.6], rotationY: 0 },
+    { id: "stock-cuso4", substanceId: "cuso4", position: [1.2, -1.6], rotationY: 0 },
+    { id: "stock-agno3", substanceId: "agno3", position: [2.3, -1.6], rotationY: 0 },
   ];
 
   const tools: ToolItem[] = [
@@ -381,6 +413,7 @@ interface WorkspaceContextValue {
   select: (id: string | null) => void;
   moveItem: (id: string, position: [number, number]) => void;
   rotateItem: (id: string) => void;
+  setItemTransform: (id: string, position: [number, number], rotationY: number) => void;
   toggleBurner: (id: string) => void;
   addSubstanceToContainer: (containerId: string, substanceId: string, grams: number) => void;
   pourInto: (sourceId: string, targetId: string) => void;
@@ -401,6 +434,10 @@ export function ChemistryWorkspaceProvider({ children }: { children: React.React
     select: useCallback((id) => dispatch({ type: "SELECT", id }), []),
     moveItem: useCallback((id, position) => dispatch({ type: "MOVE_ITEM", id, position }), []),
     rotateItem: useCallback((id) => dispatch({ type: "ROTATE_ITEM", id }), []),
+    setItemTransform: useCallback(
+      (id, position, rotationY) => dispatch({ type: "SET_ITEM_TRANSFORM", id, position, rotationY }),
+      []
+    ),
     toggleBurner: useCallback((id) => dispatch({ type: "TOGGLE_BURNER", id }), []),
     addSubstanceToContainer: useCallback(
       (containerId, substanceId, grams) => dispatch({ type: "ADD_SUBSTANCE", containerId, substanceId, grams }),

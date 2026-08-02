@@ -4,32 +4,47 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { getInteractable, type InteractableConfig } from "@/lib/interactables";
 
 /**
- * Chemistry World — Interaction Core, Stage S-1 (Focus & Pickup).
- * Отдельное, эфемерное состояние наведения/удержания — то же разделение,
- * что ChemistryDragProvider/WireDragProvider: interaction state отдельно от
- * домена (ChemistryWorkspaceProvider). НЕ заменяет ChemistryDragProvider —
- * сосуществует рядом; предметы без записи в INTERACTABLE_REGISTRY (lib/interactables.ts)
- * продолжают управляться старым drag-механизмом без единого изменения.
+ * Chemistry World — Interaction Core, Stage S-1 (Focus & Pickup) + Stage S-2
+ * (Free Placement). Отдельное, эфемерное состояние наведения/удержания/
+ * прицеливания — то же разделение, что ChemistryDragProvider/WireDragProvider:
+ * interaction state отдельно от домена (ChemistryWorkspaceProvider). НЕ
+ * заменяет ChemistryDragProvider — сосуществует рядом; предметы без записи в
+ * INTERACTABLE_REGISTRY (lib/interactables.ts) продолжают управляться старым
+ * drag-механизмом без единого изменения.
  *
- * Ключевое свойство Stage S-1: пока предмет держат (heldId !== null), в
- * ChemistryWorkspaceProvider не диспетчится ни одно действие — визуальный
- * "полет к руке" (HeldObjectRig в ChemistryWorldScene.tsx) и поворот в руке
- * (heldYawOffset) полностью локальны для этого провайдера и бесследно
- * исчезают при release() — домен (позиция/химия предмета) все это время
- * остается нетронутым.
+ * Ключевое свойство: пока предмет держат (heldId !== null) и НЕ подтверждено
+ * размещение, в ChemistryWorkspaceProvider не диспетчится ни одно действие —
+ * визуальный "полет к руке"/предпросмотр на столе (HeldObjectRig в
+ * ChemistryWorldScene.tsx) и поворот в руке (heldYawOffset) полностью
+ * локальны для этого провайдера. Единственный момент записи в домен —
+ * confirmPlacement() (клавиша E над валидной точкой), который делает это НЕ
+ * напрямую (провайдер домен-агностичен, не импортирует
+ * ChemistryWorkspaceProvider), а через переданный снаружи колбэк
+ * onConfirmPlacement — так провайдер остается переиспользуемым и для других
+ * модулей (например Electricity Lab) с их собственным домен-состоянием.
  */
 export type InteractionPhase = "idle" | "focused" | "held";
+
+export interface PlacementCandidate {
+  position: [number, number];
+  rotationY: number;
+}
 
 interface ChemistryInteractionContextValue {
   phase: InteractionPhase;
   focusedId: string | null;
   heldId: string | null;
   heldYawOffset: number;
+  aimPoint: [number, number] | null;
+  placementCandidate: PlacementCandidate | null;
   setFocused: (id: string) => void;
   clearFocused: (id: string) => void;
   pickUp: (id: string) => void;
   release: () => void;
   rotateHeld: (deltaYaw: number) => void;
+  setAimPoint: (point: [number, number] | null) => void;
+  setPlacementCandidate: (candidate: PlacementCandidate | null) => void;
+  confirmPlacement: () => void;
 }
 
 const ChemistryInteractionContext = createContext<ChemistryInteractionContextValue | undefined>(undefined);
@@ -39,10 +54,20 @@ const ChemistryInteractionContext = createContext<ChemistryInteractionContextVal
 // не дискретный снап
 const ROTATE_STEP = Math.PI / 12;
 
-export function ChemistryInteractionProvider({ children }: { children: React.ReactNode }) {
+interface ChemistryInteractionProviderProps {
+  children: React.ReactNode;
+  // Stage S-2: вызывается ТОЛЬКО в момент подтверждённого размещения (E над
+  // валидной точкой) — единственная точка, где этот провайдер приводит к
+  // записи в домен, и делает это чужими руками (колбэк, не прямой импорт).
+  onConfirmPlacement?: (id: string, position: [number, number], rotationY: number) => void;
+}
+
+export function ChemistryInteractionProvider({ children, onConfirmPlacement }: ChemistryInteractionProviderProps) {
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [heldId, setHeldId] = useState<string | null>(null);
   const [heldYawOffset, setHeldYawOffset] = useState(0);
+  const [aimPoint, setAimPointState] = useState<[number, number] | null>(null);
+  const [placementCandidate, setPlacementCandidateState] = useState<PlacementCandidate | null>(null);
 
   // ref-копии для использования внутри keydown-обработчика без пересоздания
   // слушателя на каждый рендер (тот же прием, что и в ChemistryDragProvider)
@@ -50,6 +75,13 @@ export function ChemistryInteractionProvider({ children }: { children: React.Rea
   focusedIdRef.current = focusedId;
   const heldIdRef = useRef(heldId);
   heldIdRef.current = heldId;
+  const placementCandidateRef = useRef(placementCandidate);
+  placementCandidateRef.current = placementCandidate;
+  // onConfirmPlacement может быть новой функцией на каждый рендер родителя
+  // (инлайн-колбэк) — держим в ref, а не в deps эффекта, иначе слушатель
+  // клавиатуры пересоздавался бы на каждый рендер
+  const onConfirmPlacementRef = useRef(onConfirmPlacement);
+  onConfirmPlacementRef.current = onConfirmPlacement;
 
   const setFocused = useCallback((id: string) => {
     // нельзя сфокусироваться на новом предмете, пока один уже в руке —
@@ -64,17 +96,53 @@ export function ChemistryInteractionProvider({ children }: { children: React.Rea
     setFocusedId((current) => (current === id ? null : current));
   }, []);
 
+  const setAimPoint = useCallback((point: [number, number] | null) => {
+    setAimPointState(point);
+  }, []);
+
+  const setPlacementCandidate = useCallback((candidate: PlacementCandidate | null) => {
+    placementCandidateRef.current = candidate;
+    setPlacementCandidateState(candidate);
+  }, []);
+
   const pickUp = useCallback((id: string) => {
     if (heldIdRef.current) return; // уже держим другой предмет — no-op
     const capability = getInteractable(id);
     if (!capability || !capability.canBeHeld) return; // нет способности — no-op
     setHeldId(id);
     setHeldYawOffset(0);
+    setAimPointState(null);
+    placementCandidateRef.current = null;
+    setPlacementCandidateState(null);
   }, []);
 
+  // Escape — ВСЕГДА безусловный отказ: возвращает предмет в исходную точку
+  // текущего pickup-цикла, даже если в этот момент наведена валидная
+  // (зелёная) точка размещения. onConfirmPlacement НЕ вызывается — поэтому
+  // домен ничего не пишет, и "исходная позиция" — это просто то, что уже
+  // было в ChemistryWorkspaceProvider (никогда не менялось, раз запись не
+  // произошла) — не требует отдельного снапшота "исходного transform".
   const release = useCallback(() => {
     setHeldId(null);
     setHeldYawOffset(0);
+    setAimPointState(null);
+    placementCandidateRef.current = null;
+    setPlacementCandidateState(null);
+  }, []);
+
+  // E над валидной (зелёной) точкой — подтвердить размещение. Над невалидной
+  // точкой (красной) или без наведённой точки вовсе — no-op, предмет
+  // остаётся в руке (пользователю понятно почему по цвету кольца в сцене).
+  const confirmPlacement = useCallback(() => {
+    const id = heldIdRef.current;
+    const candidate = placementCandidateRef.current;
+    if (!id || !candidate) return; // нечего подтверждать — предмет остаётся в руке
+    onConfirmPlacementRef.current?.(id, candidate.position, candidate.rotationY);
+    setHeldId(null);
+    setHeldYawOffset(0);
+    setAimPointState(null);
+    placementCandidateRef.current = null;
+    setPlacementCandidateState(null);
   }, []);
 
   const rotateHeld = useCallback((deltaYaw: number) => {
@@ -82,11 +150,11 @@ export function ChemistryInteractionProvider({ children }: { children: React.Rea
     setHeldYawOffset((y) => y + deltaYaw);
   }, []);
 
-  // Клавиатура: E — взять/отпустить (toggle), Escape — безопасно отпустить,
-  // ArrowLeft/ArrowRight — вращение в руке. Не реагирует, пока пользователь
-  // печатает в любом текстовом поле (AI Teacher chat и т.п.), и игнорирует
-  // авто-повтор ОС при зажатой клавише (e.repeat) — без этого зажатая E
-  // бесконтрольно чередовала бы pickUp/release много раз в секунду.
+  // Клавиатура: E — взять/подтвердить размещение, Escape — всегда безусловно
+  // отменить и вернуть, ArrowLeft/ArrowRight — вращение в руке. Не реагирует,
+  // пока пользователь печатает в любом текстовом поле (AI Teacher chat и
+  // т.п.), и игнорирует авто-повтор ОС при зажатой клавише (e.repeat) — без
+  // этого зажатая E бесконтрольно чередовала бы действия много раз в секунду.
   useEffect(() => {
     function isTypingTarget(target: EventTarget | null): boolean {
       if (!(target instanceof HTMLElement)) return false;
@@ -100,7 +168,7 @@ export function ChemistryInteractionProvider({ children }: { children: React.Rea
 
       if (e.key === "e" || e.key === "E") {
         if (heldIdRef.current) {
-          release();
+          confirmPlacement();
         } else if (focusedIdRef.current) {
           pickUp(focusedIdRef.current);
         }
@@ -115,18 +183,23 @@ export function ChemistryInteractionProvider({ children }: { children: React.Rea
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [pickUp, release, rotateHeld]);
+  }, [pickUp, release, rotateHeld, confirmPlacement]);
 
   const value: ChemistryInteractionContextValue = {
     phase: heldId ? "held" : focusedId ? "focused" : "idle",
     focusedId,
     heldId,
     heldYawOffset,
+    aimPoint,
+    placementCandidate,
     setFocused,
     clearFocused,
     pickUp,
     release,
     rotateHeld,
+    setAimPoint,
+    setPlacementCandidate,
+    confirmPlacement,
   };
 
   return <ChemistryInteractionContext.Provider value={value}>{children}</ChemistryInteractionContext.Provider>;
@@ -147,7 +220,7 @@ export function useChemistryInteraction(): ChemistryInteractionContextValue {
  * в ChemistryWorldScene.tsx).
  */
 export function useInteractable(id: string) {
-  const { focusedId, heldId, heldYawOffset, setFocused, clearFocused } = useChemistryInteraction();
+  const { focusedId, heldId, heldYawOffset, placementCandidate, setFocused, clearFocused } = useChemistryInteraction();
   const capability: InteractableConfig | null = getInteractable(id);
   const isFocused = focusedId === id;
   const isHeld = heldId === id;
@@ -157,6 +230,10 @@ export function useInteractable(id: string) {
     isFocused,
     isHeld,
     heldYawOffset: isHeld ? heldYawOffset : 0,
+    // предмет визуально "садится" на превью-точку на столе, только пока сам
+    // держится И точка валидна — иначе (не держим, либо точка красная/её нет)
+    // остаётся у руки, как в Stage S-1
+    placementTarget: isHeld ? placementCandidate : null,
     pointerHandlers: capability
       ? {
           onPointerOver: () => setFocused(id),

@@ -22,6 +22,13 @@ import {
   useInteractable,
 } from "@/components/core/ChemistryInteractionProvider";
 import { getInteractable } from "@/lib/interactables";
+import {
+  TABLE_SURFACE,
+  isPlacementValid,
+  getFootprintRadius,
+  STOCK_BOTTLE_FOOTPRINT_RADIUS,
+  type PlacementOccupant,
+} from "@/lib/placement-surfaces";
 import { ChemistryTutorialProvider } from "@/components/tutorial/ChemistryTutorialProvider";
 import ChemistryTutorialPanel from "@/components/tutorial/ChemistryTutorialPanel";
 import { ExperimentProgressProvider, useExperimentProgress } from "@/components/experiments/ExperimentProgressProvider";
@@ -821,17 +828,28 @@ function Hitbox({ radius, height = 0.5 }: { radius: number; height?: number }) {
 // Родительский <group>, в который вложен этот компонент, должен сам обнулять
 // свои position/rotation, пока active===true (см. ContainerMesh/StockBottleMesh) —
 // иначе позиция руки сложится с позицией предмета на столе.
+// Stage S-2: скорость лерпа между рукой и превью-точкой на столе (и обратно)
+// — тот же порядок величины, что GRAB_LIFT_SPEED, чтобы переход ощущался
+// частью того же визуального языка, не резким скачком
+const HELD_RIG_LERP_SPEED = 12;
+
 function HeldObjectRig({
   active,
   handOffset,
   handRotation,
   yawOffset,
+  placementTarget,
   children,
 }: {
   active: boolean;
   handOffset: [number, number, number];
   handRotation: [number, number, number];
   yawOffset: number;
+  // Stage S-2: когда задан (валидная точка размещения) — предмет визуально
+  // "садится" на стол в эту позицию/поворот вместо руки. Сам домен
+  // (ChemistryWorkspaceProvider) при этом НЕ меняется — это чистое превью,
+  // запись происходит только по подтверждению (см. ChemistryInteractionProvider.confirmPlacement)
+  placementTarget?: { position: [number, number]; rotationY: number } | null;
   children: React.ReactNode;
 }) {
   const groupRef = useRef<THREE.Group>(null);
@@ -841,15 +859,63 @@ function HeldObjectRig({
     [handRotation]
   );
 
-  useFrame(({ camera }) => {
+  useFrame(({ camera }, delta) => {
     if (!active || !groupRef.current) return;
-    groupRef.current.position.copy(camera.localToWorld(localAnchor.clone()));
-    const yawQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yawOffset);
-    groupRef.current.quaternion.copy(camera.quaternion).multiply(baseQuat).multiply(yawQuat);
+    const targetPos = new THREE.Vector3();
+    const targetQuat = new THREE.Quaternion();
+    if (placementTarget) {
+      targetPos.set(placementTarget.position[0], 0.05, placementTarget.position[1]);
+      targetQuat.setFromEuler(new THREE.Euler(0, placementTarget.rotationY, 0));
+    } else {
+      targetPos.copy(camera.localToWorld(localAnchor.clone()));
+      const yawQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yawOffset);
+      targetQuat.copy(camera.quaternion).multiply(baseQuat).multiply(yawQuat);
+    }
+    const t = Math.min(1, delta * HELD_RIG_LERP_SPEED);
+    groupRef.current.position.lerp(targetPos, t);
+    groupRef.current.quaternion.slerp(targetQuat, t);
   });
 
   if (!active) return <>{children}</>;
   return <group ref={groupRef}>{children}</group>;
+}
+
+// Stage S-2 — невидимая плоскость на уровне стола, активная ТОЛЬКО пока
+// heldId задан: raycast курсора против неё дает точку прицеливания для
+// размещения. Отдельная от DragSurface (старая система, реагирует только на
+// draggingId старого drag) — небольшое отличие по высоте (0.02 против 0.01
+// у DragSurface) + stopPropagation исключают гонку двух наложенных плоскостей.
+function PlacementSurfacePlane() {
+  const { setAimPoint } = useChemistryInteraction();
+  return (
+    <mesh
+      rotation={[-Math.PI / 2, 0, 0]}
+      position={[0, 0.02, 0]}
+      onPointerMove={(e: ThreeEvent<PointerEvent>) => {
+        e.stopPropagation();
+        setAimPoint([e.point.x, e.point.z]);
+      }}
+      onPointerOut={() => setAimPoint(null)}
+    >
+      <planeGeometry args={[10, 5]} />
+      <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+    </mesh>
+  );
+}
+
+// Stage S-2 — живой фидбэк точки прицеливания: зелёное кольцо, если текущая
+// точка валидна для размещения (see ChemistryScene's placementCandidate),
+// красное — если нет (вне стола или перекрывает другой предмет)
+function PlacementGhost() {
+  const { aimPoint, heldId, placementCandidate } = useChemistryInteraction();
+  if (!heldId || !aimPoint) return null;
+  const isValid = placementCandidate !== null;
+  return (
+    <mesh position={[aimPoint[0], 0.03, aimPoint[1]]} rotation={[-Math.PI / 2, 0, 0]}>
+      <ringGeometry args={[0.3, 0.4, 32]} />
+      <meshBasicMaterial color={isValid ? "#34d399" : "#f87171"} transparent opacity={0.55} depthWrite={false} />
+    </mesh>
+  );
 }
 
 // Stage S-1 — кольцо фокуса под наведенным предметом (тот же прием, что
@@ -875,12 +941,18 @@ function FocusRing({ halfHeight, radius = 0.36 }: { halfHeight: number; radius?:
 // повторяет уже существующие подсказки (rounded-md/bg-slate-900/85/text-xs) —
 // редизайн интерфейса Stage S-1 не делает.
 function InteractionPrompt() {
-  const { focusedId, heldId } = useChemistryInteraction();
+  const { focusedId, heldId, placementCandidate } = useChemistryInteraction();
 
+  // Stage S-2 — текст меняется по валидности текущей точки размещения:
+  // "поставить" только когда candidate есть (зелёное кольцо), иначе честно
+  // говорит, что тут нельзя — E в этот момент ничего не сделает
   let text: string | null = null;
   if (heldId) {
     const cap = getInteractable(heldId);
-    text = `E — Отпустить${cap ? `: ${cap.displayName}` : ""}  ·  ←/→ — повернуть`;
+    const name = cap ? `: ${cap.displayName}` : "";
+    text = placementCandidate
+      ? `E — Поставить${name}  ·  ←/→ — повернуть  ·  Esc — отменить`
+      : `Здесь нельзя поставить  ·  ←/→ — повернуть  ·  Esc — вернуть${name}`;
   } else if (focusedId) {
     const cap = getInteractable(focusedId);
     if (cap) text = `E — Взять: ${cap.displayName}`;
@@ -1340,7 +1412,7 @@ function ContainerMesh({
 }) {
   const { state } = useChemistryWorkspace();
   const { onPointerDown, isDragging } = useDragHandlers(item.id);
-  const { capability, isFocused, isHeld, heldYawOffset, pointerHandlers } = useInteractable(item.id);
+  const { capability, isFocused, isHeld, heldYawOffset, placementTarget, pointerHandlers } = useInteractable(item.id);
   const [hovered, setHovered] = useState(false);
   const isSelected = state.selectedItemId === item.id;
   const isActive = state.activeContainerId === item.id;
@@ -1390,6 +1462,7 @@ function ContainerMesh({
         handOffset={capability?.handOffset ?? [0, 0, 0]}
         handRotation={capability?.handRotation ?? [0, 0, 0]}
         yawOffset={heldYawOffset}
+        placementTarget={placementTarget}
       >
         <Hitbox radius={0.32} height={halfHeight * 2 + 0.1} />
 
@@ -1463,7 +1536,7 @@ function ContainerMesh({
 function StockBottleMesh({ bottle, isPouring }: { bottle: StockBottle; isPouring: boolean }) {
   const [hovered, setHovered] = useState(false);
   const { onPointerDown, isDragging } = useDragHandlers(bottle.id);
-  const { capability, isFocused, isHeld, heldYawOffset, pointerHandlers } = useInteractable(bottle.id);
+  const { capability, isFocused, isHeld, heldYawOffset, placementTarget, pointerHandlers } = useInteractable(bottle.id);
   const substance = SUBSTANCES[bottle.substanceId];
 
   return (
@@ -1485,6 +1558,7 @@ function StockBottleMesh({ bottle, isPouring }: { bottle: StockBottle; isPouring
         handOffset={capability?.handOffset ?? [0, 0, 0]}
         handRotation={capability?.handRotation ?? [0, 0, 0]}
         yawOffset={heldYawOffset}
+        placementTarget={placementTarget}
       >
         <Hitbox radius={0.17} height={0.5} />
 
@@ -1843,6 +1917,7 @@ const HAZARD_TICK_INTERVAL_S = 0.4;
 function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer, debugMode }: ChemistrySceneProps) {
   const { state, heatTick, hazardTick } = useChemistryWorkspace();
   const { draggingId } = useChemistryDrag();
+  const { heldId, aimPoint, heldYawOffset, setPlacementCandidate } = useChemistryInteraction();
   const hazardAccumRef = useRef(0);
 
   useFrame((_, delta) => {
@@ -1894,6 +1969,43 @@ function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer
     }
     return null;
   }, [pourAnimation, addAnimation, state.containers, state.stockBottles]);
+
+  // Stage S-2 — Free Placement: считает, валидна ли текущая точка
+  // прицеливания (aimPoint) для держимого предмета. Тот же прием, что и
+  // snapTargetId выше — производное значение через useMemo от uже
+  // существующего state, никакой новой подписки/эффекта помимо передачи
+  // результата в ChemistryInteractionProvider ниже. Держимый предмет
+  // ИСКЛЮЧАЕТСЯ из occupants — иначе он никогда не смог бы разместиться
+  // рядом со своей исходной точкой (ложное самоблокирование).
+  const placementCandidate = useMemo(() => {
+    if (!heldId || !aimPoint) return null;
+
+    const heldContainer = state.containers.find((c) => c.id === heldId);
+    const heldBottle = state.stockBottles.find((b) => b.id === heldId);
+    const heldTool = state.tools.find((t) => t.id === heldId);
+    const movingRadius = heldContainer
+      ? getFootprintRadius(heldContainer.kind)
+      : heldBottle
+        ? STOCK_BOTTLE_FOOTPRINT_RADIUS
+        : heldTool
+          ? getFootprintRadius(heldTool.kind)
+          : getFootprintRadius(heldId);
+
+    const occupants: PlacementOccupant[] = [
+      ...state.containers.filter((c) => c.id !== heldId).map((c) => ({ position: c.position, radius: getFootprintRadius(c.kind) })),
+      ...state.tools.filter((t) => t.id !== heldId).map((t) => ({ position: t.position, radius: getFootprintRadius(t.kind) })),
+      ...state.stockBottles
+        .filter((b) => b.id !== heldId)
+        .map((b) => ({ position: b.position, radius: STOCK_BOTTLE_FOOTPRINT_RADIUS })),
+    ];
+
+    const valid = isPlacementValid(aimPoint, movingRadius, TABLE_SURFACE, occupants);
+    return valid ? { position: aimPoint, rotationY: heldYawOffset } : null;
+  }, [heldId, aimPoint, heldYawOffset, state.containers, state.tools, state.stockBottles]);
+
+  useEffect(() => {
+    setPlacementCandidate(placementCandidate);
+  }, [placementCandidate, setPlacementCandidate]);
 
   return (
     <ChemistryDebugContext.Provider value={debugMode}>
@@ -1949,6 +2061,8 @@ function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer
           })()}
 
         <DragSurface onDrop={onDrop} />
+        {heldId && <PlacementSurfacePlane />}
+        {heldId && <PlacementGhost />}
         <InteractionPrompt />
       </group>
     </ChemistryDebugContext.Provider>
@@ -2145,7 +2259,7 @@ export default function ChemistryWorldScene({ simulation }: ChemistryWorldSceneP
 const POUR_ANIMATION_MS = 750;
 
 function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
-  const { state, addSubstanceToContainer, pourInto, moveItem, setActiveContainer } = useChemistryWorkspace();
+  const { state, addSubstanceToContainer, pourInto, moveItem, setActiveContainer, setItemTransform } = useChemistryWorkspace();
   const { quality, setQuality } = useQuality();
   const [pourAnimation, setPourAnimation] = useState<PourAnimationState | null>(null);
   const [addAnimation, setAddAnimation] = useState<AddAnimationState | null>(null);
@@ -2354,7 +2468,9 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
     <ChemistryTutorialProvider container={activeContainer.data}>
       <ExperimentProgressProvider labState={{ container: activeContainer.data, occurredReactionIds }}>
         <ChemistryDragProvider>
-        <ChemistryInteractionProvider>
+        <ChemistryInteractionProvider
+          onConfirmPlacement={(id, position, rotationY) => setItemTransform(id, position, rotationY)}
+        >
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
             <div className="flex-1 rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">
               <ChemistryCanvas

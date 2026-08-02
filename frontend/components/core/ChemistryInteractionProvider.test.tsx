@@ -116,14 +116,21 @@ describe("ChemistryInteractionProvider — state machine (idle/focused/held)", (
 });
 
 describe("ChemistryInteractionProvider — клавиатура", () => {
-  it("E берет сфокусированный предмет, E еще раз отпускает", () => {
+  it("E берет сфокусированный предмет; Stage S-2: E без валидной точки размещения больше НЕ отпускает — предмет остается в руке (Escape отпускает всегда)", () => {
     const { result } = renderHook(() => useChemistryInteraction(), { wrapper: interactionWrapper });
 
     act(() => result.current.setFocused("flask-1"));
     act(() => dispatchKey("e"));
     expect(result.current.heldId).toBe("flask-1");
 
+    // Stage S-2 меняет семантику E-while-held: без placementCandidate (эта
+    // обертка не подключает onConfirmPlacement/candidate) E — no-op, не
+    // release. Раньше (Stage S-1) E всегда отпускал — сознательно изменено
+    // и подтверждено пользователем при утверждении плана S-2.
     act(() => dispatchKey("e"));
+    expect(result.current.heldId).toBe("flask-1");
+
+    act(() => dispatchKey("Escape"));
     expect(result.current.heldId).toBeNull();
   });
 
@@ -247,5 +254,210 @@ describe("Interaction Core не трогает домен (ChemistryWorkspacePro
     // не должно измениться ни на одно поле сверх того, что мы сами меняли
     // явно (тут — вообще ничего не меняли явно через workspace)
     expect(result.current.workspace.state.selectedItemId).toBeNull();
+  });
+});
+
+describe("ChemistryInteractionProvider — Stage S-2 (Free Placement)", () => {
+  function wrapperWithConfirm(onConfirmPlacement: (id: string, position: [number, number], rotationY: number) => void) {
+    return function Wrapper({ children }: { children: ReactNode }) {
+      return <ChemistryInteractionProvider onConfirmPlacement={onConfirmPlacement}>{children}</ChemistryInteractionProvider>;
+    };
+  }
+
+  it("confirmPlacement вызывает onConfirmPlacement с id/position/rotationY и очищает held-состояние", () => {
+    const onConfirmPlacement = vi.fn();
+    const { result } = renderHook(() => useChemistryInteraction(), { wrapper: wrapperWithConfirm(onConfirmPlacement) });
+
+    act(() => result.current.setFocused("beaker-1"));
+    act(() => result.current.pickUp("beaker-1"));
+    act(() => result.current.rotateHeld(0.4));
+    act(() => result.current.setPlacementCandidate({ position: [1.5, -0.3], rotationY: 0.4 }));
+
+    act(() => result.current.confirmPlacement());
+
+    expect(onConfirmPlacement).toHaveBeenCalledTimes(1);
+    expect(onConfirmPlacement).toHaveBeenCalledWith("beaker-1", [1.5, -0.3], 0.4);
+    expect(result.current.heldId).toBeNull();
+    expect(result.current.placementCandidate).toBeNull();
+    expect(result.current.aimPoint).toBeNull();
+  });
+
+  it("E (confirmPlacement) в невалидной точке — no-op: onConfirmPlacement не вызван, предмет остается в руке", () => {
+    const onConfirmPlacement = vi.fn();
+    const { result } = renderHook(() => useChemistryInteraction(), { wrapper: wrapperWithConfirm(onConfirmPlacement) });
+
+    act(() => result.current.setFocused("beaker-1"));
+    act(() => result.current.pickUp("beaker-1"));
+    act(() => result.current.setAimPoint([10, 10])); // например, вне стола
+    // placementCandidate НЕ установлен (красная зона) — confirmPlacement должен быть no-op
+
+    act(() => dispatchKey("e"));
+
+    expect(onConfirmPlacement).not.toHaveBeenCalled();
+    expect(result.current.heldId).toBe("beaker-1"); // предмет всё ещё в руке
+    expect(result.current.aimPoint).toEqual([10, 10]); // точка прицеливания не сброшена
+  });
+
+  it("Escape всегда безусловно отменяет — даже если candidate валиден, onConfirmPlacement не вызывается", () => {
+    const onConfirmPlacement = vi.fn();
+    const { result } = renderHook(() => useChemistryInteraction(), { wrapper: wrapperWithConfirm(onConfirmPlacement) });
+
+    act(() => result.current.setFocused("flask-1"));
+    act(() => result.current.pickUp("flask-1"));
+    act(() => result.current.setPlacementCandidate({ position: [0.5, 0.5], rotationY: 0 }));
+
+    act(() => dispatchKey("Escape"));
+
+    expect(onConfirmPlacement).not.toHaveBeenCalled();
+    expect(result.current.heldId).toBeNull();
+    expect(result.current.placementCandidate).toBeNull();
+    expect(result.current.aimPoint).toBeNull();
+  });
+
+  it("размонтирование во время preview (валидный candidate, но E не нажат) не вызывает onConfirmPlacement", () => {
+    const onConfirmPlacement = vi.fn();
+    const { result, unmount } = renderHook(() => useChemistryInteraction(), { wrapper: wrapperWithConfirm(onConfirmPlacement) });
+
+    act(() => result.current.setFocused("beaker-1"));
+    act(() => result.current.pickUp("beaker-1"));
+    act(() => result.current.setAimPoint([1, 1]));
+    act(() => result.current.setPlacementCandidate({ position: [1, 1], rotationY: 0 }));
+
+    unmount();
+
+    expect(onConfirmPlacement).not.toHaveBeenCalled();
+  });
+
+  it("E не подтверждает размещение, если фокус на input, даже при валидном candidate", () => {
+    const onConfirmPlacement = vi.fn();
+    const { result } = renderHook(() => useChemistryInteraction(), { wrapper: wrapperWithConfirm(onConfirmPlacement) });
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+
+    act(() => result.current.setFocused("beaker-1"));
+    act(() => result.current.pickUp("beaker-1"));
+    act(() => result.current.setPlacementCandidate({ position: [1, 1], rotationY: 0 }));
+    act(() => dispatchKey("e", {}, input));
+
+    expect(onConfirmPlacement).not.toHaveBeenCalled();
+    expect(result.current.heldId).toBe("beaker-1"); // подтверждения не произошло
+
+    document.body.removeChild(input);
+  });
+});
+
+describe("Stage S-2 — интеграция с ChemistryWorkspaceProvider (SET_ITEM_TRANSFORM/MOVE_ITEM)", () => {
+  function combinedWrapperWithPlacement({ children }: { children: ReactNode }) {
+    return (
+      <ChemistryWorkspaceProvider>
+        <PlacementBridge>{children}</PlacementBridge>
+      </ChemistryWorkspaceProvider>
+    );
+  }
+
+  // мост, повторяющий реальную схему подключения из ChemistryWorldScene.tsx:
+  // ChemistryInteractionProvider получает onConfirmPlacement, вызывающий
+  // setItemTransform из уже смонтированного ChemistryWorkspaceProvider выше
+  function PlacementBridge({ children }: { children: ReactNode }) {
+    const { setItemTransform } = useChemistryWorkspace();
+    return (
+      <ChemistryInteractionProvider onConfirmPlacement={(id, position, rotationY) => setItemTransform(id, position, rotationY)}>
+        {children}
+      </ChemistryInteractionProvider>
+    );
+  }
+
+  it("stock-water реально перемещается через confirmPlacement и сохраняет новую позицию/поворот", () => {
+    const { result } = renderHook(
+      () => ({ workspace: useChemistryWorkspace(), interaction: useChemistryInteraction() }),
+      { wrapper: combinedWrapperWithPlacement }
+    );
+
+    const before = result.current.workspace.state.stockBottles.find((b) => b.id === "stock-water")!;
+    expect(before.position).toEqual([-3.2, -1.6]);
+
+    act(() => result.current.interaction.setFocused("stock-water"));
+    act(() => result.current.interaction.pickUp("stock-water"));
+    act(() => result.current.interaction.rotateHeld(0.7));
+    act(() => result.current.interaction.setPlacementCandidate({ position: [2, 0], rotationY: 0.7 }));
+    act(() => result.current.interaction.confirmPlacement());
+
+    const after = result.current.workspace.state.stockBottles.find((b) => b.id === "stock-water")!;
+    expect(after.position).toEqual([2, 0]);
+    expect(after.rotationY).toBeCloseTo(0.7, 10);
+  });
+
+  it("содержимое и температура сосуда не меняются даже после подтверждённого размещения", () => {
+    const { result } = renderHook(
+      () => ({ workspace: useChemistryWorkspace(), interaction: useChemistryInteraction() }),
+      { wrapper: combinedWrapperWithPlacement }
+    );
+
+    act(() => result.current.workspace.addSubstanceToContainer("beaker-1", "water", 200));
+    act(() => result.current.workspace.heatTick(15));
+    const before = result.current.workspace.state.containers.find((c) => c.id === "beaker-1")!;
+    const beforeData = JSON.stringify(before.data);
+
+    act(() => result.current.interaction.setFocused("beaker-1"));
+    act(() => result.current.interaction.pickUp("beaker-1"));
+    act(() => result.current.interaction.setPlacementCandidate({ position: [-2, -0.5], rotationY: 0 }));
+    act(() => result.current.interaction.confirmPlacement());
+
+    const after = result.current.workspace.state.containers.find((c) => c.id === "beaker-1")!;
+    expect(JSON.stringify(after.data)).toBe(beforeData);
+  });
+
+  it("Escape восстанавливает исходный transform текущего pickup-цикла (позиция не пишется вовсе)", () => {
+    const { result } = renderHook(
+      () => ({ workspace: useChemistryWorkspace(), interaction: useChemistryInteraction() }),
+      { wrapper: combinedWrapperWithPlacement }
+    );
+
+    const original = result.current.workspace.state.containers.find((c) => c.id === "flask-1")!;
+    const originalPosition = original.position;
+    const originalRotationY = original.rotationY;
+
+    act(() => result.current.interaction.setFocused("flask-1"));
+    act(() => result.current.interaction.pickUp("flask-1"));
+    act(() => result.current.interaction.rotateHeld(1.1));
+    act(() => result.current.interaction.setPlacementCandidate({ position: [3, 1], rotationY: 1.1 }));
+    act(() => dispatchKey("Escape"));
+
+    const after = result.current.workspace.state.containers.find((c) => c.id === "flask-1")!;
+    expect(after.position).toEqual(originalPosition);
+    expect(after.rotationY).toBe(originalRotationY);
+  });
+
+  it("повторный pickup использует уже подтверждённую новую позицию как origin", () => {
+    const { result } = renderHook(
+      () => ({ workspace: useChemistryWorkspace(), interaction: useChemistryInteraction() }),
+      { wrapper: combinedWrapperWithPlacement }
+    );
+
+    // первое размещение
+    act(() => result.current.interaction.setFocused("beaker-1"));
+    act(() => result.current.interaction.pickUp("beaker-1"));
+    act(() => result.current.interaction.setPlacementCandidate({ position: [1.8, -1] , rotationY: 0.2 }));
+    act(() => result.current.interaction.confirmPlacement());
+
+    // второй цикл: взяли снова и просто отменили (Escape) — должно остаться
+    // на позиции ПОСЛЕ первого размещения, не на исходной позиции [0,0]
+    act(() => result.current.interaction.setFocused("beaker-1"));
+    act(() => result.current.interaction.pickUp("beaker-1"));
+    act(() => dispatchKey("Escape"));
+
+    const finalState = result.current.workspace.state.containers.find((c) => c.id === "beaker-1")!;
+    expect(finalState.position).toEqual([1.8, -1]);
+    expect(finalState.rotationY).toBeCloseTo(0.2, 10);
+  });
+
+  it("MOVE_ITEM (старый drag&drop) теперь реально двигает stockBottles, не только containers/tools", () => {
+    const { result } = renderHook(() => useChemistryWorkspace(), { wrapper: ChemistryWorkspaceProvider });
+
+    act(() => result.current.moveItem("stock-nacl", [4, -2]));
+
+    const bottle = result.current.state.stockBottles.find((b) => b.id === "stock-nacl")!;
+    expect(bottle.position).toEqual([4, -2]);
   });
 });
