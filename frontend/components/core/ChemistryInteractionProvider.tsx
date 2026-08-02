@@ -1,7 +1,12 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { getInteractable, type InteractableConfig } from "@/lib/interactables";
+import {
+  getInteractable,
+  type InteractableConfig,
+  type InteractableRuntimeState,
+  type PlacementSurfaceKind,
+} from "@/lib/interactables";
 
 /**
  * Chemistry World — Interaction Core, Stage S-1 (Focus & Pickup) + Stage S-2
@@ -28,6 +33,7 @@ export type InteractionPhase = "idle" | "focused" | "held";
 export interface PlacementCandidate {
   position: [number, number];
   rotationY: number;
+  surface: PlacementSurfaceKind;
 }
 
 interface ChemistryInteractionContextValue {
@@ -45,6 +51,7 @@ interface ChemistryInteractionContextValue {
   setAimPoint: (point: [number, number] | null) => void;
   setPlacementCandidate: (candidate: PlacementCandidate | null) => void;
   confirmPlacement: () => void;
+  getPickupBlockedReason: (id: string) => string | null;
 }
 
 const ChemistryInteractionContext = createContext<ChemistryInteractionContextValue | undefined>(undefined);
@@ -60,9 +67,14 @@ interface ChemistryInteractionProviderProps {
   // валидной точкой) — единственная точка, где этот провайдер приводит к
   // записи в домен, и делает это чужими руками (колбэк, не прямой импорт).
   onConfirmPlacement?: (id: string, position: [number, number], rotationY: number) => void;
+  getInteractableState?: (id: string) => InteractableRuntimeState;
 }
 
-export function ChemistryInteractionProvider({ children, onConfirmPlacement }: ChemistryInteractionProviderProps) {
+export function ChemistryInteractionProvider({
+  children,
+  onConfirmPlacement,
+  getInteractableState,
+}: ChemistryInteractionProviderProps) {
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [heldId, setHeldId] = useState<string | null>(null);
   const [heldYawOffset, setHeldYawOffset] = useState(0);
@@ -82,6 +94,20 @@ export function ChemistryInteractionProvider({ children, onConfirmPlacement }: C
   // клавиатуры пересоздавался бы на каждый рендер
   const onConfirmPlacementRef = useRef(onConfirmPlacement);
   onConfirmPlacementRef.current = onConfirmPlacement;
+  const getInteractableStateRef = useRef(getInteractableState);
+  getInteractableStateRef.current = getInteractableState;
+
+  const runtimeStateFor = useCallback(
+    (id: string): InteractableRuntimeState => getInteractableStateRef.current?.(id) ?? {},
+    []
+  );
+
+  const getPickupBlockedReason = useCallback((id: string) => {
+    const capability = getInteractable(id);
+    if (!capability) return null;
+    const runtimeState = runtimeStateFor(id);
+    return capability.canPickUpNow(runtimeState) ? null : capability.blockedReason(runtimeState);
+  }, [runtimeStateFor]);
 
   const setFocused = useCallback((id: string) => {
     // нельзя сфокусироваться на новом предмете, пока один уже в руке —
@@ -109,12 +135,14 @@ export function ChemistryInteractionProvider({ children, onConfirmPlacement }: C
     if (heldIdRef.current) return; // уже держим другой предмет — no-op
     const capability = getInteractable(id);
     if (!capability || !capability.canBeHeld) return; // нет способности — no-op
+    const runtimeState = runtimeStateFor(id);
+    if (!capability.canPickUpNow(runtimeState)) return;
     setHeldId(id);
-    setHeldYawOffset(0);
+    setHeldYawOffset(runtimeState.rotationY ?? 0);
     setAimPointState(null);
     placementCandidateRef.current = null;
     setPlacementCandidateState(null);
-  }, []);
+  }, [runtimeStateFor]);
 
   // Escape — ВСЕГДА безусловный отказ: возвращает предмет в исходную точку
   // текущего pickup-цикла, даже если в этот момент наведена валидная
@@ -137,6 +165,8 @@ export function ChemistryInteractionProvider({ children, onConfirmPlacement }: C
     const id = heldIdRef.current;
     const candidate = placementCandidateRef.current;
     if (!id || !candidate) return; // нечего подтверждать — предмет остаётся в руке
+    const capability = getInteractable(id);
+    if (!capability?.canBePlaced || !capability.allowedSurfaces.includes(candidate.surface)) return;
     onConfirmPlacementRef.current?.(id, candidate.position, candidate.rotationY);
     setHeldId(null);
     setHeldYawOffset(0);
@@ -200,6 +230,7 @@ export function ChemistryInteractionProvider({ children, onConfirmPlacement }: C
     setAimPoint,
     setPlacementCandidate,
     confirmPlacement,
+    getPickupBlockedReason,
   };
 
   return <ChemistryInteractionContext.Provider value={value}>{children}</ChemistryInteractionContext.Provider>;
@@ -220,7 +251,15 @@ export function useChemistryInteraction(): ChemistryInteractionContextValue {
  * в ChemistryWorldScene.tsx).
  */
 export function useInteractable(id: string) {
-  const { focusedId, heldId, heldYawOffset, placementCandidate, setFocused, clearFocused } = useChemistryInteraction();
+  const {
+    focusedId,
+    heldId,
+    heldYawOffset,
+    placementCandidate,
+    setFocused,
+    clearFocused,
+    getPickupBlockedReason,
+  } = useChemistryInteraction();
   const capability: InteractableConfig | null = getInteractable(id);
   const isFocused = focusedId === id;
   const isHeld = heldId === id;
@@ -230,6 +269,7 @@ export function useInteractable(id: string) {
     isFocused,
     isHeld,
     heldYawOffset: isHeld ? heldYawOffset : 0,
+    blockedReason: getPickupBlockedReason(id),
     // предмет визуально "садится" на превью-точку на столе, только пока сам
     // держится И точка валидна — иначе (не держим, либо точка красная/её нет)
     // остаётся у руки, как в Stage S-1

@@ -1,8 +1,8 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import { useFrame, type ThreeEvent } from "@react-three/fiber";
+import { useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { ContactShadows, Html, useGLTF } from "@react-three/drei";
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertOctagon, Flame, Lock, RotateCcw, RotateCw, Unlock, Volume2, VolumeX } from "lucide-react";
@@ -22,6 +22,7 @@ import {
   useInteractable,
 } from "@/components/core/ChemistryInteractionProvider";
 import { getInteractable } from "@/lib/interactables";
+import { suppressRaycastTree } from "@/lib/interaction-raycast";
 import {
   TABLE_SURFACE,
   isPlacementValid,
@@ -94,6 +95,7 @@ const TOOL_LABEL: Record<string, string> = {
   stand: "Штатив",
   pipette: "Пипетка",
   thermometer: "Термометр",
+  glass_rod: "Стеклянная палочка",
   scale: "Весы",
 };
 
@@ -880,6 +882,47 @@ function HeldObjectRig({
   return <group ref={groupRef}>{children}</group>;
 }
 
+function HeldRaycastGate({ disabled, children }: { disabled: boolean; children: React.ReactNode }) {
+  const groupRef = useRef<THREE.Group>(null);
+
+  useLayoutEffect(() => {
+    if (!disabled || !groupRef.current) return;
+    return suppressRaycastTree(groupRef.current);
+  }, [disabled]);
+
+  return <group ref={groupRef}>{children}</group>;
+}
+
+const TABLE_CAMERA_POSITION: [number, number, number] = [0.4, 3.6, 6.4];
+const TABLE_CAMERA_TARGET: [number, number, number] = [0, 0.1, 0];
+
+function PlacementCameraShortcut() {
+  const { camera, invalidate } = useThree();
+  const { heldId } = useChemistryInteraction();
+
+  useEffect(() => {
+    if (!heldId) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat || (event.key !== "t" && event.key !== "T")) return;
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+      ) {
+        return;
+      }
+      camera.position.set(...TABLE_CAMERA_POSITION);
+      camera.lookAt(...TABLE_CAMERA_TARGET);
+      camera.updateMatrixWorld();
+      invalidate();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [camera, heldId, invalidate]);
+
+  return null;
+}
+
 // Stage S-2 — невидимая плоскость на уровне стола, активная ТОЛЬКО пока
 // heldId задан: raycast курсора против неё дает точку прицеливания для
 // размещения. Отдельная от DragSurface (старая система, реагирует только на
@@ -941,7 +984,7 @@ function FocusRing({ halfHeight, radius = 0.36 }: { halfHeight: number; radius?:
 // повторяет уже существующие подсказки (rounded-md/bg-slate-900/85/text-xs) —
 // редизайн интерфейса Stage S-1 не делает.
 function InteractionPrompt() {
-  const { focusedId, heldId, placementCandidate } = useChemistryInteraction();
+  const { focusedId, heldId, placementCandidate, getPickupBlockedReason } = useChemistryInteraction();
 
   // Stage S-2 — текст меняется по валидности текущей точки размещения:
   // "поставить" только когда candidate есть (зелёное кольцо), иначе честно
@@ -951,11 +994,14 @@ function InteractionPrompt() {
     const cap = getInteractable(heldId);
     const name = cap ? `: ${cap.displayName}` : "";
     text = placementCandidate
-      ? `E — Поставить${name}  ·  ←/→ — повернуть  ·  Esc — отменить`
-      : `Здесь нельзя поставить  ·  ←/→ — повернуть  ·  Esc — вернуть${name}`;
+      ? `E — Поставить${name}  ·  T — к столу  ·  ←/→ — повернуть  ·  Esc — отменить`
+      : `Здесь нельзя поставить  ·  T — к столу  ·  ←/→ — повернуть  ·  Esc — вернуть${name}`;
   } else if (focusedId) {
     const cap = getInteractable(focusedId);
-    if (cap) text = `E — Взять: ${cap.displayName}`;
+    if (cap) {
+      const blockedReason = getPickupBlockedReason(focusedId);
+      text = blockedReason ?? `E — Взять: ${cap.displayName}`;
+    }
   }
 
   if (!text) return null;
@@ -1412,7 +1458,8 @@ function ContainerMesh({
 }) {
   const { state } = useChemistryWorkspace();
   const { onPointerDown, isDragging } = useDragHandlers(item.id);
-  const { capability, isFocused, isHeld, heldYawOffset, placementTarget, pointerHandlers } = useInteractable(item.id);
+  const interaction = useInteractable(item.id);
+  const { capability, isHeld, pointerHandlers } = interaction;
   const [hovered, setHovered] = useState(false);
   const isSelected = state.selectedItemId === item.id;
   const isActive = state.activeContainerId === item.id;
@@ -1446,7 +1493,7 @@ function ContainerMesh({
     <group
       position={isHeld ? [0, 0, 0] : [item.position[0], 0.05, item.position[1]]}
       rotation={isHeld ? [0, 0, 0] : [0, item.rotationY, 0]}
-      onPointerDown={capability ? undefined : onPointerDown}
+      onPointerDown={!isHeld && capability?.legacyDragMode !== "none" ? onPointerDown : undefined}
       onPointerOver={(e: ThreeEvent<PointerEvent>) => {
         e.stopPropagation();
         setHovered(true);
@@ -1457,14 +1504,33 @@ function ContainerMesh({
         pointerHandlers?.onPointerOut();
       }}
     >
-      <HeldObjectRig
-        active={isHeld}
-        handOffset={capability?.handOffset ?? [0, 0, 0]}
-        handRotation={capability?.handRotation ?? [0, 0, 0]}
-        yawOffset={heldYawOffset}
-        placementTarget={placementTarget}
+      <InteractableVisualRig
+        id={item.id}
+        interaction={interaction}
+        focusHalfHeight={halfHeight}
+        focusRadius={capability?.interactionRadius}
       >
-        <Hitbox radius={0.32} height={halfHeight * 2 + 0.1} />
+        <Html center style={{ pointerEvents: "none" }}>
+          <span
+            data-testid={`container-target-${item.id}`}
+            className="block h-px w-px opacity-0"
+          />
+        </Html>
+        {process.env.NODE_ENV !== "production" && !isHeld && (
+          <Html center style={{ pointerEvents: "none" }}>
+            <span
+              data-testid={`workspace-transform-${item.id}`}
+              data-x={item.position[0]}
+              data-z={item.position[1]}
+              data-rotation-y={item.rotationY}
+              className="block h-px w-px opacity-0"
+            />
+          </Html>
+        )}
+        <Hitbox
+          radius={capability?.interactionRadius ?? 0.32}
+          height={capability?.interactionHeight ?? halfHeight * 2 + 0.1}
+        />
 
         <GrabLift isDragging={isDragging}>
           <PourTilt active={isPouring}>
@@ -1507,9 +1573,6 @@ function ContainerMesh({
           <meshBasicMaterial color="#f87171" transparent opacity={0} depthWrite={false} />
         </mesh>
 
-        {/* Stage S-1 — фокус наведения (Interaction Core), только пока не в руке */}
-        {isFocused && !isHeld && <FocusRing halfHeight={halfHeight} />}
-
         {isSelected && <RotateHandle id={item.id} />}
         {isSelected && (
           <SealHandle id={item.id} isSealed={item.isSealed} disabled={state.emergencyStop !== null} />
@@ -1528,7 +1591,7 @@ function ContainerMesh({
             </div>
           </Html>
         )}
-      </HeldObjectRig>
+      </InteractableVisualRig>
     </group>
   );
 }
@@ -1536,13 +1599,14 @@ function ContainerMesh({
 function StockBottleMesh({ bottle, isPouring }: { bottle: StockBottle; isPouring: boolean }) {
   const [hovered, setHovered] = useState(false);
   const { onPointerDown, isDragging } = useDragHandlers(bottle.id);
-  const { capability, isFocused, isHeld, heldYawOffset, placementTarget, pointerHandlers } = useInteractable(bottle.id);
+  const interaction = useInteractable(bottle.id);
+  const { capability, isHeld, pointerHandlers } = interaction;
   const substance = SUBSTANCES[bottle.substanceId];
 
   return (
     <group
       position={isHeld ? [0, 0, 0] : [bottle.position[0], 0.16, bottle.position[1]]}
-      onPointerDown={capability ? undefined : onPointerDown}
+      onPointerDown={!isHeld && capability?.legacyDragMode !== "none" ? onPointerDown : undefined}
       onPointerOver={(e: ThreeEvent<PointerEvent>) => {
         e.stopPropagation();
         setHovered(true);
@@ -1553,14 +1617,24 @@ function StockBottleMesh({ bottle, isPouring }: { bottle: StockBottle; isPouring
         pointerHandlers?.onPointerOut();
       }}
     >
-      <HeldObjectRig
-        active={isHeld}
-        handOffset={capability?.handOffset ?? [0, 0, 0]}
-        handRotation={capability?.handRotation ?? [0, 0, 0]}
-        yawOffset={heldYawOffset}
-        placementTarget={placementTarget}
+      <InteractableVisualRig
+        id={bottle.id}
+        interaction={interaction}
+        focusHalfHeight={0.16}
+        focusRadius={capability?.interactionRadius}
       >
-        <Hitbox radius={0.17} height={0.5} />
+        {!isHeld && (
+          <Html center style={{ pointerEvents: "none" }}>
+            <span
+              data-testid={`stock-bottle-target-${bottle.id}`}
+              className="block h-px w-px opacity-0"
+            />
+          </Html>
+        )}
+        <Hitbox
+          radius={capability?.interactionRadius ?? 0.17}
+          height={capability?.interactionHeight ?? 0.5}
+        />
 
         <GrabLift isDragging={isDragging}>
           <PourTilt active={isPouring}>
@@ -1587,9 +1661,6 @@ function StockBottleMesh({ bottle, isPouring }: { bottle: StockBottle; isPouring
           </PourTilt>
         </GrabLift>
 
-        {/* Stage S-1 — фокус наведения (Interaction Core), только пока не в руке */}
-        {isFocused && !isHeld && <FocusRing halfHeight={0.16} radius={0.2} />}
-
         {hovered && !isDragging && !isHeld && (
           <Html position={[0, 0.35, 0]} center distanceFactor={9} style={{ pointerEvents: "none" }}>
             <div className="pointer-events-none whitespace-nowrap rounded-md border border-white/10 bg-slate-900/90 px-2 py-1 text-xs text-slate-100">
@@ -1597,7 +1668,7 @@ function StockBottleMesh({ bottle, isPouring }: { bottle: StockBottle; isPouring
             </div>
           </Html>
         )}
-      </HeldObjectRig>
+      </InteractableVisualRig>
     </group>
   );
 }
@@ -1619,6 +1690,8 @@ useGLTF.preload("/models/chemistry/bunsen-burner.glb");
 function BurnerMesh({ tool }: { tool: ToolItem }) {
   const { toggleBurner } = useChemistryWorkspace();
   const { onPointerDown, isDragging } = useDragHandlers(tool.id);
+  const interaction = useInteractable(tool.id);
+  const { capability, isHeld, pointerHandlers } = interaction;
   const [hovered, setHovered] = useState(false);
   const flameRef = useRef<THREE.Mesh>(null);
   // Stage C-3: настоящая GLB-модель горелки (Poly Haven "Bunsen Burner",
@@ -1635,16 +1708,21 @@ function BurnerMesh({ tool }: { tool: ToolItem }) {
 
   return (
     <group
-      position={[tool.position[0], 0, tool.position[1]]}
-      rotation={[0, tool.rotationY, 0]}
-      onPointerDown={onPointerDown}
+      position={isHeld ? [0, 0, 0] : [tool.position[0], 0, tool.position[1]]}
+      rotation={isHeld ? [0, 0, 0] : [0, tool.rotationY, 0]}
+      onPointerDown={!isHeld && capability?.legacyDragMode !== "none" ? onPointerDown : undefined}
       onPointerOver={(e: ThreeEvent<PointerEvent>) => {
         e.stopPropagation();
         setHovered(true);
+        pointerHandlers?.onPointerOver();
       }}
-      onPointerOut={() => setHovered(false)}
+      onPointerOut={() => {
+        setHovered(false);
+        pointerHandlers?.onPointerOut();
+      }}
     >
-      <Hitbox radius={0.3} height={0.5} />
+      <InteractableVisualRig id={tool.id} interaction={interaction} focusHalfHeight={0} focusRadius={capability?.interactionRadius}>
+      <Hitbox radius={capability?.interactionRadius ?? 0.3} height={capability?.interactionHeight ?? 0.5} />
       <GrabLift isDragging={isDragging}>
         <primitive object={model} />
         {/* клик-таргет + всегда видимый индикатор вкл/выкл — та же логика,
@@ -1669,7 +1747,11 @@ function BurnerMesh({ tool }: { tool: ToolItem }) {
             дефис в имени пропса как вложенный путь (data.testid) и падает на
             mesh.data === undefined; реальный testid — через невидимый Html-маркер */}
         <Html position={[0, 0.03, 0]} center distanceFactor={9} style={{ pointerEvents: "none" }}>
-          <div data-testid={`burner-toggle-${tool.id}`} style={{ width: 1, height: 1 }} />
+          <div
+            data-testid={`burner-toggle-${tool.id}`}
+            data-is-on={tool.isOn ? "true" : "false"}
+            style={{ width: 1, height: 1 }}
+          />
         </Html>
         <mesh ref={flameRef} position={[0, 0.36, 0]} scale={0.001}>
           <coneGeometry args={[0.06, 0.2, 12]} />
@@ -1677,26 +1759,59 @@ function BurnerMesh({ tool }: { tool: ToolItem }) {
         </mesh>
         {tool.isOn && <pointLight position={[0, 0.34, 0]} color="#f97316" intensity={1.2} distance={2} decay={2} />}
       </GrabLift>
-      {hovered && !isDragging && <ToolHoverLabel tool={tool} y={0.5} />}
+      {hovered && !isDragging && !isHeld && <ToolHoverLabel tool={tool} y={0.5} />}
+      </InteractableVisualRig>
+    </group>
+  );
+}
+
+function PlacementDiagnosticMarkers() {
+  if (process.env.NODE_ENV === "production") return null;
+  return (
+    <group>
+      {([
+        [0.5, 0.7],
+        [-0.5, -0.7],
+        [-3.5, 0.5],
+        [3.5, 0.4],
+      ] as const).map(([x, z], index) => (
+        <Html key={`${x}:${z}`} position={[x, 0.03, z]} center style={{ pointerEvents: "none" }}>
+          <span data-testid={`placement-marker-table-free-${index}`} className="block h-px w-px opacity-0" />
+        </Html>
+      ))}
+      <Html position={[0.5, 0.03, 1.9]} center style={{ pointerEvents: "none" }}>
+        <span data-testid="placement-marker-table-invalid" className="block h-px w-px opacity-0" />
+      </Html>
     </group>
   );
 }
 
 function StandMesh({ tool }: { tool: ToolItem }) {
   const { onPointerDown, isDragging } = useDragHandlers(tool.id);
+  const interaction = useInteractable(tool.id);
+  const { capability, isHeld, pointerHandlers } = interaction;
   const [hovered, setHovered] = useState(false);
   return (
     <group
-      position={[tool.position[0], 0, tool.position[1]]}
-      rotation={[0, tool.rotationY, 0]}
-      onPointerDown={onPointerDown}
+      position={isHeld ? [0, 0, 0] : [tool.position[0], 0, tool.position[1]]}
+      rotation={isHeld ? [0, 0, 0] : [0, tool.rotationY, 0]}
+      onPointerDown={!isHeld && capability?.legacyDragMode !== "none" ? onPointerDown : undefined}
       onPointerOver={(e: ThreeEvent<PointerEvent>) => {
         e.stopPropagation();
         setHovered(true);
+        pointerHandlers?.onPointerOver();
       }}
-      onPointerOut={() => setHovered(false)}
+      onPointerOut={() => {
+        setHovered(false);
+        pointerHandlers?.onPointerOut();
+      }}
     >
-      <Hitbox radius={0.28} height={1.1} />
+      <InteractableVisualRig id={tool.id} interaction={interaction} focusHalfHeight={0} focusRadius={capability?.interactionRadius}>
+      {process.env.NODE_ENV !== "production" && !isHeld && (
+        <Html position={[0.22, 0.85, 0]} center style={{ pointerEvents: "none" }}>
+          <span data-testid={`stand-visual-target-${tool.id}`} className="block h-px w-px opacity-0" />
+        </Html>
+      )}
       <GrabLift isDragging={isDragging}>
         <mesh position={[0.22, 0.5, 0]} castShadow>
           <cylinderGeometry args={[0.02, 0.02, 1.0, 8]} />
@@ -1711,7 +1826,8 @@ function StandMesh({ tool }: { tool: ToolItem }) {
           <meshStandardMaterial color="#a1a1aa" metalness={0.8} roughness={0.25} />
         </mesh>
       </GrabLift>
-      {hovered && !isDragging && <ToolHoverLabel tool={tool} y={1.05} />}
+      {hovered && !isDragging && !isHeld && <ToolHoverLabel tool={tool} y={1.05} />}
+      </InteractableVisualRig>
     </group>
   );
 }
@@ -1733,19 +1849,26 @@ const PIPETTE_TUBE_GEOMETRY = latheGeometry(
 
 function PipetteMesh({ tool }: { tool: ToolItem }) {
   const { onPointerDown, isDragging } = useDragHandlers(tool.id);
+  const interaction = useInteractable(tool.id);
+  const { capability, isHeld, pointerHandlers } = interaction;
   const [hovered, setHovered] = useState(false);
   return (
     <group
-      position={[tool.position[0], 0.05, tool.position[1]]}
-      rotation={[0, tool.rotationY, 0]}
-      onPointerDown={onPointerDown}
+      position={isHeld ? [0, 0, 0] : [tool.position[0], 0.05, tool.position[1]]}
+      rotation={isHeld ? [0, 0, 0] : [0, tool.rotationY, 0]}
+      onPointerDown={!isHeld && capability?.legacyDragMode !== "none" ? onPointerDown : undefined}
       onPointerOver={(e: ThreeEvent<PointerEvent>) => {
         e.stopPropagation();
         setHovered(true);
+        pointerHandlers?.onPointerOver();
       }}
-      onPointerOut={() => setHovered(false)}
+      onPointerOut={() => {
+        setHovered(false);
+        pointerHandlers?.onPointerOut();
+      }}
     >
-      <Hitbox radius={0.12} height={0.55} />
+      <InteractableVisualRig id={tool.id} interaction={interaction} focusHalfHeight={0.05} focusRadius={capability?.interactionRadius}>
+      <Hitbox radius={capability?.interactionRadius ?? 0.12} height={capability?.interactionHeight ?? 0.55} />
       <GrabLift isDragging={isDragging}>
         <mesh castShadow geometry={PIPETTE_TUBE_GEOMETRY}>
           <meshPhysicalMaterial
@@ -1768,7 +1891,8 @@ function PipetteMesh({ tool }: { tool: ToolItem }) {
           <meshStandardMaterial color="#dc2626" roughness={0.55} />
         </mesh>
       </GrabLift>
-      {hovered && !isDragging && <ToolHoverLabel tool={tool} y={0.6} />}
+      {hovered && !isDragging && !isHeld && <ToolHoverLabel tool={tool} y={0.6} />}
+      </InteractableVisualRig>
     </group>
   );
 }
@@ -1776,21 +1900,28 @@ function PipetteMesh({ tool }: { tool: ToolItem }) {
 function ThermometerMesh({ tool }: { tool: ToolItem }) {
   const { state } = useChemistryWorkspace();
   const { onPointerDown, isDragging } = useDragHandlers(tool.id);
+  const interaction = useInteractable(tool.id);
+  const { capability, isHeld, pointerHandlers } = interaction;
   const [hovered, setHovered] = useState(false);
   const active = state.containers.find((c) => c.id === state.activeContainerId);
 
   return (
     <group
-      position={[tool.position[0], 0.05, tool.position[1]]}
-      rotation={[0, tool.rotationY, 0]}
-      onPointerDown={onPointerDown}
+      position={isHeld ? [0, 0, 0] : [tool.position[0], 0.05, tool.position[1]]}
+      rotation={isHeld ? [0, 0, 0] : [0, tool.rotationY, 0]}
+      onPointerDown={!isHeld && capability?.legacyDragMode !== "none" ? onPointerDown : undefined}
       onPointerOver={(e: ThreeEvent<PointerEvent>) => {
         e.stopPropagation();
         setHovered(true);
+        pointerHandlers?.onPointerOver();
       }}
-      onPointerOut={() => setHovered(false)}
+      onPointerOut={() => {
+        setHovered(false);
+        pointerHandlers?.onPointerOut();
+      }}
     >
-      <Hitbox radius={0.1} height={0.5} />
+      <InteractableVisualRig id={tool.id} interaction={interaction} focusHalfHeight={0.05} focusRadius={capability?.interactionRadius}>
+      <Hitbox radius={capability?.interactionRadius ?? 0.1} height={capability?.interactionHeight ?? 0.5} />
       <GrabLift isDragging={isDragging}>
         <mesh castShadow>
           <cylinderGeometry args={[0.015, 0.015, 0.45, 10]} />
@@ -1810,7 +1941,50 @@ function ThermometerMesh({ tool }: { tool: ToolItem }) {
           </div>
         </Html>
       </GrabLift>
-      {hovered && !isDragging && <ToolHoverLabel tool={tool} y={0.5} />}
+      {hovered && !isDragging && !isHeld && <ToolHoverLabel tool={tool} y={0.5} />}
+      </InteractableVisualRig>
+    </group>
+  );
+}
+
+function GlassRodMesh({ tool }: { tool: ToolItem }) {
+  const { onPointerDown, isDragging } = useDragHandlers(tool.id);
+  const interaction = useInteractable(tool.id);
+  const { capability, isHeld, pointerHandlers } = interaction;
+  const [hovered, setHovered] = useState(false);
+
+  return (
+    <group
+      position={isHeld ? [0, 0, 0] : [tool.position[0], 0.05, tool.position[1]]}
+      rotation={isHeld ? [0, 0, 0] : [0, tool.rotationY, 0]}
+      onPointerDown={!isHeld && capability?.legacyDragMode !== "none" ? onPointerDown : undefined}
+      onPointerOver={(e: ThreeEvent<PointerEvent>) => {
+        e.stopPropagation();
+        setHovered(true);
+        pointerHandlers?.onPointerOver();
+      }}
+      onPointerOut={() => {
+        setHovered(false);
+        pointerHandlers?.onPointerOut();
+      }}
+    >
+      <InteractableVisualRig id={tool.id} interaction={interaction} focusHalfHeight={0.05} focusRadius={capability?.interactionRadius}>
+        <Hitbox radius={capability?.interactionRadius ?? 0.14} height={capability?.interactionHeight ?? 0.62} />
+        <GrabLift isDragging={isDragging}>
+          <mesh castShadow>
+            <cylinderGeometry args={[0.012, 0.012, 0.58, 12]} />
+            <meshPhysicalMaterial
+              color={hovered ? "#f8fafc" : "#dbeafe"}
+              transparent
+              opacity={0.5}
+              roughness={0.1}
+              transmission={0.75}
+              thickness={0.015}
+            />
+          </mesh>
+        </GrabLift>
+        {hovered && !isDragging && !isHeld && <ToolHoverLabel tool={tool} y={0.65} />}
+      </InteractableVisualRig>
     </group>
   );
 }
@@ -1818,22 +1992,29 @@ function ThermometerMesh({ tool }: { tool: ToolItem }) {
 function ScaleMesh({ tool }: { tool: ToolItem }) {
   const { state } = useChemistryWorkspace();
   const { onPointerDown, isDragging } = useDragHandlers(tool.id);
+  const interaction = useInteractable(tool.id);
+  const { capability, isHeld, pointerHandlers } = interaction;
   const [hovered, setHovered] = useState(false);
   const active = state.containers.find((c) => c.id === state.activeContainerId);
   const massG = active ? totalMassG(active.data) : 0;
 
   return (
     <group
-      position={[tool.position[0], 0, tool.position[1]]}
-      rotation={[0, tool.rotationY, 0]}
-      onPointerDown={onPointerDown}
+      position={isHeld ? [0, 0, 0] : [tool.position[0], 0, tool.position[1]]}
+      rotation={isHeld ? [0, 0, 0] : [0, tool.rotationY, 0]}
+      onPointerDown={!isHeld && capability?.legacyDragMode !== "none" ? onPointerDown : undefined}
       onPointerOver={(e: ThreeEvent<PointerEvent>) => {
         e.stopPropagation();
         setHovered(true);
+        pointerHandlers?.onPointerOver();
       }}
-      onPointerOut={() => setHovered(false)}
+      onPointerOut={() => {
+        setHovered(false);
+        pointerHandlers?.onPointerOut();
+      }}
     >
-      <Hitbox radius={0.35} height={0.3} />
+      <InteractableVisualRig id={tool.id} interaction={interaction} focusHalfHeight={0} focusRadius={capability?.interactionRadius}>
+      <Hitbox radius={capability?.interactionRadius ?? 0.35} height={capability?.interactionHeight ?? 0.3} />
       <GrabLift isDragging={isDragging}>
         <mesh castShadow>
           <boxGeometry args={[0.5, 0.08, 0.4]} />
@@ -1849,7 +2030,8 @@ function ScaleMesh({ tool }: { tool: ToolItem }) {
           </div>
         </Html>
       </GrabLift>
-      {hovered && !isDragging && <ToolHoverLabel tool={tool} y={0.35} />}
+      {hovered && !isDragging && !isHeld && <ToolHoverLabel tool={tool} y={0.35} />}
+      </InteractableVisualRig>
     </group>
   );
 }
@@ -1914,10 +2096,60 @@ function DebugOverlay({
 
 const HAZARD_TICK_INTERVAL_S = 0.4;
 
+type InteractableBinding = ReturnType<typeof useInteractable>;
+
+// Единственная визуальная обёртка Interaction Core для всех переносимых
+// renderer-семейств. HeldObjectRig и FocusRing существуют ровно здесь —
+// сосуды, бутылки и инструменты не копируют механику удержания/фокуса.
+function InteractableVisualRig({
+  id,
+  interaction,
+  focusHalfHeight,
+  focusRadius,
+  children,
+}: {
+  id: string;
+  interaction: InteractableBinding;
+  focusHalfHeight: number;
+  focusRadius?: number;
+  children: React.ReactNode;
+}) {
+  const { capability, isFocused, isHeld, heldYawOffset, placementTarget, blockedReason } = interaction;
+  return (
+    <HeldObjectRig
+      active={isHeld}
+      handOffset={capability?.handOffset ?? [0, 0, 0]}
+      handRotation={capability?.handRotation ?? [0, 0, 0]}
+      yawOffset={heldYawOffset}
+      placementTarget={placementTarget}
+    >
+      <HeldRaycastGate disabled={isHeld}>
+      {process.env.NODE_ENV !== "production" && !isHeld && (
+        <Html
+          position={[0, (capability?.interactionHeight ?? 0.5) * 0.25, 0]}
+          center
+          style={{ pointerEvents: "none" }}
+        >
+          <span
+            data-testid={`interactable-target-${id}`}
+            data-focused={isFocused ? "true" : "false"}
+            data-held={isHeld ? "true" : "false"}
+            data-blocked-reason={blockedReason ?? "none"}
+            className="block h-px w-px opacity-0"
+          />
+        </Html>
+      )}
+      {children}
+      {isFocused && !isHeld && <FocusRing halfHeight={focusHalfHeight} radius={focusRadius} />}
+      </HeldRaycastGate>
+    </HeldObjectRig>
+  );
+}
+
 function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer, debugMode }: ChemistrySceneProps) {
   const { state, heatTick, hazardTick } = useChemistryWorkspace();
   const { draggingId } = useChemistryDrag();
-  const { heldId, aimPoint, heldYawOffset, setPlacementCandidate } = useChemistryInteraction();
+  const { focusedId, heldId, aimPoint, heldYawOffset, setPlacementCandidate } = useChemistryInteraction();
   const hazardAccumRef = useRef(0);
 
   useFrame((_, delta) => {
@@ -1980,27 +2212,32 @@ function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer
   const placementCandidate = useMemo(() => {
     if (!heldId || !aimPoint) return null;
 
+    const heldCapability = getInteractable(heldId);
+    if (!heldCapability?.canBePlaced || !heldCapability.allowedSurfaces.includes("table")) return null;
+
     const heldContainer = state.containers.find((c) => c.id === heldId);
     const heldBottle = state.stockBottles.find((b) => b.id === heldId);
     const heldTool = state.tools.find((t) => t.id === heldId);
-    const movingRadius = heldContainer
-      ? getFootprintRadius(heldContainer.kind)
-      : heldBottle
-        ? STOCK_BOTTLE_FOOTPRINT_RADIUS
-        : heldTool
-          ? getFootprintRadius(heldTool.kind)
-          : getFootprintRadius(heldId);
+    if (!heldContainer && !heldBottle && !heldTool) return null;
+    const movingRadius = heldCapability.placementFootprint.radius;
+
+    const radiusFor = (id: string, fallback: number) =>
+      getInteractable(id)?.placementFootprint.radius ?? fallback;
 
     const occupants: PlacementOccupant[] = [
-      ...state.containers.filter((c) => c.id !== heldId).map((c) => ({ position: c.position, radius: getFootprintRadius(c.kind) })),
-      ...state.tools.filter((t) => t.id !== heldId).map((t) => ({ position: t.position, radius: getFootprintRadius(t.kind) })),
+      ...state.containers
+        .filter((c) => c.id !== heldId)
+        .map((c) => ({ position: c.position, radius: radiusFor(c.id, getFootprintRadius(c.kind)) })),
+      ...state.tools
+        .filter((t) => t.id !== heldId)
+        .map((t) => ({ position: t.position, radius: radiusFor(t.id, getFootprintRadius(t.kind)) })),
       ...state.stockBottles
         .filter((b) => b.id !== heldId)
-        .map((b) => ({ position: b.position, radius: STOCK_BOTTLE_FOOTPRINT_RADIUS })),
+        .map((b) => ({ position: b.position, radius: radiusFor(b.id, STOCK_BOTTLE_FOOTPRINT_RADIUS) })),
     ];
 
     const valid = isPlacementValid(aimPoint, movingRadius, TABLE_SURFACE, occupants);
-    return valid ? { position: aimPoint, rotationY: heldYawOffset } : null;
+    return valid ? { position: aimPoint, rotationY: heldYawOffset, surface: "table" as const } : null;
   }, [heldId, aimPoint, heldYawOffset, state.containers, state.tools, state.stockBottles]);
 
   useEffect(() => {
@@ -2010,6 +2247,19 @@ function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer
   return (
     <ChemistryDebugContext.Provider value={debugMode}>
       <group>
+        <PlacementCameraShortcut />
+        <Html position={[0, -0.4, 2.3]} center style={{ pointerEvents: "none" }}>
+          <span
+            data-testid="chemistry-interaction-state"
+            data-dragging-id={draggingId ?? "none"}
+            data-held-id={heldId ?? "none"}
+            data-focused-id={focusedId ?? "none"}
+            data-placement-valid={placementCandidate ? "true" : "false"}
+            data-aim-x={aimPoint?.[0] ?? "none"}
+            data-aim-z={aimPoint?.[1] ?? "none"}
+            className="block h-px w-px opacity-0"
+          />
+        </Html>
         <directionalLight position={[2, 4, 3]} intensity={0.4} color="#fff7ed" />
         <pointLight position={[-2, 2.5, 2]} intensity={0.2} color="#e0f2fe" distance={8} decay={2} />
         {/* Stage C-2: потолочные светильники — реальный свет от тех же
@@ -2023,6 +2273,7 @@ function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer
         <Room />
         <SinkCounter />
         <Workbench />
+        <PlacementDiagnosticMarkers />
 
         {state.containers.map((c) => (
           <ContainerMesh
@@ -2041,6 +2292,7 @@ function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer
           if (t.kind === "stand") return <StandMesh key={t.id} tool={t} />;
           if (t.kind === "pipette") return <PipetteMesh key={t.id} tool={t} />;
           if (t.kind === "thermometer") return <ThermometerMesh key={t.id} tool={t} />;
+          if (t.kind === "glass_rod") return <GlassRodMesh key={t.id} tool={t} />;
           if (t.kind === "scale") return <ScaleMesh key={t.id} tool={t} />;
           return null;
         })}
@@ -2470,6 +2722,17 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
         <ChemistryDragProvider>
         <ChemistryInteractionProvider
           onConfirmPlacement={(id, position, rotationY) => setItemTransform(id, position, rotationY)}
+          getInteractableState={(id) => {
+            const container = state.containers.find((item) => item.id === id);
+            const bottle = state.stockBottles.find((item) => item.id === id);
+            const tool = state.tools.find((item) => item.id === id);
+            return {
+              rotationY: container?.rotationY ?? bottle?.rotationY ?? tool?.rotationY,
+              isOn: tool?.isOn,
+              temperatureC: tool?.temperatureC,
+              hasActiveFlame: tool?.isOn,
+            };
+          }}
         >
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
             <div className="flex-1 rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">

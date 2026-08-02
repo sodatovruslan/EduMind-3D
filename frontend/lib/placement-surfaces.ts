@@ -82,6 +82,7 @@ export const FOOTPRINT_RADIUS_BY_KIND: Record<string, number> = {
   stand: 0.28,
   pipette: 0.12,
   thermometer: 0.1,
+  glass_rod: 0.1,
   scale: 0.35,
 };
 

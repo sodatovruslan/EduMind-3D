@@ -112,6 +112,33 @@ describe("Pour (реальный pour + сохранение массы)", () =>
 });
 
 describe("Heating (реальный heatTick + isContainerOnStand)", () => {
+  it("перемещённый штатив задаёт новую heating proximity без привязки к исходной позиции", () => {
+    const { result } = renderHook(() => useChemistryWorkspace(), { wrapper: workspaceWrapper });
+    const originalStand = result.current.state.tools.find((tool) => tool.id === "stand-1")!;
+    const movedStandPosition: [number, number] = [-2.8, 0.8];
+
+    act(() => result.current.setItemTransform("stand-1", movedStandPosition, originalStand.rotationY));
+    act(() => result.current.moveItem("beaker-1", originalStand.position));
+    expect(
+      isContainerOnStand(
+        result.current.state.containers.find((container) => container.id === "beaker-1")!,
+        result.current.state.tools
+      )
+    ).toBe(false);
+
+    act(() => result.current.moveItem("beaker-1", movedStandPosition));
+    expect(
+      isContainerOnStand(
+        result.current.state.containers.find((container) => container.id === "beaker-1")!,
+        result.current.state.tools
+      )
+    ).toBe(true);
+
+    act(() => result.current.toggleBurner("burner-1"));
+    act(() => result.current.heatTick(12));
+    expect(result.current.state.containers.find((container) => container.id === "beaker-1")!.data.temperatureC).toBe(32);
+  });
+
   it("нагревает только сосуд, реально стоящий на штативе, и только если горелка включена", () => {
     const { result } = renderHook(() => useChemistryWorkspace(), { wrapper: workspaceWrapper });
 

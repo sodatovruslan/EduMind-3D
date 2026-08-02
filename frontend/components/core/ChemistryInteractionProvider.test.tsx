@@ -8,6 +8,7 @@ import {
   useInteractable,
 } from "./ChemistryInteractionProvider";
 import { ChemistryWorkspaceProvider, useChemistryWorkspace } from "./ChemistryWorkspaceProvider";
+import { PORTABLE_CHEMISTRY_IDS } from "../../lib/interactables";
 
 /**
  * Stage S-1 — Focus & Pickup Core. Проверяет саму state machine
@@ -93,8 +94,8 @@ describe("ChemistryInteractionProvider — state machine (idle/focused/held)", (
   it("предмет без capability canBeHeld не берется (pickUp — no-op)", () => {
     const { result } = renderHook(() => useChemistryInteraction(), { wrapper: interactionWrapper });
 
-    act(() => result.current.setFocused("test-tube-1")); // не в INTERACTABLE_REGISTRY
-    act(() => result.current.pickUp("test-tube-1"));
+    act(() => result.current.setFocused("workbench")); // стационарный объект не в registry
+    act(() => result.current.pickUp("workbench"));
     expect(result.current.heldId).toBeNull();
     expect(result.current.phase).toBe("focused");
   });
@@ -193,7 +194,7 @@ describe("ChemistryInteractionProvider — клавиатура", () => {
 
 describe("useInteractable — единая точка входа для компонентов сцены", () => {
   it("возвращает capability=null для предмета вне реестра — компонент должен продолжать использовать старый drag", () => {
-    const { result } = renderHook(() => useInteractable("test-tube-1"), { wrapper: interactionWrapper });
+    const { result } = renderHook(() => useInteractable("workbench"), { wrapper: interactionWrapper });
     expect(result.current.capability).toBeNull();
     expect(result.current.pointerHandlers).toBeUndefined();
   });
@@ -257,6 +258,134 @@ describe("Interaction Core не трогает домен (ChemistryWorkspacePro
   });
 });
 
+describe("Stage S-2.5 — полный Interaction/Placement coverage", () => {
+  function RuntimePlacementBridge({ children }: { children: ReactNode }) {
+    const workspace = useChemistryWorkspace();
+    return (
+      <ChemistryInteractionProvider
+        onConfirmPlacement={(id, position, rotationY) => workspace.setItemTransform(id, position, rotationY)}
+        getInteractableState={(id) => {
+          const container = workspace.state.containers.find((item) => item.id === id);
+          const bottle = workspace.state.stockBottles.find((item) => item.id === id);
+          const tool = workspace.state.tools.find((item) => item.id === id);
+          return {
+            rotationY: container?.rotationY ?? bottle?.rotationY ?? tool?.rotationY,
+            isOn: tool?.isOn,
+            temperatureC: tool?.temperatureC,
+            hasActiveFlame: tool?.isOn,
+          };
+        }}
+      >
+        {children}
+      </ChemistryInteractionProvider>
+    );
+  }
+
+  function coverageWrapper({ children }: { children: ReactNode }) {
+    return (
+      <ChemistryWorkspaceProvider>
+        <RuntimePlacementBridge>{children}</RuntimePlacementBridge>
+      </ChemistryWorkspaceProvider>
+    );
+  }
+
+  function findTransform(state: ReturnType<typeof useChemistryWorkspace>["state"], id: string) {
+    const item =
+      state.containers.find((entry) => entry.id === id) ??
+      state.stockBottles.find((entry) => entry.id === id) ??
+      state.tools.find((entry) => entry.id === id);
+    if (!item) throw new Error(`Missing workspace item: ${id}`);
+    return { position: [...item.position] as [number, number], rotationY: item.rotationY };
+  }
+
+  it.each(PORTABLE_CHEMISTRY_IDS)(
+    "%s: registry → Focused → Held → table placement → pickup → Escape",
+    (id) => {
+      const { result } = renderHook(
+        () => ({
+          workspace: useChemistryWorkspace(),
+          interaction: useChemistryInteraction(),
+          interactable: useInteractable(id),
+        }),
+        { wrapper: coverageWrapper }
+      );
+
+      const original = findTransform(result.current.workspace.state, id);
+      expect(result.current.interactable.capability).not.toBeNull();
+
+      act(() => result.current.interaction.setFocused(id));
+      expect(result.current.interaction.phase).toBe("focused");
+      expect(result.current.interactable.isFocused).toBe(true);
+
+      act(() => result.current.interaction.pickUp(id));
+      expect(result.current.interaction.phase).toBe("held");
+      expect(result.current.interaction.heldId).toBe(id);
+
+      const placed = { position: [4, 1.5] as [number, number], rotationY: original.rotationY + 0.25 };
+      act(() =>
+        result.current.interaction.setPlacementCandidate({ ...placed, surface: "table" })
+      );
+      act(() => result.current.interaction.confirmPlacement());
+      expect(result.current.interaction.heldId).toBeNull();
+      expect(findTransform(result.current.workspace.state, id)).toEqual(placed);
+
+      act(() => result.current.interaction.setFocused(id));
+      act(() => result.current.interaction.pickUp(id));
+      act(() => result.current.interaction.rotateHeld(0.5));
+      act(() =>
+        result.current.interaction.setPlacementCandidate({
+          position: [-4, -1.5],
+          rotationY: placed.rotationY + 0.5,
+          surface: "table",
+        })
+      );
+      act(() => dispatchKey("Escape"));
+
+      expect(result.current.interaction.heldId).toBeNull();
+      expect(findTransform(result.current.workspace.state, id)).toEqual(placed);
+    }
+  );
+
+  it.each(["pipette-1", "thermometer-1", "glass-rod-1"])(
+    "%s сохраняет текущий rotationY при pickup",
+    (id) => {
+      const { result } = renderHook(
+        () => ({ workspace: useChemistryWorkspace(), interaction: useChemistryInteraction() }),
+        { wrapper: coverageWrapper }
+      );
+      const current = findTransform(result.current.workspace.state, id);
+      act(() => result.current.workspace.setItemTransform(id, current.position, 0.85));
+      act(() => result.current.interaction.setFocused(id));
+      act(() => result.current.interaction.pickUp(id));
+      expect(result.current.interaction.heldYawOffset).toBeCloseTo(0.85, 10);
+    }
+  );
+
+  it("горелка блокируется пламенем и температурой, затем снова становится доступна после остывания", () => {
+    const { result } = renderHook(
+      () => ({ workspace: useChemistryWorkspace(), interaction: useChemistryInteraction() }),
+      { wrapper: coverageWrapper }
+    );
+
+    act(() => result.current.workspace.toggleBurner("burner-1"));
+    act(() => result.current.workspace.hazardTick(1));
+    act(() => result.current.interaction.setFocused("burner-1"));
+    expect(result.current.interaction.getPickupBlockedReason("burner-1")).toBe("Сначала выключите горелку");
+    act(() => result.current.interaction.pickUp("burner-1"));
+    expect(result.current.interaction.heldId).toBeNull();
+
+    act(() => result.current.workspace.toggleBurner("burner-1"));
+    expect(result.current.interaction.getPickupBlockedReason("burner-1")).toBe("Дождитесь, пока горелка остынет");
+    act(() => result.current.interaction.pickUp("burner-1"));
+    expect(result.current.interaction.heldId).toBeNull();
+
+    act(() => result.current.workspace.hazardTick(10));
+    expect(result.current.interaction.getPickupBlockedReason("burner-1")).toBeNull();
+    act(() => result.current.interaction.pickUp("burner-1"));
+    expect(result.current.interaction.heldId).toBe("burner-1");
+  });
+});
+
 describe("ChemistryInteractionProvider — Stage S-2 (Free Placement)", () => {
   function wrapperWithConfirm(onConfirmPlacement: (id: string, position: [number, number], rotationY: number) => void) {
     return function Wrapper({ children }: { children: ReactNode }) {
@@ -271,7 +400,7 @@ describe("ChemistryInteractionProvider — Stage S-2 (Free Placement)", () => {
     act(() => result.current.setFocused("beaker-1"));
     act(() => result.current.pickUp("beaker-1"));
     act(() => result.current.rotateHeld(0.4));
-    act(() => result.current.setPlacementCandidate({ position: [1.5, -0.3], rotationY: 0.4 }));
+    act(() => result.current.setPlacementCandidate({ position: [1.5, -0.3], rotationY: 0.4, surface: "table" }));
 
     act(() => result.current.confirmPlacement());
 
@@ -304,7 +433,7 @@ describe("ChemistryInteractionProvider — Stage S-2 (Free Placement)", () => {
 
     act(() => result.current.setFocused("flask-1"));
     act(() => result.current.pickUp("flask-1"));
-    act(() => result.current.setPlacementCandidate({ position: [0.5, 0.5], rotationY: 0 }));
+    act(() => result.current.setPlacementCandidate({ position: [0.5, 0.5], rotationY: 0, surface: "table" }));
 
     act(() => dispatchKey("Escape"));
 
@@ -321,7 +450,7 @@ describe("ChemistryInteractionProvider — Stage S-2 (Free Placement)", () => {
     act(() => result.current.setFocused("beaker-1"));
     act(() => result.current.pickUp("beaker-1"));
     act(() => result.current.setAimPoint([1, 1]));
-    act(() => result.current.setPlacementCandidate({ position: [1, 1], rotationY: 0 }));
+    act(() => result.current.setPlacementCandidate({ position: [1, 1], rotationY: 0, surface: "table" }));
 
     unmount();
 
@@ -337,7 +466,7 @@ describe("ChemistryInteractionProvider — Stage S-2 (Free Placement)", () => {
 
     act(() => result.current.setFocused("beaker-1"));
     act(() => result.current.pickUp("beaker-1"));
-    act(() => result.current.setPlacementCandidate({ position: [1, 1], rotationY: 0 }));
+    act(() => result.current.setPlacementCandidate({ position: [1, 1], rotationY: 0, surface: "table" }));
     act(() => dispatchKey("e", {}, input));
 
     expect(onConfirmPlacement).not.toHaveBeenCalled();
@@ -380,7 +509,7 @@ describe("Stage S-2 — интеграция с ChemistryWorkspaceProvider (SET_
     act(() => result.current.interaction.setFocused("stock-water"));
     act(() => result.current.interaction.pickUp("stock-water"));
     act(() => result.current.interaction.rotateHeld(0.7));
-    act(() => result.current.interaction.setPlacementCandidate({ position: [2, 0], rotationY: 0.7 }));
+    act(() => result.current.interaction.setPlacementCandidate({ position: [2, 0], rotationY: 0.7, surface: "table" }));
     act(() => result.current.interaction.confirmPlacement());
 
     const after = result.current.workspace.state.stockBottles.find((b) => b.id === "stock-water")!;
@@ -401,7 +530,7 @@ describe("Stage S-2 — интеграция с ChemistryWorkspaceProvider (SET_
 
     act(() => result.current.interaction.setFocused("beaker-1"));
     act(() => result.current.interaction.pickUp("beaker-1"));
-    act(() => result.current.interaction.setPlacementCandidate({ position: [-2, -0.5], rotationY: 0 }));
+    act(() => result.current.interaction.setPlacementCandidate({ position: [-2, -0.5], rotationY: 0, surface: "table" }));
     act(() => result.current.interaction.confirmPlacement());
 
     const after = result.current.workspace.state.containers.find((c) => c.id === "beaker-1")!;
@@ -421,7 +550,7 @@ describe("Stage S-2 — интеграция с ChemistryWorkspaceProvider (SET_
     act(() => result.current.interaction.setFocused("flask-1"));
     act(() => result.current.interaction.pickUp("flask-1"));
     act(() => result.current.interaction.rotateHeld(1.1));
-    act(() => result.current.interaction.setPlacementCandidate({ position: [3, 1], rotationY: 1.1 }));
+    act(() => result.current.interaction.setPlacementCandidate({ position: [3, 1], rotationY: 1.1, surface: "table" }));
     act(() => dispatchKey("Escape"));
 
     const after = result.current.workspace.state.containers.find((c) => c.id === "flask-1")!;
@@ -438,7 +567,7 @@ describe("Stage S-2 — интеграция с ChemistryWorkspaceProvider (SET_
     // первое размещение
     act(() => result.current.interaction.setFocused("beaker-1"));
     act(() => result.current.interaction.pickUp("beaker-1"));
-    act(() => result.current.interaction.setPlacementCandidate({ position: [1.8, -1] , rotationY: 0.2 }));
+    act(() => result.current.interaction.setPlacementCandidate({ position: [1.8, -1] , rotationY: 0.2, surface: "table" }));
     act(() => result.current.interaction.confirmPlacement());
 
     // второй цикл: взяли снова и просто отменили (Escape) — должно остаться

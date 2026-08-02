@@ -30,7 +30,7 @@ import {
  * результат и диспетчеризует действия ученика (перетащить/налить/нагреть).
  */
 export type ContainerVisualKind = ContainerKind;
-export type ToolKind = "burner" | "stand" | "pipette" | "thermometer" | "scale";
+export type ToolKind = "burner" | "stand" | "pipette" | "thermometer" | "glass_rod" | "scale";
 
 export interface ContainerItem {
   id: string;
@@ -81,6 +81,10 @@ export interface EmergencyStopState {
 export type { AccidentLogEntry };
 
 const STAND_PROXIMITY_RADIUS = 0.55;
+const AMBIENT_TEMPERATURE_C = 20;
+const BURNER_HEATING_RATE_C_PER_SEC = 80;
+const BURNER_COOLING_RATE_C_PER_SEC = 18;
+const BURNER_MAX_TEMPERATURE_C = 350;
 
 // "стоит на штативе" — не отдельное поле состояния, а производное от
 // текущей позиции (совпадает со штативом в пределах небольшого радиуса).
@@ -99,6 +103,7 @@ export interface ToolItem {
   position: [number, number];
   rotationY: number;
   isOn?: boolean; // для горелки
+  temperatureC?: number; // температура корпуса горелки; для остальных инструментов не задана
 }
 
 export interface StockBottle {
@@ -299,9 +304,21 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
       let accidentLog = state.accidentLog;
       let emergencyStop = state.emergencyStop;
 
+      // Температура корпуса горелки — реальное runtime-состояние для общего
+      // pickup guard. Тот же контролируемый тик работает и при выключенной
+      // горелке, поэтому после гашения корпус постепенно остывает.
+      const thermallyUpdatedTools = state.tools.map((tool) => {
+        if (tool.kind !== "burner") return tool;
+        const current = tool.temperatureC ?? AMBIENT_TEMPERATURE_C;
+        const temperatureC = tool.isOn
+          ? Math.min(BURNER_MAX_TEMPERATURE_C, current + BURNER_HEATING_RATE_C_PER_SEC * action.dtSeconds)
+          : Math.max(AMBIENT_TEMPERATURE_C, current - BURNER_COOLING_RATE_C_PER_SEC * action.dtSeconds);
+        return { ...tool, temperatureC };
+      });
+
       const containers = state.containers.map((c) => {
         const profile = CONTAINER_PHYSICS[c.kind];
-        const hasHeatSource = isContainerOnStand(c, state.tools) && state.tools.some((t) => t.kind === "burner" && t.isOn);
+        const hasHeatSource = isContainerOnStand(c, thermallyUpdatedTools) && thermallyUpdatedTools.some((t) => t.kind === "burner" && t.isOn);
         const safetyWarnings = checkSafety({ container: c.data, firstAddedOrder: state.firstAddedOrder[c.id] });
         const reactionLogForContainer = state.reactionLog
           .filter((e) => e.containerId === c.id)
@@ -351,7 +368,9 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
 
       // аварийная остановка гасит активный нагрев ровно в тот тик, когда сработала
       const justTriggered = emergencyStop !== null && emergencyStop !== state.emergencyStop;
-      const tools = justTriggered ? state.tools.map((t) => (t.kind === "burner" ? { ...t, isOn: false } : t)) : state.tools;
+      const tools = justTriggered
+        ? thermallyUpdatedTools.map((t) => (t.kind === "burner" ? { ...t, isOn: false } : t))
+        : thermallyUpdatedTools;
 
       return {
         ...state,
@@ -386,10 +405,11 @@ function createInitialState(): WorkspaceState {
   ];
 
   const tools: ToolItem[] = [
-    { id: "burner-1", kind: "burner", position: [2.6, 1.4], rotationY: 0, isOn: false },
+    { id: "burner-1", kind: "burner", position: [2.6, 1.4], rotationY: 0, isOn: false, temperatureC: 20 },
     { id: "stand-1", kind: "stand", position: [2.6, 1.4], rotationY: 0 },
     { id: "pipette-1", kind: "pipette", position: [-2.6, 1.4], rotationY: 0 },
     { id: "thermometer-1", kind: "thermometer", position: [0, 1.4], rotationY: 0 },
+    { id: "glass-rod-1", kind: "glass_rod", position: [-1.8, 1.4], rotationY: 0 },
     { id: "scale-1", kind: "scale", position: [1.5, -0.4], rotationY: 0 },
   ];
 
