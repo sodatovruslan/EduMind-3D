@@ -6,28 +6,38 @@
 
 Обновляется по ходу работы.
 
-Последнее обновление: 2026-08-03 (Stage S-5 Real Pouring ЗАВЕРШЁН и ПОЛНОСТЬЮ ВАЛИДИРОВАН).
+Последнее обновление: 2026-08-03 (Stage S-6 AI Observation, Assessment & Teacher Report ЗАВЕРШЁН и ПОЛНОСТЬЮ ВАЛИДИРОВАН).
 
 ---
 
 ## Актуальное состояние на 2026-08-03
 
-- **HEAD (Stage S-4 Commit)**: `ffb5b3a` ("feat(chemistry): complete Stage S-4 bottle caps")
-- **Текущий этап**: **Stage S-5 Real 3D Pouring реализован, проверен и полностью готов к сдаче**.
+- **HEAD (Stage S-5 Commit)**: `653998f` ("feat(chemistry): complete Stage S-5 real held pouring")
+- **Текущий этап**: **Stage S-6 AI Observation, Assessment & Teacher Report реализован, проверен и готов к сдаче**.
 - **Проверки**:
   - `npx tsc --noEmit` — **0 ошибок** (PASS)
   - `npm run lint` — **0 предупреждений/ошибок** (PASS)
-  - `npx vitest run` — **337/337 PASSED** (PASS)
-  - `pytest -q` — **44/44 PASSED** (PASS)
-  - `npx playwright test e2e/chemistry-s5-pouring.spec.ts` — **1/1 PASSED** (PASS)
+  - `npx vitest run` — **343/343 PASSED** (PASS)
+  - `pytest -q` — **45/45 PASSED** (PASS)
+  - `npx playwright test e2e/chemistry-s6-observation.spec.ts` — **1/1 PASSED** (PASS)
   - `npm run build` — **Успешно** (PASS)
 
-### Выполненный объем Stage S-5:
-1. **Spatial 3D Geometry (`lib/pour-engine.ts`)**: расчет мировых координат `pourPointWorld` (носик источника) и `openingPointWorld` (проем цели), проверка расстояния ($\le 0.35\,\text{м}$) и угла наклона ($\ge 45^\circ$).
-2. **Динамический расход и сохранение массы**: $Q(\theta)$ плавно зависит от угла наклона. Суммарная масса и объем строго сохраняются.
-3. **Управление наклоном (клавиши Q/E)**: наклон удерживаемой бутылки/сосуда.
-4. **Доменные блокировки**: закрытая крышка (`capState === "closed"`), расстояние $> 0.35\,\text{м}$ или угол $< 45^\circ$ мгновенно останавливают наливание.
-5. **Визуализация струи**: 3D струя `LiquidStreamMesh` и плавный наклон `PourTilt`.
+### Выполненный объем Stage S-6:
+1. **Structured Discriminated Observation Event Schema (`lib/observation-logger.ts`)**:
+   - Выделены типы `ItemPickedUpEvent`, `ItemPlacedEvent`, `CabinetOpenedEvent`, `CabinetClosedEvent`, `ItemStoredEvent`, `CapOpenedEvent`, `CapClosedEvent`, `BottleTiltedEvent`, `BottleUprightedEvent`, `PourStartedEvent`, `PourCompletedEvent`, `PourBlockedEvent`, `SubstanceAddedEvent`, `HazardDetectedEvent`, `SafetyViolationEvent`, `TaskStartedEvent`, `TaskStepCompletedEvent`, `TaskCompletedEvent`.
+   - Каждое событие имеет уникальный `eventId` (`${sessionId}:${sequence}`), монотонный `sequence`, отметки времени (`occurredAt`, `monotonicMs`).
+2. **Изолированный Event Log Store (`ObservationLoggerStore`)**:
+   - Запись append-only вне React Render Loop (без лагов WebGL).
+   - Агрегация кадрового наливания без шума `pour_progress`.
+3. **Deterministic Assessment Engine (`lib/chemistry-assessment.ts`)**:
+   - Чистый расчет критериев (`task_completion`, `bottle_caps_closed`, `equipment_returned`, `safety_compliance`) и баллов (0..100).
+   - Связь критериев с точными доказательствами `evidenceEventIds`.
+   - Снапшот финального состояния `FinalWorkspaceSnapshot`.
+4. **Backend Integration & Idempotency (`backend/app/schemas/simulation.py` & `simulations.py`)**:
+   - Поле `idempotency_key` защищает от повторного сохранения результатов.
+   - Оценка `client_deterministic_v1` сохраняется безопасно.
+5. **Student Timeline & Teacher Report UI (`StudentFeedbackPanel.tsx`)**:
+   - Наглядная пошаговая хронология сессии для ученика и учительской панели.
 
 ---
 

@@ -171,24 +171,38 @@ async def complete_simulation(
     if simulation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Симуляция не найдена")
 
+    # 1. Idempotency Check
+    if payload.idempotency_key:
+        existing_query = (
+            select(LabResult)
+            .options(selectinload(LabResult.simulation))
+            .where(
+                LabResult.user_id == current_user.id,
+                LabResult.simulation_id == simulation.id,
+            )
+            .order_by(LabResult.completed_at.desc())
+        )
+        existing_result = (await db.execute(existing_query)).scalars().first()
+        if existing_result and existing_result.feedback and existing_result.feedback.get("idempotency_key") == payload.idempotency_key:
+            return existing_result
+
     expected_steps = simulation.config.get("expected_steps", [])
-    score = compute_score(payload.actions_log, expected_steps)
+    score = payload.score if payload.score is not None else compute_score(payload.actions_log, expected_steps)
+
+    feedback_payload = payload.assessment_report or {}
+    if payload.idempotency_key:
+        feedback_payload["idempotency_key"] = payload.idempotency_key
 
     lab_result = LabResult(
         user_id=current_user.id,
         simulation_id=simulation.id,
         actions_log=payload.actions_log,
         score=score,
+        feedback=feedback_payload if feedback_payload else None,
         duration_seconds=payload.duration_seconds,
     )
-    # simulation уже загружена выше — присваиваем в память, чтобы
-    # LabResultRead.simulation_title не дергал ленивую (недопустимую
-    # в async-сессии без await) подгрузку связи при сериализации ответа
     lab_result.simulation = simulation
 
     db.add(lab_result)
     await db.commit()
-    # id/completed_at — Python-side defaults (не server-generated), а сессия
-    # с expire_on_commit=False — поэтому refresh() не нужен, атрибуты и так
-    # на месте, включая вручную выставленный simulation
     return lab_result

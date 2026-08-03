@@ -20,9 +20,10 @@ import {
   type HazardLevel,
   type HazardResult,
 } from "@/lib/hazard-engine";
-import { CABINET_IDS } from "@/lib/cabinets";
+import { CABINET_IDS, getCabinet } from "@/lib/cabinets";
 import { getInteractable } from "@/lib/interactables";
 import { canStoreItemNow, findAvailableSlot, findSlotsForCabinet, getSlot, type StorageSlot } from "@/lib/storage-slots";
+import { observationLogger } from "@/lib/observation-logger";
 
 /**
  * Chemistry World — Laboratory Workspace state (Stage 5). Тот же принцип,
@@ -622,6 +623,49 @@ export function ChemistryWorkspaceProvider({ children }: { children: React.React
     [state.containers, state.stockBottles, state.tools]
   );
 
+  const toggleCabinet = useCallback(
+    (id: string) => {
+      const cab = state.cabinets.find((c) => c.id === id);
+      const cabConfig = getCabinet(id);
+      dispatch({ type: "TOGGLE_CABINET", id });
+      if (cab) {
+        if (!cab.isOpen) {
+          observationLogger.appendEvent("cabinet_opened", "workspace", {
+            cabinetId: id,
+            cabinetName: cabConfig?.displayName ?? "Шкаф",
+          });
+        } else {
+          observationLogger.appendEvent("cabinet_closed", "workspace", {
+            cabinetId: id,
+            cabinetName: cabConfig?.displayName ?? "Шкаф",
+          });
+        }
+      }
+    },
+    [state.cabinets]
+  );
+
+  const toggleBottleCap = useCallback(
+    (id: string) => {
+      const bottle = state.stockBottles.find((b) => b.id === id);
+      dispatch({ type: "TOGGLE_BOTTLE_CAP", id });
+      if (bottle) {
+        if (bottle.capState === "closed") {
+          observationLogger.appendEvent("cap_opened", "workspace", {
+            objectId: id,
+            bottleName: bottle.substanceId,
+          });
+        } else {
+          observationLogger.appendEvent("cap_closed", "workspace", {
+            objectId: id,
+            bottleName: bottle.substanceId,
+          });
+        }
+      }
+    },
+    [state.stockBottles]
+  );
+
   const storeItemInCabinet = useCallback(
     (id: string, cabinetId: string): boolean => {
       const cabinet = state.cabinets.find((entry) => entry.id === cabinetId);
@@ -636,10 +680,47 @@ export function ChemistryWorkspaceProvider({ children }: { children: React.React
         elevation: slot.elevation,
         storageSlotId: slot.id,
       });
+      observationLogger.appendEvent("item_stored", "workspace", {
+        objectId: id,
+        cabinetId,
+        slotId: slot.id,
+      });
       return true;
     },
     [findAvailableStorageSlot, state.cabinets]
   );
+
+  const pourFromStockBottle = useCallback(
+    (bottleId: string, targetId: string, grams: number) => {
+      const bottle = state.stockBottles.find((b) => b.id === bottleId);
+      if (bottle && bottle.capState === "closed") {
+        observationLogger.appendEvent("pour_blocked", "workspace", {
+          sourceId: bottleId,
+          targetId,
+          reasonCode: "cap_closed",
+          details: "Крышка бутылки закрыта",
+        });
+        return;
+      }
+      dispatch({ type: "POUR_FROM_STOCK", bottleId, targetId, grams });
+      if (bottle) {
+        observationLogger.handlePourProgress(bottleId, targetId, bottle.substanceId, grams, 0.2, Math.PI / 3);
+      }
+    },
+    [state.stockBottles]
+  );
+
+  const addSubstanceToContainer = useCallback((containerId: string, substanceId: string, grams: number) => {
+    dispatch({ type: "ADD_SUBSTANCE", containerId, substanceId, grams });
+    const target = state.containers.find((c) => c.id === containerId);
+    const existing = target?.data.contents.find((c) => c.substanceId === substanceId)?.grams ?? 0;
+    observationLogger.appendEvent("substance_added", "workspace", {
+      targetContainerId: containerId,
+      substanceId,
+      addedGrams: grams,
+      newTotalGrams: existing + grams,
+    });
+  }, [state.containers]);
 
   const value: WorkspaceContextValue = {
     state,

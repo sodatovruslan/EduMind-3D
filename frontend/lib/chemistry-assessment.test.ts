@@ -1,111 +1,188 @@
-import { describe, expect, it } from "vitest";
-import { assessExperiment, type AssessmentInput } from "./chemistry-assessment";
+// @vitest-environment jsdom
+import { describe, expect, it, beforeEach } from "vitest";
+import { computeDeterministicAssessment, type FinalWorkspaceSnapshot } from "./chemistry-assessment";
+import { observationLogger } from "./observation-logger";
+import { teacherReportSyncManager } from "./teacher-report-sync";
 
-function baseInput(overrides: Partial<AssessmentInput> = {}): AssessmentInput {
-  return {
-    totalSteps: 8,
-    stepsCompleted: 8,
-    attempts: 5,
-    hintsUsed: 0,
-    safetyWarningCodesEncountered: [],
-    hazardLevelsEncountered: ["none"],
-    isComplete: true,
-    conclusionText: "",
-    mode: "guided",
-    ...overrides,
-  };
-}
-
-describe("chemistry-assessment — детерминированность", () => {
-  it("одинаковые входы дают одинаковый результат (никакого Math.random)", () => {
-    const input = baseInput();
-    expect(assessExperiment(input)).toEqual(assessExperiment(input));
-  });
-});
-
-describe("chemistry-assessment — completion", () => {
-  it("100 баллов за завершение, если isComplete=true", () => {
-    const report = assessExperiment(baseInput({ isComplete: true }));
-    expect(report.completion.score).toBe(100);
+describe("Stage S-6 — Evidence Completeness & Assessment Rigor Tests", () => {
+  beforeEach(() => {
+    observationLogger.resetSession();
+    teacherReportSyncManager.clearAll();
   });
 
-  it("пропорционально пройденным шагам, если не завершено", () => {
-    const report = assessExperiment(baseInput({ isComplete: false, stepsCompleted: 4, totalSteps: 8 }));
-    expect(report.completion.score).toBe(50);
-  });
-});
+  it("1. Passed criterion with empty evidence is rejected and converted to incomplete", () => {
+    observationLogger.initSession("test-empty-evidence", "sim-chem-1", "task-1");
 
-describe("chemistry-assessment — safety", () => {
-  it("100 баллов, если не было ни одного реального предупреждения", () => {
-    const report = assessExperiment(baseInput({ safetyWarningCodesEncountered: [], hazardLevelsEncountered: ["none"] }));
-    expect(report.safety.score).toBe(100);
-  });
+    const snapshot: FinalWorkspaceSnapshot = {
+      containers: [],
+      stockBottles: [{ id: "stock-water", substanceId: "water", remainingGrams: 500, capState: "closed", storageSlotId: "slot-1" }],
+      cabinets: [],
+      safetyViolationsEncountered: [],
+      taskCompleted: true,
+    };
 
-  it("снижает балл за каждое реальное предупреждение Safety System", () => {
-    const clean = assessExperiment(baseInput({ safetyWarningCodesEncountered: [] }));
-    const warned = assessExperiment(baseInput({ safetyWarningCodesEncountered: ["empty_container_heated"] }));
-    expect(warned.safety.score).toBeLessThan(clean.safety.score);
-  });
+    // No events appended at all!
+    const assessment = computeDeterministicAssessment({
+      sessionId: "test-empty-evidence",
+      simulationId: "sim-chem-1",
+      taskId: "task-1",
+      mode: "guided",
+      events: [],
+      finalSnapshot: snapshot,
+      durationMs: 5000,
+      hintsUsed: 0,
+    });
 
-  it("сильнее снижает балл за реально опасные уровни Hazard Engine (не просто warning)", () => {
-    const report = assessExperiment(baseInput({ hazardLevelsEncountered: ["none", "container_rupture"] }));
-    expect(report.safety.score).toBeLessThanOrEqual(80);
-  });
-});
-
-describe("chemistry-assessment — understanding", () => {
-  it("больше подсказок -> ниже балл понимания", () => {
-    const noHints = assessExperiment(baseInput({ hintsUsed: 0 }));
-    const manyHints = assessExperiment(baseInput({ hintsUsed: 5 }));
-    expect(manyHints.understanding.score).toBeLessThan(noHints.understanding.score);
+    const taskCriterion = assessment.criteria.find((c) => c.id === "task_completion");
+    expect(taskCriterion?.status).toBe("incomplete");
+    expect(taskCriterion?.scoreAwarded).toBe(0);
   });
 
-  it("осмысленный вывод повышает балл понимания", () => {
-    const noConclusion = assessExperiment(baseInput({ conclusionText: "" }));
-    const withConclusion = assessExperiment(
-      baseInput({ conclusionText: "Температура росла линейно, пока горелка была включена." })
-    );
-    expect(withConclusion.understanding.score).toBeGreaterThanOrEqual(noConclusion.understanding.score);
-  });
-});
+  it("2. Safety compliance passed references safety_check_completed event ID", () => {
+    observationLogger.initSession("test-safety-passed", "sim-chem-1", "task-1");
 
-describe("chemistry-assessment — observationQuality", () => {
-  it("пустой вывод -> 0 баллов", () => {
-    expect(assessExperiment(baseInput({ conclusionText: "" })).observationQuality.score).toBe(0);
-  });
+    const checkEvent = observationLogger.appendEvent("safety_check_completed", "engine", {
+      violationCount: 0,
+      checkedRules: ["caps_closed", "no_hazard"],
+      finalSafetyStatus: "passed",
+      snapshotHash: "hash-123",
+    });
 
-  it("длинный содержательный вывод -> высокий балл", () => {
-    const long =
-      "Температура росла линейно до 100 градусов, после чего началось активное парообразование и агрегатное состояние сменилось на газообразное. Это подтверждает, что точка кипения воды в данных условиях действительно составляет около 100 градусов Цельсия.";
-    expect(long.length).toBeGreaterThanOrEqual(150);
-    expect(assessExperiment(baseInput({ conclusionText: long })).observationQuality.score).toBe(100);
-  });
-});
+    const snapshot: FinalWorkspaceSnapshot = {
+      containers: [],
+      stockBottles: [{ id: "stock-water", substanceId: "water", remainingGrams: 500, capState: "closed", storageSlotId: "slot-1" }],
+      cabinets: [],
+      safetyViolationsEncountered: [],
+      taskCompleted: true,
+    };
 
-describe("chemistry-assessment — correctProcedure", () => {
-  it("не штрафует за ожидаемое число действий", () => {
-    const report = assessExperiment(baseInput({ totalSteps: 8, attempts: 5 }));
-    expect(report.correctProcedure.score).toBe(100);
-  });
+    const assessment = computeDeterministicAssessment({
+      sessionId: "test-safety-passed",
+      simulationId: "sim-chem-1",
+      taskId: "task-1",
+      mode: "guided",
+      events: observationLogger.getEvents(),
+      finalSnapshot: snapshot,
+      durationMs: 5000,
+      hintsUsed: 0,
+    });
 
-  it("штрафует за лишние действия сверх ожидаемых", () => {
-    const efficient = assessExperiment(baseInput({ totalSteps: 8, attempts: 5 }));
-    const messy = assessExperiment(baseInput({ totalSteps: 8, attempts: 15 }));
-    expect(messy.correctProcedure.score).toBeLessThan(efficient.correctProcedure.score);
-  });
-});
-
-describe("chemistry-assessment — overallScore", () => {
-  it("является средним по 5 категориям", () => {
-    const report = assessExperiment(baseInput());
-    const manualAvg = Math.round(
-      (report.completion.score + report.correctProcedure.score + report.safety.score + report.understanding.score + report.observationQuality.score) / 5
-    );
-    expect(report.overallScore).toBe(manualAvg);
+    const safetyCriterion = assessment.criteria.find((c) => c.id === "safety_compliance");
+    expect(safetyCriterion?.status).toBe("passed");
+    expect(safetyCriterion?.evidenceEventIds).toContain(checkEvent.eventId);
   });
 
-  it("summary содержит реальные посчитанные числа, не выдуманные", () => {
-    const report = assessExperiment(baseInput());
-    expect(report.summary).toContain(String(report.overallScore));
+  it("3. Safety compliance failed references safety_violation event ID", () => {
+    observationLogger.initSession("test-safety-failed", "sim-chem-1", "task-1");
+
+    const violationEvent = observationLogger.appendEvent("safety_violation", "engine", {
+      violationCode: "pour_attempted_closed_cap",
+      description: "Попытка наливания при закрытой крышке",
+      severity: "warning",
+    });
+
+    const snapshot: FinalWorkspaceSnapshot = {
+      containers: [],
+      stockBottles: [{ id: "stock-water", substanceId: "water", remainingGrams: 500, capState: "open", storageSlotId: null }],
+      cabinets: [],
+      safetyViolationsEncountered: ["pour_attempted_closed_cap"],
+      taskCompleted: false,
+    };
+
+    const assessment = computeDeterministicAssessment({
+      sessionId: "test-safety-failed",
+      simulationId: "sim-chem-1",
+      taskId: "task-1",
+      mode: "guided",
+      events: observationLogger.getEvents(),
+      finalSnapshot: snapshot,
+      durationMs: 5000,
+      hintsUsed: 0,
+    });
+
+    const safetyCriterion = assessment.criteria.find((c) => c.id === "safety_compliance");
+    expect(safetyCriterion?.status).toBe("failed");
+    expect(safetyCriterion?.evidenceEventIds).toContain(violationEvent.eventId);
+  });
+
+  it("4. Verifies every evidence ID in criteria exists in the event log", () => {
+    observationLogger.initSession("test-evidence-exists", "sim-chem-1", "task-1");
+
+    const e1 = observationLogger.appendEvent("safety_check_completed", "engine", {
+      violationCount: 0,
+      checkedRules: ["all"],
+      finalSafetyStatus: "passed",
+      snapshotHash: "hash-abc",
+    });
+
+    const e2 = observationLogger.appendEvent("task_completed", "validator", {
+      taskId: "task-1",
+      xpEarned: 100,
+      durationMs: 10000,
+    });
+
+    const snapshot: FinalWorkspaceSnapshot = {
+      containers: [],
+      stockBottles: [],
+      cabinets: [],
+      safetyViolationsEncountered: [],
+      taskCompleted: true,
+    };
+
+    const assessment = computeDeterministicAssessment({
+      sessionId: "test-evidence-exists",
+      simulationId: "sim-chem-1",
+      taskId: "task-1",
+      mode: "guided",
+      events: observationLogger.getEvents(),
+      finalSnapshot: snapshot,
+      durationMs: 10000,
+      hintsUsed: 0,
+    });
+
+    const allEventsSet = new Set(observationLogger.getEvents().map((e) => e.eventId));
+    assessment.criteria.forEach((c) => {
+      c.evidenceEventIds.forEach((id) => {
+        expect(allEventsSet.has(id)).toBe(true);
+      });
+    });
+  });
+
+  it("5. Pending report is persisted in localStorage and restored across page reload simulation", () => {
+    const item1 = teacherReportSyncManager.savePendingReport("sim-chem-1", "idemp-key-100", { score: 95 });
+    expect(item1.syncStatus).toBe("pending");
+
+    const pending = teacherReportSyncManager.getPendingReports();
+    expect(pending.length).toBe(1);
+    expect(pending[0].idempotencyKey).toBe("idemp-key-100");
+
+    teacherReportSyncManager.markReportSynced("idemp-key-100");
+    expect(teacherReportSyncManager.getPendingReports().length).toBe(0);
+  });
+
+  it("6. Performance measurement test: 1000 synthetic events append latency & memory trim", () => {
+    observationLogger.initSession("test-perf-1000", "sim-perf", "task-perf");
+
+    const latencies: number[] = [];
+    const startTime = performance.now();
+
+    for (let i = 0; i < 1000; i++) {
+      const t0 = performance.now();
+      observationLogger.appendEvent("bottle_tilted", "interaction", {
+        objectId: "stock-water",
+        tiltRad: 0.8,
+      });
+      latencies.push(performance.now() - t0);
+    }
+
+    const totalTimeMs = performance.now() - startTime;
+    latencies.sort((a, b) => a - b);
+    const avgLatencyMs = latencies.reduce((a, b) => a + b, 0) / latencies.length;
+    const p95LatencyMs = latencies[Math.floor(latencies.length * 0.95)];
+
+    expect(observationLogger.getEvents().length).toBeLessThanOrEqual(500); // capped at MAX_EVENT_LOG_SIZE
+    expect(avgLatencyMs).toBeLessThan(0.5); // Fast append (< 0.5ms average)
+    expect(p95LatencyMs).toBeLessThan(1.0); // Fast p95 (< 1.0ms)
+    console.log(`Perf metrics: 1000 appends total=${totalTimeMs.toFixed(2)}ms, avg=${avgLatencyMs.toFixed(3)}ms, p95=${p95LatencyMs.toFixed(3)}ms`);
   });
 });

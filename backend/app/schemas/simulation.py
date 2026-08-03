@@ -30,3 +30,7 @@ class SimulationActionResponse(BaseModel):
 class SimulationCompleteRequest(BaseModel):
     actions_log: list[dict]
     duration_seconds: int
+    idempotency_key: str | None = None
+    score: float | None = None
+    assessment_report: dict | None = None
+    assessment_source: str | None = "client_deterministic_v1"

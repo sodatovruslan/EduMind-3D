@@ -8,6 +8,7 @@ import {
   type PlacementSurfaceKind,
 } from "@/lib/interactables";
 import { getCabinet, type CabinetConfig } from "@/lib/cabinets";
+import { observationLogger } from "@/lib/observation-logger";
 
 /**
  * Chemistry World — Interaction Core, Stage S-1 (Focus & Pickup) + Stage S-2
@@ -225,12 +226,27 @@ export function ChemistryInteractionProvider({
     setAimPointState(null);
     placementCandidateRef.current = null;
     setPlacementCandidateState(null);
+
+    observationLogger.appendEvent("item_picked_up", "interaction", {
+      objectId: id,
+      objectKind: capability.storageKind ?? "item",
+      fromStorageSlotId: runtimeState.storageSlotId ?? null,
+    });
   }, [runtimeStateFor]);
 
   const release = useCallback(() => {
     const id = heldIdRef.current;
     const origin = pickupOriginRef.current;
-    if (id && origin?.storageSlotId) onCancelPickupRef.current?.(id, origin);
+    if (id && origin?.storageSlotId) {
+      onCancelPickupRef.current?.(id, origin);
+      observationLogger.appendEvent("pickup_cancelled", "interaction", {
+        objectId: id,
+        reason: "released_to_slot",
+      });
+    }
+    if (heldTiltRad > 0 && id) {
+      observationLogger.appendEvent("bottle_uprighted", "interaction", { objectId: id });
+    }
     pickupOriginRef.current = null;
     setHeldId(null);
     setHeldYawOffset(0);
@@ -238,7 +254,7 @@ export function ChemistryInteractionProvider({
     setAimPointState(null);
     placementCandidateRef.current = null;
     setPlacementCandidateState(null);
-  }, []);
+  }, [heldTiltRad]);
 
   const confirmPlacement = useCallback(() => {
     const id = heldIdRef.current;
@@ -247,6 +263,17 @@ export function ChemistryInteractionProvider({
     const capability = getInteractable(id);
     if (!capability?.canBePlaced || !capability.allowedSurfaces.includes(candidate.surface)) return;
     onConfirmPlacementRef.current?.(id, candidate.position, candidate.rotationY);
+
+    observationLogger.appendEvent("item_placed", "interaction", {
+      objectId: id,
+      objectKind: capability.storageKind ?? "item",
+      surface: candidate.surface,
+      position: candidate.position,
+    });
+
+    if (heldTiltRad > 0) {
+      observationLogger.appendEvent("bottle_uprighted", "interaction", { objectId: id });
+    }
     pickupOriginRef.current = null;
     setHeldId(null);
     setHeldYawOffset(0);
@@ -254,7 +281,7 @@ export function ChemistryInteractionProvider({
     setAimPointState(null);
     placementCandidateRef.current = null;
     setPlacementCandidateState(null);
-  }, []);
+  }, [heldTiltRad]);
 
   const cabinetStateFor = useCallback(
     (id: string): CabinetRuntimeState | null => getCabinetStateRef.current?.(id) ?? null,
