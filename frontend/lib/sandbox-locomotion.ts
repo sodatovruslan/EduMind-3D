@@ -1,7 +1,8 @@
 /**
- * Stage S-7 v2 — Sandbox Locomotion & Universal Obstacle Collisions (S7-V2.4)
+ * Stage S-7 v2 — Sandbox Locomotion, Obstacle Collisions & Interaction Bounds (S7-V2.5)
  * Provides pure kinematic vector math, room bounds clamping, tunneling protection (substepping),
- * and universal "floor-obstacle" Box3 collision resolution with kinematic sliding.
+ * universal "floor-obstacle" Box3 collision resolution with kinematic sliding,
+ * and "interaction-only" reach/LOS detection for wall cabinets.
  */
 
 export interface Vector2D {
@@ -331,4 +332,110 @@ export function calculateKinematicStep(
     blockedObstacleId: finalBlockedObstacleId,
     blockedObstacleSide: finalBlockedObstacleSide,
   };
+}
+
+// ─── S7-V2.5: Interaction Bounds (Wall Cabinets) ─────────────────────────────
+
+export interface InteractionTarget {
+  id: string;
+  name: string;
+  distance: number;      // Дистанция от игрока до центра шкафа (XZ)
+  isInRange: boolean;    // distance <= interactionDistance
+  hasLOS: boolean;       // Нет floor-obstacle, перекрывающего отрезок игрок→шкаф
+  canInteract: boolean;  // isInRange && hasLOS
+  centerX: number;
+  centerZ: number;
+}
+
+/**
+ * Проверяет пересечение 2D-отрезка [p1→p2] с прямоугольником AABB.
+ * Используется для LOS-проверки: блокирует ли floor-obstacle прямую видимость
+ * от игрока до шкафа (interaction-only).
+ */
+export function segmentIntersectsAABB(
+  p1: [number, number],
+  p2: [number, number],
+  box: { minX: number; maxX: number; minZ: number; maxZ: number }
+): boolean {
+  // Cohen–Sutherland / параметрическое отсечение Liang–Barsky
+  const dx = p2[0] - p1[0];
+  const dz = p2[1] - p1[1];
+
+  let tMin = 0;
+  let tMax = 1;
+
+  // Отсечение по X
+  if (Math.abs(dx) < 1e-9) {
+    // Вертикальный отрезок (по Z)
+    if (p1[0] < box.minX || p1[0] > box.maxX) return false;
+  } else {
+    const t1 = (box.minX - p1[0]) / dx;
+    const t2 = (box.maxX - p1[0]) / dx;
+    tMin = Math.max(tMin, Math.min(t1, t2));
+    tMax = Math.min(tMax, Math.max(t1, t2));
+    if (tMin > tMax) return false;
+  }
+
+  // Отсечение по Z
+  if (Math.abs(dz) < 1e-9) {
+    // Горизонтальный отрезок (по X)
+    if (p1[1] < box.minZ || p1[1] > box.maxZ) return false;
+  } else {
+    const t1 = (box.minZ - p1[1]) / dz;
+    const t2 = (box.maxZ - p1[1]) / dz;
+    tMin = Math.max(tMin, Math.min(t1, t2));
+    tMax = Math.min(tMax, Math.max(t1, t2));
+    if (tMin > tMax) return false;
+  }
+
+  return true;
+}
+
+/**
+ * Вычисляет список интерактивных целей (interaction-only шкафов) в зоне досягаемости.
+ * Учитывает дистанцию и LOS-проверку через floor-obstacle коллайдеры.
+ */
+export function computeInteractionTargets(
+  playerPos: [number, number],
+  colliders: RegisteredCollider[],
+  config: { interactionDistance: number }
+): InteractionTarget[] {
+  const { interactionDistance } = config;
+
+  const interactables = colliders.filter((c) => c.role === "interaction-only");
+  const floorObstacles = colliders.filter((c) => c.role === "floor-obstacle");
+
+  return interactables.map((cab) => {
+    const centerX = (cab.bounds.minX + cab.bounds.maxX) / 2;
+    const centerZ = (cab.bounds.minZ + cab.bounds.maxZ) / 2;
+
+    const dx = centerX - playerPos[0];
+    const dz = centerZ - playerPos[1];
+    const distance = Math.sqrt(dx * dx + dz * dz);
+    const isInRange = distance <= interactionDistance;
+
+    // LOS: проверяем пересечение отрезка игрок→шкаф с каждым floor-obstacle
+    let hasLOS = true;
+    if (isInRange) {
+      const p1: [number, number] = [playerPos[0], playerPos[1]];
+      const p2: [number, number] = [centerX, centerZ];
+      for (const obs of floorObstacles) {
+        if (segmentIntersectsAABB(p1, p2, obs.bounds)) {
+          hasLOS = false;
+          break;
+        }
+      }
+    }
+
+    return {
+      id: cab.id,
+      name: cab.name,
+      distance,
+      isInRange,
+      hasLOS,
+      canInteract: isInRange && hasLOS,
+      centerX,
+      centerZ,
+    };
+  });
 }

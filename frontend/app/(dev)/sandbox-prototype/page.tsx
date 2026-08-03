@@ -5,6 +5,8 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
   calculateKinematicStep,
+  computeInteractionTargets,
+  InteractionTarget,
   isValidSpawnPosition,
   RegisteredCollider,
   RoomInteriorBounds,
@@ -120,6 +122,50 @@ function RegisteredTableMesh({ onRegister }: { onRegister: (collider: Registered
   );
 }
 
+// Регистрация настенного шкафа (interaction-only) с обновлением матрицы updateWorldMatrix(true, true)
+function RegisteredCabinetMesh({
+  id,
+  name,
+  position,
+  args,
+  onRegister,
+}: {
+  id: string;
+  name: string;
+  position: [number, number, number];
+  args: [number, number, number];
+  onRegister: (collider: RegisteredCollider) => void;
+}) {
+  const meshRef = useRef<THREE.Mesh>(null);
+
+  useEffect(() => {
+    if (meshRef.current) {
+      meshRef.current.updateWorldMatrix(true, true);
+      const box = new THREE.Box3().setFromObject(meshRef.current);
+      onRegister({
+        id,
+        name,
+        role: "interaction-only",
+        bounds: {
+          minX: Number(box.min.x.toFixed(2)),
+          maxX: Number(box.max.x.toFixed(2)),
+          minZ: Number(box.min.z.toFixed(2)),
+          maxZ: Number(box.max.z.toFixed(2)),
+        },
+        minY: Number(box.min.y.toFixed(2)),
+        maxY: Number(box.max.y.toFixed(2)),
+      });
+    }
+  }, [id, name, onRegister]);
+
+  return (
+    <mesh ref={meshRef} position={position}>
+      <boxGeometry args={args} />
+      <meshStandardMaterial color="#475569" roughness={0.3} metalness={0.4} />
+    </mesh>
+  );
+}
+
 function RegisteredWallMesh({
   id,
   name,
@@ -182,6 +228,21 @@ function SandboxRoomGeometry({ onRegisterCollider }: { onRegisterCollider: (coll
       <RegisteredWallMesh id="wall_right" name="Правая стена" position={[4.2, 1.8, 0]} args={[6.4, 3.6]} rotation={[0, -Math.PI / 2, 0]} onRegister={onRegisterCollider} />
 
       <RegisteredTableMesh onRegister={onRegisterCollider} />
+      {/* Настенные шкафы (interaction-only) на задней стене */}
+      <RegisteredCabinetMesh
+        id="cabinet_left"
+        name="Левый шкаф"
+        position={[-2.0, 1.4, -3.15]}
+        args={[1.2, 0.8, 0.3]}
+        onRegister={onRegisterCollider}
+      />
+      <RegisteredCabinetMesh
+        id="cabinet_right"
+        name="Правый шкаф"
+        position={[2.0, 1.4, -3.15]}
+        args={[1.2, 0.8, 0.3]}
+        onRegister={onRegisterCollider}
+      />
     </group>
   );
 }
@@ -227,6 +288,7 @@ export default function SandboxPrototypePage() {
   const [colliders, setColliders] = useState<Record<string, RegisteredCollider>>({});
   const [roomInterior, setRoomInterior] = useState<RoomInteriorBounds | null>(null);
   const [isSpawnValid, setIsSpawnValid] = useState<boolean>(true);
+  const [nearestInteractable, setNearestInteractable] = useState<InteractionTarget | null>(null);
 
   const yawRef = useRef(START_YAW);
   const pitchRef = useRef(START_PITCH);
@@ -238,6 +300,7 @@ export default function SandboxPrototypePage() {
   const lastUiUpdateRef = useRef<number>(0);
   const roomInteriorRef = useRef<RoomInteriorBounds | null>(null);
   const collidersRef = useRef<RegisteredCollider[]>([]);
+  const nearestInteractableRef = useRef<InteractionTarget | null>(null);
 
   const handleRegisterCollider = React.useCallback((collider: RegisteredCollider) => {
     setColliders((prev) => {
@@ -296,6 +359,14 @@ export default function SandboxPrototypePage() {
       if (dir) {
         keysPressedRef.current[dir] = true;
         updateInputFromKeys();
+      }
+      // E / У — Interaction Gate
+      const key = e.key ? e.key.toLowerCase() : "";
+      if (e.code === "KeyE" || key === "е" || key === "у") {
+        const target = nearestInteractableRef.current;
+        if (target && target.canInteract) {
+          console.log(`[Sandbox] interact: ${target.id}`);
+        }
       }
     }
 
@@ -403,18 +474,43 @@ export default function SandboxPrototypePage() {
 
         playerPosRef.current = step.nextPos;
 
+        // Вычисление интерактивных целей (interaction-only шкафы)
+        const interactTargets = computeInteractionTargets(
+          step.nextPos,
+          collidersRef.current,
+          { interactionDistance: SANDBOX_CONFIG.interactionDistance }
+        );
+        const nearest = interactTargets.find((t) => t.canInteract) ?? null;
+        nearestInteractableRef.current = nearest;
+
         // Throttled UI update (~15 Hz)
         if (now - lastUiUpdateRef.current > 66) {
           lastUiUpdateRef.current = now;
           setPlayerPosState(step.nextPos);
           setBlockedWall(step.blockedWall);
           setBlockedObstacle({ id: step.blockedObstacleId, side: step.blockedObstacleSide });
+          setNearestInteractable(nearest);
         }
         setIsMoving(step.nextPos[0] !== playerPosRef.current[0] || step.nextPos[1] !== playerPosRef.current[1]);
       } else {
         setIsMoving(false);
         setBlockedWall("none");
         setBlockedObstacle({ id: null, side: "none" });
+
+        // Interaction-only проверка стоя на месте (throttled)
+        const now2 = performance.now();
+        if (now2 - lastUiUpdateRef.current > 66) {
+          lastUiUpdateRef.current = now2;
+          const interactTargets2 = computeInteractionTargets(
+            playerPosRef.current,
+            collidersRef.current,
+            { interactionDistance: SANDBOX_CONFIG.interactionDistance }
+          );
+          const nearest2 = interactTargets2.find((t) => t.canInteract) ?? null;
+          nearestInteractableRef.current = nearest2;
+          setNearestInteractable(nearest2);
+        }
+
         if (playerPosRef.current !== playerPosState) {
           setPlayerPosState(playerPosRef.current);
         }
@@ -459,11 +555,13 @@ export default function SandboxPrototypePage() {
       data-expanded-table={`X[${expTableMinX}..${expTableMaxX}] Z[${expTableMinZ}..${expTableMaxZ}]`}
       data-yaw={yaw.toFixed(3)}
       data-pitch={pitch.toFixed(3)}
+      data-nearest-interactable={nearestInteractable?.id ?? "none"}
+      data-can-interact={nearestInteractable?.canInteract ? "true" : "false"}
     >
       <header className="flex items-center justify-between border-b border-slate-800 bg-slate-900 px-6 py-3 shrink-0">
         <div>
-          <h1 className="text-lg font-bold text-cyan-400">Stage S-7 v2 — Sandbox Dev Prototype (S7-V2.4 Furniture Collisions)</h1>
-          <p className="text-xs text-slate-400">Изолированный 3D-прототип (Универсальные коллизии мебели и скольжение)</p>
+          <h1 className="text-lg font-bold text-cyan-400">Stage S-7 v2 — Sandbox Dev Prototype (S7-V2.5 Wall Cabinets)</h1>
+          <p className="text-xs text-slate-400">Изолированный 3D-прототип (Настенные шкафы, Interaction Bounds, LOS-проверка)</p>
         </div>
         <div className="flex items-center gap-4 text-xs font-mono text-slate-300">
           <div data-testid="pos-display">Pos: [{playerPosState[0].toFixed(2)}, {playerPosState[1].toFixed(2)}]</div>
@@ -492,6 +590,18 @@ export default function SandboxPrototypePage() {
           <SandboxCameraController playerPosRef={playerPosRef} yaw={yaw} pitch={pitch} />
         </Canvas>
 
+        {/* Interaction Prompt — DOM overlay при canInteract */}
+        {nearestInteractable?.canInteract && (
+          <div className="pointer-events-none absolute inset-x-0 top-1/2 flex items-center justify-center -translate-y-1/2">
+            <div className="rounded-xl border border-cyan-500/60 bg-slate-900/90 px-5 py-2 text-center backdrop-blur">
+              <p className="text-base font-semibold text-cyan-300">
+                <span className="mr-2 rounded border border-cyan-400 px-1.5 py-0.5 font-mono text-sm text-cyan-400">E</span>
+                {nearestInteractable.name}
+              </p>
+              <p className="mt-0.5 text-xs text-slate-400">{nearestInteractable.distance.toFixed(1)} m</p>
+            </div>
+          </div>
+        )}
         {/* Панель отладки Debug Bounds */}
         <div className="pointer-events-none absolute top-4 left-4 rounded-xl border border-slate-700 bg-slate-900/80 p-3 text-xs backdrop-blur space-y-1">
           <p className="font-semibold text-cyan-300">Debug Bounds & Furniture Collisions (S7-V2.4):</p>
