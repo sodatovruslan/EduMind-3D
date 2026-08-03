@@ -6,31 +6,28 @@
 
 Обновляется по ходу работы.
 
-Последнее обновление: 2026-08-03 (Stage S-4 Real Bottle Caps ЗАВЕРШЁН и ПОЛНОСТЬЮ ВАЛИДИРОВАН).
+Последнее обновление: 2026-08-03 (Stage S-5 Real Pouring ЗАВЕРШЁН и ПОЛНОСТЬЮ ВАЛИДИРОВАН).
 
 ---
 
 ## Актуальное состояние на 2026-08-03
 
-- **HEAD (Stage S-3 Commit)**: `4e1b174` ("feat(chemistry): complete Stage S-3 shelves and cabinets")
-- **Текущий этап**: **Stage S-4 Real Bottle Caps реализован, проверен и полностью готов к сдаче**.
+- **HEAD (Stage S-4 Commit)**: `ffb5b3a` ("feat(chemistry): complete Stage S-4 bottle caps")
+- **Текущий этап**: **Stage S-5 Real 3D Pouring реализован, проверен и полностью готов к сдаче**.
 - **Проверки**:
   - `npx tsc --noEmit` — **0 ошибок** (PASS)
   - `npm run lint` — **0 предупреждений/ошибок** (PASS)
-  - `npx vitest run` — **328/328 PASSED** (PASS)
+  - `npx vitest run` — **337/337 PASSED** (PASS)
   - `pytest -q` — **44/44 PASSED** (PASS)
-  - `npx playwright test e2e/chemistry-s4-caps.spec.ts` — **3/3 PASSED** (PASS)
+  - `npx playwright test e2e/chemistry-s5-pouring.spec.ts` — **1/1 PASSED** (PASS)
   - `npm run build` — **Успешно** (PASS)
 
-### Выполненный объем Stage S-4:
-1. **Единый capState в Workspace State**: добавлено `capState: "closed" | "open"` в `StockBottle`. Все 6 бутылок на старте имею `closed`.
-2. **Domain Action & Reducer**: добавлено `TOGGLE_BOTTLE_CAP`, `POUR_FROM_STOCK` заблокирован при закрытой крышке.
-3. **Storage & Cabinet Safety**:
-   - `canStoreItemNow` в `lib/storage-slots.ts` проверяет `capState !== "open"`.
-   - Открытая бутылка не убирается в шкаф (подсказка `"Закройте крышку перед хранением"`).
-   - Шкаф не закрывается, если внутри есть открытая бутылка (подсказка `"Сначала закройте крышки бутылок в шкафу"`).
-4. **Управление (клавиша R)**: переключает крышку для `heldId` (приоритет) или `focusedId` (если `heldId === null`).
-5. **Рендеринг и визуализация**: визуальный 3D меш крышки `BottleCapMesh` с плавной lerp анимацией.
+### Выполненный объем Stage S-5:
+1. **Spatial 3D Geometry (`lib/pour-engine.ts`)**: расчет мировых координат `pourPointWorld` (носик источника) и `openingPointWorld` (проем цели), проверка расстояния ($\le 0.35\,\text{м}$) и угла наклона ($\ge 45^\circ$).
+2. **Динамический расход и сохранение массы**: $Q(\theta)$ плавно зависит от угла наклона. Суммарная масса и объем строго сохраняются.
+3. **Управление наклоном (клавиши Q/E)**: наклон удерживаемой бутылки/сосуда.
+4. **Доменные блокировки**: закрытая крышка (`capState === "closed"`), расстояние $> 0.35\,\text{м}$ или угол $< 45^\circ$ мгновенно останавливают наливание.
+5. **Визуализация струи**: 3D струя `LiquidStreamMesh` и плавный наклон `PourTilt`.
 
 ---
 

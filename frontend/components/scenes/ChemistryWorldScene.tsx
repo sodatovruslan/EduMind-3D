@@ -42,6 +42,12 @@ import { SUBSTANCES, aggregateStateOf, computeColorHex, totalMassG, totalVolumeM
 import { getRegisteredReactions } from "@/lib/reaction-engine";
 import { checkSafety, type SafetyWarning } from "@/lib/chemistry-safety";
 import {
+  calculatePourGeometry,
+  calculatePourRateMlPerSec,
+  canPourNow,
+  MIN_POUR_TILT_RAD,
+} from "@/lib/pour-engine";
+import {
   playBurnerIgnite,
   playCrackSnap,
   playFlashWhoosh,
@@ -854,13 +860,13 @@ function GrabLift({ isDragging, children }: { isDragging: boolean; children: Rea
 // плавный наклон сосуда во время переливания — контейнер сам не двигается,
 // наклоняется только его визуальная группа, и возвращается в исходное
 // положение (rotation.z -> 0), как только isPouring снова false
-function PourTilt({ active, children }: { active: boolean; children: React.ReactNode }) {
+function PourTilt({ active, tiltRad, children }: { active?: boolean; tiltRad?: number; children: React.ReactNode }) {
   const ref = useRef<THREE.Group>(null);
   const progress = useRef(0);
   useFrame((_, delta) => {
-    const target = active ? 1 : 0;
-    progress.current += (target - progress.current) * Math.min(1, delta * 5);
-    if (ref.current) ref.current.rotation.z = -progress.current * (Math.PI / 3.2);
+    const target = tiltRad !== undefined && tiltRad > 0 ? tiltRad : active ? Math.PI / 3.2 : 0;
+    progress.current += (target - progress.current) * Math.min(1, delta * 6);
+    if (ref.current) ref.current.rotation.z = -progress.current;
   });
   return <group ref={ref}>{children}</group>;
 }
@@ -1847,7 +1853,7 @@ function StockBottleMesh({ bottle, isPouring }: { bottle: StockBottle; isPouring
         />
 
         <GrabLift isDragging={isDragging}>
-          <PourTilt active={isPouring}>
+          <PourTilt active={isPouring} tiltRad={interaction.heldTiltRad}>
             <mesh castShadow>
               <cylinderGeometry args={[0.09, 0.09, 0.32, 16]} />
               <meshStandardMaterial
@@ -2366,7 +2372,17 @@ function InteractableVisualRig({
 function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer, debugMode }: ChemistrySceneProps) {
   const { state, heatTick, hazardTick } = useChemistryWorkspace();
   const { draggingId } = useChemistryDrag();
-  const { focusedId, focusedKind, heldId, aimPoint, heldYawOffset, setPlacementCandidate } = useChemistryInteraction();
+  const {
+    focusedId,
+    focusedKind,
+    heldId,
+    aimPoint,
+    heldYawOffset,
+    heldTiltRad,
+    qEventCount,
+    isPourSourceSupported,
+    setPlacementCandidate,
+  } = useChemistryInteraction();
   const hazardAccumRef = useRef(0);
 
   useFrame((_, delta) => {
@@ -2470,6 +2486,10 @@ function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer
             data-testid="chemistry-interaction-state"
             data-dragging-id={draggingId ?? "none"}
             data-held-id={heldId ?? "none"}
+            data-held-tilt-rad={heldTiltRad.toFixed(2)}
+            data-q-event-count={qEventCount}
+            data-pour-source-supported={isPourSourceSupported(heldId) ? "true" : "false"}
+            data-active-element={typeof document !== "undefined" && document.activeElement ? document.activeElement.tagName : "BODY"}
             data-focused-id={focusedId ?? "none"}
             data-focused-kind={focusedKind ?? "none"}
             data-placement-valid={placementCandidate ? "true" : "false"}

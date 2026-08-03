@@ -55,6 +55,9 @@ interface ChemistryInteractionContextValue {
   focusedKind: FocusedKind | null;
   heldId: string | null;
   heldYawOffset: number;
+  heldTiltRad: number;
+  qEventCount: number;
+  isPourSourceSupported: (id: string | null) => boolean;
   aimPoint: [number, number] | null;
   placementCandidate: PlacementCandidate | null;
   setFocused: (id: string, kind?: FocusedKind) => void;
@@ -62,6 +65,7 @@ interface ChemistryInteractionContextValue {
   pickUp: (id: string) => void;
   release: () => void;
   rotateHeld: (deltaYaw: number) => void;
+  setHeldTiltRad: (tilt: number | ((prev: number) => number)) => void;
   setAimPoint: (point: [number, number] | null) => void;
   setPlacementCandidate: (candidate: PlacementCandidate | null) => void;
   confirmPlacement: () => void;
@@ -114,6 +118,7 @@ export function ChemistryInteractionProvider({
   const [focusedKind, setFocusedKind] = useState<FocusedKind | null>(null);
   const [heldId, setHeldId] = useState<string | null>(null);
   const [heldYawOffset, setHeldYawOffset] = useState(0);
+  const [heldTiltRad, setHeldTiltRad] = useState(0);
   const [aimPoint, setAimPointState] = useState<[number, number] | null>(null);
   const [placementCandidate, setPlacementCandidateState] = useState<PlacementCandidate | null>(null);
 
@@ -216,17 +221,12 @@ export function ChemistryInteractionProvider({
     onBeginPickupRef.current?.(id);
     setHeldId(id);
     setHeldYawOffset(runtimeState.rotationY ?? 0);
+    setHeldTiltRad(0);
     setAimPointState(null);
     placementCandidateRef.current = null;
     setPlacementCandidateState(null);
   }, [runtimeStateFor]);
 
-  // Escape — ВСЕГДА безусловный отказ: возвращает предмет в исходную точку
-  // текущего pickup-цикла, даже если в этот момент наведена валидная
-  // (зелёная) точка размещения. onConfirmPlacement НЕ вызывается — поэтому
-  // домен ничего не пишет, и "исходная позиция" — это просто то, что уже
-  // было в ChemistryWorkspaceProvider (никогда не менялось, раз запись не
-  // произошла) — не требует отдельного снапшота "исходного transform".
   const release = useCallback(() => {
     const id = heldIdRef.current;
     const origin = pickupOriginRef.current;
@@ -234,14 +234,12 @@ export function ChemistryInteractionProvider({
     pickupOriginRef.current = null;
     setHeldId(null);
     setHeldYawOffset(0);
+    setHeldTiltRad(0);
     setAimPointState(null);
     placementCandidateRef.current = null;
     setPlacementCandidateState(null);
   }, []);
 
-  // E над валидной (зелёной) точкой — подтвердить размещение. Над невалидной
-  // точкой (красной) или без наведённой точки вовсе — no-op, предмет
-  // остаётся в руке (пользователю понятно почему по цвету кольца в сцене).
   const confirmPlacement = useCallback(() => {
     const id = heldIdRef.current;
     const candidate = placementCandidateRef.current;
@@ -252,6 +250,7 @@ export function ChemistryInteractionProvider({
     pickupOriginRef.current = null;
     setHeldId(null);
     setHeldYawOffset(0);
+    setHeldTiltRad(0);
     setAimPointState(null);
     placementCandidateRef.current = null;
     setPlacementCandidateState(null);
@@ -277,6 +276,7 @@ export function ChemistryInteractionProvider({
     pickupOriginRef.current = null;
     setHeldId(null);
     setHeldYawOffset(0);
+    setHeldTiltRad(0);
     setAimPointState(null);
     placementCandidateRef.current = null;
     setPlacementCandidateState(null);
@@ -299,8 +299,22 @@ export function ChemistryInteractionProvider({
     }
   }, []);
 
-  // Клавиатура: E — взять/подтвердить размещение, R — открыть/закрыть крышку, Escape — отменить,
-  // ArrowLeft/ArrowRight — вращение в руке.
+  const [qEventCount, setQEventCount] = useState(0);
+
+  const isPourSourceSupported = useCallback((id: string | null): boolean => {
+    if (!id) return false;
+    const capability = getInteractable(id);
+    if (!capability) return false;
+    return (
+      Boolean(capability.storageKind?.startsWith("stock_")) ||
+      capability.legacyDragMode === "pour" ||
+      id.startsWith("stock-") ||
+      id.startsWith("beaker") ||
+      id.startsWith("flask") ||
+      id.startsWith("test-tube")
+    );
+  }, []);
+
   useEffect(() => {
     function isTypingTarget(target: EventTarget | null): boolean {
       if (!(target instanceof HTMLElement)) return false;
@@ -312,7 +326,7 @@ export function ChemistryInteractionProvider({
       if (e.repeat) return;
       if (isTypingTarget(e.target)) return;
 
-      if (e.key === "e" || e.key === "E") {
+      if (e.key === "e" || e.key === "E" || e.code === "KeyE") {
         if (heldIdRef.current) {
           if (!tryStoreHeldInFocusedCabinet()) confirmPlacement();
         } else if (focusedIdRef.current && focusedKindRef.current === "cabinet") {
@@ -320,8 +334,14 @@ export function ChemistryInteractionProvider({
         } else if (focusedIdRef.current && focusedKindRef.current === "item") {
           pickUp(focusedIdRef.current);
         }
-      } else if (e.key === "r" || e.key === "R") {
+      } else if (e.key === "r" || e.key === "R" || e.code === "KeyR") {
         toggleCap();
+      } else if (e.key === "q" || e.key === "Q" || e.code === "KeyQ") {
+        const heldId = heldIdRef.current;
+        if (heldId && isPourSourceSupported(heldId)) {
+          setQEventCount((c) => c + 1);
+          setHeldTiltRad((t) => (t > 0 ? 0 : Math.PI / 3));
+        }
       } else if (e.key === "Escape") {
         if (heldIdRef.current) release();
       } else if (e.key === "ArrowLeft") {
@@ -333,7 +353,7 @@ export function ChemistryInteractionProvider({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [pickUp, release, rotateHeld, confirmPlacement, tryStoreHeldInFocusedCabinet, toggleCap]);
+  }, [pickUp, release, rotateHeld, confirmPlacement, tryStoreHeldInFocusedCabinet, toggleCap, isPourSourceSupported]);
 
   const value: ChemistryInteractionContextValue = {
     phase: heldId ? "held" : focusedId ? "focused" : "idle",
@@ -341,6 +361,9 @@ export function ChemistryInteractionProvider({
     focusedKind,
     heldId,
     heldYawOffset,
+    heldTiltRad,
+    qEventCount,
+    isPourSourceSupported,
     aimPoint,
     placementCandidate,
     setFocused,
@@ -348,6 +371,7 @@ export function ChemistryInteractionProvider({
     pickUp,
     release,
     rotateHeld,
+    setHeldTiltRad,
     setAimPoint,
     setPlacementCandidate,
     confirmPlacement,
@@ -382,6 +406,7 @@ export function useInteractable(id: string) {
     focusedKind,
     heldId,
     heldYawOffset,
+    heldTiltRad,
     placementCandidate,
     setFocused,
     clearFocused,
@@ -403,6 +428,7 @@ export function useInteractable(id: string) {
     isFocused,
     isHeld,
     heldYawOffset: isHeld ? heldYawOffset : 0,
+    heldTiltRad: isHeld ? heldTiltRad : 0,
     blockedReason: accessible ? getPickupBlockedReason(id) : null,
     canUseLegacyDrag:
       Boolean(capability && capability.legacyDragMode !== "none") && runtimeState.storageSlotId == null,
