@@ -252,6 +252,13 @@ export function resolveObstacleCollisions(
   };
 }
 
+export const DEFAULT_ROOM_INTERIOR: RoomInteriorBounds = {
+  minX: -4.2,
+  maxX: 4.2,
+  minZ: -3.2,
+  maxZ: 3.2,
+};
+
 /**
  * Главный кинематический шаг с поддержкой субстеппинга (Substepping) против туннелирования
  */
@@ -281,6 +288,9 @@ export function calculateKinematicStep(
     z: worldMove.z * totalDist,
   };
 
+  // Использование переданных границ или глобального дефолта
+  const effectiveRoom = room ?? DEFAULT_ROOM_INTERIOR;
+
   // Вычисление субстеппинга для защиты от туннелирования
   const maxSubStepDist = Math.max(0.05, playerRadius * 0.5);
   const numSubSteps = Math.max(1, Math.ceil(totalDist / maxSubStepDist));
@@ -295,7 +305,7 @@ export function calculateKinematicStep(
   let finalBlockedObstacleSide: "none" | "front" | "back" | "left" | "right" | "corner" = "none";
 
   for (let i = 0; i < numSubSteps; i++) {
-    // 2. Коллизии с напольной мебелью (floor-obstacle)
+    // 1. Коллизии с напольной мебелью (floor-obstacle)
     const obsRes = resolveObstacleCollisions(
       currPos,
       subDelta,
@@ -304,24 +314,33 @@ export function calculateKinematicStep(
       skinWidth
     );
 
-    // 3. Коллизии со стенами комнаты (Room Boundaries)
-    let wallRes: { nextPos: [number, number]; blockedWall: "none" | "left" | "right" | "back" | "front" | "corner" } = { nextPos: obsRes.nextPos, blockedWall: "none" };
-    if (room) {
-      const deltaFromObs: Vector2D = {
-        x: obsRes.nextPos[0] - currPos[0],
-        z: obsRes.nextPos[1] - currPos[1],
-      };
-      const wRes = resolveWallCollisions(currPos, deltaFromObs, room, playerRadius, skinWidth);
-      wallRes = { nextPos: wRes.nextPos, blockedWall: wRes.blockedWall };
-      if (wRes.blockedWall !== "none") finalBlockedWall = wRes.blockedWall;
-    }
+    // 2. Коллизии со стенами комнаты (Room Boundaries)
+    const deltaFromObs: Vector2D = {
+      x: obsRes.nextPos[0] - currPos[0],
+      z: obsRes.nextPos[1] - currPos[1],
+    };
+    const wallRes = resolveWallCollisions(currPos, deltaFromObs, effectiveRoom, playerRadius, skinWidth);
+    if (wallRes.blockedWall !== "none") finalBlockedWall = wallRes.blockedWall;
 
     if (obsRes.blockedObstacleId) {
       finalBlockedObstacleId = obsRes.blockedObstacleId;
       finalBlockedObstacleSide = obsRes.blockedSide;
     }
 
-    currPos = obsRes.nextPos;
+    // ВАЖНО: позиция на каждом подшаге обновляется результатом РАЗРЕШЕНИЯ СТЕН
+    currPos = wallRes.nextPos;
+  }
+
+  // 3. Жёсткая проверка инварианта позиционирования (Requirement 3)
+  const minAllowedX = effectiveRoom.minX + playerRadius + skinWidth;
+  const maxAllowedX = effectiveRoom.maxX - playerRadius - skinWidth;
+  const minAllowedZ = effectiveRoom.minZ + playerRadius + skinWidth;
+  const maxAllowedZ = effectiveRoom.maxZ - playerRadius - skinWidth;
+
+  if (currPos[0] < minAllowedX || currPos[0] > maxAllowedX || currPos[1] < minAllowedZ || currPos[1] > maxAllowedZ) {
+    console.error(`[CRITICAL_LOCOMOTION_VIOLATION] Position [${currPos[0]}, ${currPos[1]}] out of bounds X[${minAllowedX}..${maxAllowedX}] Z[${minAllowedZ}..${maxAllowedZ}]. Enforcing invariant clamp.`);
+    currPos[0] = Math.max(minAllowedX, Math.min(maxAllowedX, currPos[0]));
+    currPos[1] = Math.max(minAllowedZ, Math.min(maxAllowedZ, currPos[1]));
   }
 
   return {
@@ -438,4 +457,261 @@ export function computeInteractionTargets(
       centerZ,
     };
   });
+}
+
+// ─── S7-V2.6: Pickable Items & Held Rig ──────────────────────────────────────
+
+export interface PickableItem {
+  id: string;
+  name: string;
+  /** Three.js world position (X, Y, Z) */
+  worldPos: [number, number, number];
+  isPickedUp: boolean;
+}
+
+/**
+ * Находит первый доступный для подбора объект в зоне досягаемости игрока (XZ).
+ * LOS не проверяется — объект лежит на поверхности препятствия (стол),
+ * физическая дистанция служит достаточным гейтом.
+ */
+export function computePickupTarget(
+  playerPos: [number, number],
+  items: PickableItem[],
+  config: { pickupDistance: number }
+): PickableItem | null {
+  const { pickupDistance } = config;
+
+  for (const item of items) {
+    if (item.isPickedUp) continue;
+
+    const dx = item.worldPos[0] - playerPos[0];
+    const dz = item.worldPos[2] - playerPos[1];
+    const distance = Math.sqrt(dx * dx + dz * dz);
+
+    if (distance <= pickupDistance) {
+      return item;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Вычисляет мировую позицию Held-объекта из параметров камеры (чистая математика).
+ * Использует формулы camera forward/right/up из yaw/pitch (порядок YXZ как в Three.js FPS).
+ *
+ * forward = (-sin(yaw)*cos(pitch), sin(pitch), -cos(yaw)*cos(pitch))
+ * right   = (cos(yaw), 0, -sin(yaw))
+ * up      = (sin(yaw)*sin(pitch), cos(pitch), cos(yaw)*sin(pitch))
+ */
+export function computeHeldWorldPos(
+  cameraPos: [number, number, number],
+  yawRad: number,
+  pitchRad: number,
+  offsetX: number,    // правое смещение (+ = вправо)
+  offsetY: number,    // вертикальное смещение (+ = вверх)
+  forwardDist: number // расстояние вперёд по оси камеры (+ = от камеры)
+): [number, number, number] {
+  const sy = Math.sin(yawRad);
+  const cy = Math.cos(yawRad);
+  const sp = Math.sin(pitchRad);
+  const cp = Math.cos(pitchRad);
+
+  // Единичные векторы камеры (YXZ euler)
+  const rX = cy;       const rY = 0;   const rZ = -sy;        // right
+  const uX = sy * sp;  const uY = cp;  const uZ = cy * sp;    // up
+  const fX = -sy * cp; const fY = sp;  const fZ = -cy * cp;   // forward
+
+  return [
+    cameraPos[0] + rX * offsetX + uX * offsetY + fX * forwardDist,
+    cameraPos[1] + rY * offsetX + uY * offsetY + fY * forwardDist,
+    cameraPos[2] + rZ * offsetX + uZ * offsetY + fZ * forwardDist,
+  ];
+}
+
+/**
+ * Параметрическое пересечение луча с 3D AABB (Liang–Barsky).
+ * Возвращает расстояние до первой точки входа (>=0) или null.
+ */
+export function rayIntersectAABB(
+  origin: [number, number, number],
+  dir: [number, number, number],
+  minX: number, maxX: number,
+  minY: number, maxY: number,
+  minZ: number, maxZ: number
+): number | null {
+  let tMin = 0;
+  let tMax = Infinity;
+
+  const slabs: [number, number, number, number][] = [
+    [dir[0], origin[0], minX, maxX],
+    [dir[1], origin[1], minY, maxY],
+    [dir[2], origin[2], minZ, maxZ],
+  ];
+
+  for (const [d, o, lo, hi] of slabs) {
+    if (Math.abs(d) < 1e-9) {
+      if (o < lo || o > hi) return null;
+    } else {
+      const t1 = (lo - o) / d;
+      const t2 = (hi - o) / d;
+      tMin = Math.max(tMin, Math.min(t1, t2));
+      tMax = Math.min(tMax, Math.max(t1, t2));
+      if (tMin > tMax) return null;
+    }
+  }
+
+  return tMin >= 0 ? tMin : (tMax >= 0 ? tMax : null);
+}
+
+/**
+ * Вычисляет безопасное расстояние Held Rig вперёд от камеры.
+ * Проверяет пересечение луча камеры с зарегистрированными коллайдерами и стенами.
+ * При наличии препятствия ближе чем desiredDist сужает дистанцию до safetyMargin от него.
+ */
+/**
+ * Конфигурация позиционирования предметов в руке (Held Rig).
+ */
+export interface HeldRigConfig {
+  forwardDistance: number;
+  lateralOffset: number;
+  verticalOffset: number;
+  minSafeDistance: number;
+  obstacleMargin: number;
+  objectRadius: number;
+}
+
+export interface HeldRigResult {
+  desiredWorldPos: [number, number, number];
+  finalWorldPos: [number, number, number];
+  desiredDistance: number;
+  resolvedDistance: number;
+  hitObstacleId: string | null;
+  hitDistance: number;
+  objectRadius: number;
+}
+
+/**
+ * Точный и стабильный расчёт трансформа для Held Rig.
+ * Проверяет коллизию по вектору от камеры к желаемой позиции предмета (hand ray),
+ * а не по центральному лучу взгляда. Это устраняет ложные срабатывания со столом при взгляде вниз.
+ */
+export function resolveHeldRigTransform(
+  cameraPos: [number, number, number],
+  yawRad: number,
+  pitchRad: number,
+  config: HeldRigConfig,
+  colliders: RegisteredCollider[],
+  room: RoomInteriorBounds | null
+): HeldRigResult {
+  const { forwardDistance, lateralOffset, verticalOffset, minSafeDistance, obstacleMargin, objectRadius } = config;
+
+  // 1. Векторы ориентации камеры
+  const sy = Math.sin(yawRad);
+  const cy = Math.cos(yawRad);
+  const sp = Math.sin(pitchRad);
+  const cp = Math.cos(pitchRad);
+
+  const r = [cy, 0, -sy];
+  const u = [sy * sp, cp, cy * sp];
+  const f = [-sy * cp, sp, -cy * cp];
+
+  // 2. Вектор смещения от камеры к предмету в руке
+  const handVec: [number, number, number] = [
+    r[0] * lateralOffset + u[0] * verticalOffset + f[0] * forwardDistance,
+    r[1] * lateralOffset + u[1] * verticalOffset + f[1] * forwardDistance,
+    r[2] * lateralOffset + u[2] * verticalOffset + f[2] * forwardDistance,
+  ];
+
+  const desiredWorldPos: [number, number, number] = [
+    cameraPos[0] + handVec[0],
+    cameraPos[1] + handVec[1],
+    cameraPos[2] + handVec[2],
+  ];
+
+  const handLen = Math.sqrt(handVec[0] * handVec[0] + handVec[1] * handVec[1] + handVec[2] * handVec[2]);
+  if (handLen < 1e-6) {
+    return {
+      desiredWorldPos,
+      finalWorldPos: desiredWorldPos,
+      desiredDistance: forwardDistance,
+      resolvedDistance: forwardDistance,
+      hitObstacleId: null,
+      hitDistance: Infinity,
+      objectRadius,
+    };
+  }
+
+  const handDir: [number, number, number] = [
+    handVec[0] / handLen,
+    handVec[1] / handLen,
+    handVec[2] / handLen,
+  ];
+
+  // 3. Рейкаст по направлению к руке от позиции камеры
+  let closestHit = Infinity;
+  let hitId: string | null = null;
+
+  for (const col of colliders) {
+    if (col.role !== "floor-obstacle" && col.role !== "room-boundary") continue;
+
+    const hit = rayIntersectAABB(
+      cameraPos,
+      handDir,
+      col.bounds.minX,
+      col.bounds.maxX,
+      col.minY,
+      col.maxY,
+      col.bounds.minZ,
+      col.bounds.maxZ
+    );
+    if (hit !== null && hit > 0.02 && hit < closestHit) {
+      closestHit = hit;
+      hitId = col.id;
+    }
+  }
+
+  if (room) {
+    const WALL_THICKNESS = 0.5;
+    const WALL_HEIGHT_MIN = 0;
+    const WALL_HEIGHT_MAX = 4.0;
+    const wallConfigs: [string, number, number, number, number, number, number][] = [
+      ["wall_left", room.minX - WALL_THICKNESS, room.minX, WALL_HEIGHT_MIN, WALL_HEIGHT_MAX, room.minZ, room.maxZ],
+      ["wall_right", room.maxX, room.maxX + WALL_THICKNESS, WALL_HEIGHT_MIN, WALL_HEIGHT_MAX, room.minZ, room.maxZ],
+      ["wall_back", room.minX, room.maxX, WALL_HEIGHT_MIN, WALL_HEIGHT_MAX, room.minZ - WALL_THICKNESS, room.minZ],
+      ["wall_front", room.minX, room.maxX, WALL_HEIGHT_MIN, WALL_HEIGHT_MAX, room.maxZ, room.maxZ + WALL_THICKNESS],
+    ];
+    for (const [wId, wxMin, wxMax, wyMin, wyMax, wzMin, wzMax] of wallConfigs) {
+      const hit = rayIntersectAABB(cameraPos, handDir, wxMin, wxMax, wyMin, wyMax, wzMin, wzMax);
+      if (hit !== null && hit > 0.02 && hit < closestHit) {
+        closestHit = hit;
+        hitId = wId;
+      }
+    }
+  }
+
+  // 4. Масштаб безопасного смещения
+  let s = 1.0;
+  if (closestHit < handLen) {
+    const safeHandDist = Math.max(minSafeDistance, closestHit - objectRadius - obstacleMargin);
+    s = Math.min(1.0, Math.max(minSafeDistance / forwardDistance, safeHandDist / handLen));
+  } else {
+    hitId = null;
+  }
+
+  const finalWorldPos: [number, number, number] = [
+    cameraPos[0] + handVec[0] * s,
+    cameraPos[1] + handVec[1] * s,
+    cameraPos[2] + handVec[2] * s,
+  ];
+
+  return {
+    desiredWorldPos,
+    finalWorldPos,
+    desiredDistance: forwardDistance,
+    resolvedDistance: forwardDistance * s,
+    hitObstacleId: hitId,
+    hitDistance: closestHit,
+    objectRadius,
+  };
 }

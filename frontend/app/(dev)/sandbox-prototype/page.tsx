@@ -6,21 +6,41 @@ import * as THREE from "three";
 import {
   calculateKinematicStep,
   computeInteractionTargets,
+  computePickupTarget,
+  DEFAULT_ROOM_INTERIOR,
+  HeldRigResult,
   InteractionTarget,
   isValidSpawnPosition,
+  PickableItem,
+  rayIntersectAABB,
   RegisteredCollider,
+  resolveHeldRigTransform,
   RoomInteriorBounds,
   Vector2D,
 } from "@/lib/sandbox-locomotion";
 
-// 1. Централизованный SandboxConfig прототипа (S7-V2.4)
+// 1. Централизованный SandboxConfig прототипа (S7-V2.6)
 const SANDBOX_CONFIG = {
   playerRadius: 0.35,
   eyeHeight: 1.6,
   interactionDistance: 1.8,
+  pickupDistance: 1.8,
   skinWidth: 0.02,
   defaultFov: 65,
   moveSpeed: 2.5,
+};
+
+// Flask оригин: позиция на столешнице (фиксирована, Escape возвращает сюда)
+const FLASK_ORIGIN: [number, number, number] = [0.6, 0.85, 0.55];
+
+// Held Rig константы (S7-V2.6)
+const HELD_RIG_CONFIG = {
+  forwardDistance: 0.35,
+  lateralOffset: 0.20,
+  verticalOffset: -0.15,
+  minSafeDistance: 0.12,
+  obstacleMargin: 0.04,
+  objectRadius: 0.05,
 };
 
 const START_POS: [number, number] = [0, 2.5];
@@ -275,6 +295,148 @@ function TableExpandedBoundsDebug({ tableCol }: { tableCol: RegisteredCollider |
   );
 }
 
+// ─── S7-V2.6: Pickable Flask ─────────────────────────────────────────────────
+
+/** Колба на столе — отображается пока не в Held. */
+function PickableFlask({ pos, canPickup }: { pos: [number, number, number]; canPickup: boolean }) {
+  return (
+    <group position={pos}>
+      {/* Flask body */}
+      <mesh>
+        <cylinderGeometry args={[0.035, 0.055, 0.18, 16]} />
+        <meshStandardMaterial color="#93c5fd" transparent opacity={0.75} roughness={0.1} metalness={0.0} />
+      </mesh>
+      {/* Flask neck */}
+      <mesh position={[0, 0.13, 0]}>
+        <cylinderGeometry args={[0.018, 0.035, 0.07, 16]} />
+        <meshStandardMaterial color="#93c5fd" transparent opacity={0.75} roughness={0.1} />
+      </mesh>
+      {/* Focus highlight wireframe */}
+      {canPickup && (
+        <mesh>
+          <boxGeometry args={[0.14, 0.32, 0.14]} />
+          <meshBasicMaterial color="#06b6d4" wireframe />
+        </mesh>
+      )}
+    </group>
+  );
+}
+
+/** Константы Held Rig. Использует camera quaternion, hand raycast и сглаживание damping. */
+function HeldFlask({
+  collidersRef,
+  roomInteriorRef,
+  onDiagUpdate,
+}: {
+  collidersRef: React.MutableRefObject<RegisteredCollider[]>;
+  roomInteriorRef: React.MutableRefObject<RoomInteriorBounds | null>;
+  onDiagUpdate: (res: HeldRigResult) => void;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const smoothedPosRef = useRef<THREE.Vector3 | null>(null);
+  const { camera } = useThree();
+
+  useFrame((_, delta) => {
+    if (!groupRef.current) return;
+
+    const cameraPos: [number, number, number] = [camera.position.x, camera.position.y, camera.position.z];
+
+    // Углы Эйлера ориентации камеры (порядок YXZ как в Three.js FPS)
+    const euler = new THREE.Euler().setFromQuaternion(camera.quaternion, "YXZ");
+
+    const res = resolveHeldRigTransform(
+      cameraPos,
+      euler.y,
+      euler.x,
+      HELD_RIG_CONFIG,
+      collidersRef.current,
+      roomInteriorRef.current
+    );
+
+    const targetPos = new THREE.Vector3(...res.finalWorldPos);
+
+    if (!smoothedPosRef.current) {
+      smoothedPosRef.current = targetPos.clone();
+    } else {
+      // Damping для плавного перемещения возле препятствий (Requirement 6)
+      smoothedPosRef.current.x = THREE.MathUtils.damp(smoothedPosRef.current.x, targetPos.x, 15, delta);
+      smoothedPosRef.current.y = THREE.MathUtils.damp(smoothedPosRef.current.y, targetPos.y, 15, delta);
+      smoothedPosRef.current.z = THREE.MathUtils.damp(smoothedPosRef.current.z, targetPos.z, 15, delta);
+    }
+
+    groupRef.current.position.copy(smoothedPosRef.current);
+    groupRef.current.quaternion.copy(camera.quaternion);
+
+    onDiagUpdate(res);
+  });
+
+  return (
+    <group ref={groupRef}>
+      <mesh>
+        <cylinderGeometry args={[0.035, 0.055, 0.18, 16]} />
+        <meshStandardMaterial color="#bfdbfe" transparent opacity={0.85} roughness={0.1} />
+      </mesh>
+      <mesh position={[0, 0.13, 0]}>
+        <cylinderGeometry args={[0.018, 0.035, 0.07, 16]} />
+        <meshStandardMaterial color="#bfdbfe" transparent opacity={0.85} roughness={0.1} />
+      </mesh>
+    </group>
+  );
+}
+
+/**
+ * Активен внутри <Canvas>, проверяет направление камеры → объект (прицель) и обновляет refs.
+ * Не вызывает setState каждый кадр.
+ */
+function PickupController({
+  playerPosRef,
+  isHeldRef,
+  pickableItemsRef,
+  canPickupRef,
+  nearestPickupRef,
+}: {
+  playerPosRef: React.MutableRefObject<[number, number]>;
+  isHeldRef: React.MutableRefObject<boolean>;
+  pickableItemsRef: React.MutableRefObject<PickableItem[]>;
+  canPickupRef: React.MutableRefObject<boolean>;
+  nearestPickupRef: React.MutableRefObject<PickableItem | null>;
+}) {
+  const { camera } = useThree();
+
+  useFrame(() => {
+    // If already holding, pickup not available
+    if (isHeldRef.current) {
+      canPickupRef.current = false;
+      nearestPickupRef.current = null;
+      return;
+    }
+
+    // Distance gate
+    const target = computePickupTarget(
+      playerPosRef.current,
+      pickableItemsRef.current,
+      { pickupDistance: SANDBOX_CONFIG.pickupDistance }
+    );
+
+    if (!target) {
+      canPickupRef.current = false;
+      nearestPickupRef.current = null;
+      return;
+    }
+
+    // Aim gate: camera must be roughly pointing at the item (~35° half-angle)
+    const itemPos = new THREE.Vector3(target.worldPos[0], target.worldPos[1], target.worldPos[2]);
+    const toItem = itemPos.clone().sub(camera.position).normalize();
+    const camFwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+    const aimed = toItem.dot(camFwd) > Math.cos(0.6); // ~34° half-angle
+
+    canPickupRef.current = aimed;
+    nearestPickupRef.current = aimed ? target : null;
+  });
+
+  return null;
+}
+
 export default function SandboxPrototypePage() {
   const [playerPosState, setPlayerPosState] = useState<[number, number]>(START_POS);
   const [yaw, setYaw] = useState<number>(START_YAW);
@@ -286,9 +448,22 @@ export default function SandboxPrototypePage() {
   const [blockedObstacle, setBlockedObstacle] = useState<{ id: string | null; side: string }>({ id: null, side: "none" });
   const [keysState, setKeysState] = useState({ keyW: false, keyA: false, keyS: false, keyD: false });
   const [colliders, setColliders] = useState<Record<string, RegisteredCollider>>({});
-  const [roomInterior, setRoomInterior] = useState<RoomInteriorBounds | null>(null);
+  const [roomInterior, setRoomInterior] = useState<RoomInteriorBounds | null>(DEFAULT_ROOM_INTERIOR);
   const [isSpawnValid, setIsSpawnValid] = useState<boolean>(true);
   const [nearestInteractable, setNearestInteractable] = useState<InteractionTarget | null>(null);
+  // S7-V2.6 — Pickup state & diagnostics (throttled, for DOM only)
+  const [isHeld, setIsHeld] = useState(false);
+  const [canPickup, setCanPickup] = useState(false);
+  const [heldDiag, setHeldDiag] = useState<HeldRigResult | null>(null);
+
+  const lastHeldDiagTimeRef = useRef(0);
+  const handleHeldDiagUpdate = React.useCallback((res: HeldRigResult) => {
+    const now = performance.now();
+    if (now - lastHeldDiagTimeRef.current > 66) {
+      lastHeldDiagTimeRef.current = now;
+      setHeldDiag(res);
+    }
+  }, []);
 
   const yawRef = useRef(START_YAW);
   const pitchRef = useRef(START_PITCH);
@@ -298,9 +473,17 @@ export default function SandboxPrototypePage() {
   const isDraggingRef = useRef(false);
   const lastPosRef = useRef({ x: 0, y: 0 });
   const lastUiUpdateRef = useRef<number>(0);
-  const roomInteriorRef = useRef<RoomInteriorBounds | null>(null);
+  const roomInteriorRef = useRef<RoomInteriorBounds | null>(DEFAULT_ROOM_INTERIOR);
   const collidersRef = useRef<RegisteredCollider[]>([]);
   const nearestInteractableRef = useRef<InteractionTarget | null>(null);
+  // S7-V2.6 refs (frame-critical, never trigger re-renders directly)
+  const isHeldRef = useRef(false);
+  const canPickupRef = useRef(false);
+  const nearestPickupRef = useRef<PickableItem | null>(null);
+  const pickableItemsRef = useRef<PickableItem[]>([
+    { id: "flask_01", name: "Колба", worldPos: FLASK_ORIGIN, isPickedUp: false },
+  ]);
+  const lastPickupUiRef = useRef<number>(0);
 
   const handleRegisterCollider = React.useCallback((collider: RegisteredCollider) => {
     setColliders((prev) => {
@@ -355,17 +538,43 @@ export default function SandboxPrototypePage() {
 
     function handleKeyDown(e: KeyboardEvent) {
       if (isTypingTarget(e.target)) return;
+
+      // Escape: drop flask (highest priority, before dir check)
+      if (e.code === "Escape") {
+        if (isHeldRef.current) {
+          isHeldRef.current = false;
+          pickableItemsRef.current[0].isPickedUp = false;
+          setIsHeld(false);
+        }
+        return;
+      }
+
       const dir = getDirectionKey(e);
       if (dir) {
         keysPressedRef.current[dir] = true;
         updateInputFromKeys();
       }
-      // E / У — Interaction Gate
+
+      // E / У — Pickup / Drop / Interact
       const key = e.key ? e.key.toLowerCase() : "";
       if (e.code === "KeyE" || key === "е" || key === "у") {
-        const target = nearestInteractableRef.current;
-        if (target && target.canInteract) {
-          console.log(`[Sandbox] interact: ${target.id}`);
+        if (isHeldRef.current) {
+          // Drop: return to origin
+          isHeldRef.current = false;
+          pickableItemsRef.current[0].isPickedUp = false;
+          setIsHeld(false);
+        } else if (canPickupRef.current) {
+          // Pickup
+          isHeldRef.current = true;
+          pickableItemsRef.current[0].isPickedUp = true;
+          setIsHeld(true);
+          setCanPickup(false);
+        } else {
+          // Cabinet interaction (S7-V2.5)
+          const cabTarget = nearestInteractableRef.current;
+          if (cabTarget && cabTarget.canInteract) {
+            console.log(`[Sandbox] interact: ${cabTarget.id}`);
+          }
         }
       }
     }
@@ -424,8 +633,13 @@ export default function SandboxPrototypePage() {
     lastPosRef.current = { x: e.clientX, y: e.clientY };
 
     const sens = 0.003;
-    const newYaw = yawRef.current - dx * sens;
+    let newYaw = yawRef.current - dx * sens;
     const newPitch = Math.max(-1.3, Math.min(1.3, pitchRef.current - dy * sens));
+
+    // Нормализация yaw в диапазон [-PI, PI] (Requirement 6)
+    newYaw = newYaw % (2 * Math.PI);
+    if (newYaw > Math.PI) newYaw -= 2 * Math.PI;
+    if (newYaw < -Math.PI) newYaw += 2 * Math.PI;
 
     yawRef.current = newYaw;
     pitchRef.current = newPitch;
@@ -448,6 +662,29 @@ export default function SandboxPrototypePage() {
     e.preventDefault();
   };
 
+  // Window blur / focus lost / visibilitychange reset (Requirement 5)
+  useEffect(() => {
+    function resetAllInputs() {
+      keysPressedRef.current = {};
+      inputVecRef.current = { x: 0, z: 0 };
+      isDraggingRef.current = false;
+      setIsLookDragging(false);
+      setLookButton(-1);
+      setKeysState({ keyW: false, keyA: false, keyS: false, keyD: false });
+    }
+
+    function handleVisibilityChange() {
+      if (document.hidden) resetAllInputs();
+    }
+
+    window.addEventListener("blur", resetAllInputs);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("blur", resetAllInputs);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
+
   // Кинематический tick движения со субстеппингом и универсальным решением коллизий мебели
   useEffect(() => {
     let animId: number;
@@ -455,7 +692,7 @@ export default function SandboxPrototypePage() {
 
     function tick() {
       const now = performance.now();
-      const deltaSec = Math.min(0.1, (now - lastTime) / 1000);
+      const deltaSec = Math.min(0.05, (now - lastTime) / 1000);
       lastTime = now;
 
       const input = inputVecRef.current;
@@ -490,6 +727,9 @@ export default function SandboxPrototypePage() {
           setBlockedWall(step.blockedWall);
           setBlockedObstacle({ id: step.blockedObstacleId, side: step.blockedObstacleSide });
           setNearestInteractable(nearest);
+
+          // Pickup UI throttle (shared timer) — React bails out on same value
+          setCanPickup(canPickupRef.current);
         }
         setIsMoving(step.nextPos[0] !== playerPosRef.current[0] || step.nextPos[1] !== playerPosRef.current[1]);
       } else {
@@ -509,6 +749,8 @@ export default function SandboxPrototypePage() {
           const nearest2 = interactTargets2.find((t) => t.canInteract) ?? null;
           nearestInteractableRef.current = nearest2;
           setNearestInteractable(nearest2);
+
+          setCanPickup(canPickupRef.current);
         }
 
         if (playerPosRef.current !== playerPosState) {
@@ -557,11 +799,15 @@ export default function SandboxPrototypePage() {
       data-pitch={pitch.toFixed(3)}
       data-nearest-interactable={nearestInteractable?.id ?? "none"}
       data-can-interact={nearestInteractable?.canInteract ? "true" : "false"}
+      data-is-held={isHeld ? "true" : "false"}
+      data-can-pickup={canPickup ? "true" : "false"}
+      data-held-resolved-dist={heldDiag ? heldDiag.resolvedDistance.toFixed(2) : ""}
+      data-held-hit-obstacle={heldDiag ? (heldDiag.hitObstacleId ?? "none") : ""}
     >
       <header className="flex items-center justify-between border-b border-slate-800 bg-slate-900 px-6 py-3 shrink-0">
         <div>
-          <h1 className="text-lg font-bold text-cyan-400">Stage S-7 v2 — Sandbox Dev Prototype (S7-V2.5 Wall Cabinets)</h1>
-          <p className="text-xs text-slate-400">Изолированный 3D-прототип (Настенные шкафы, Interaction Bounds, LOS-проверка)</p>
+          <h1 className="text-lg font-bold text-cyan-400">Stage S-7 v2 — Sandbox Dev Prototype (S7-V2.6 PickUp & Held Rig)</h1>
+          <p className="text-xs text-slate-400">Изолированный 3D-прототип (Подбор предметов, Held Rig, Raycast Safe Distance)</p>
         </div>
         <div className="flex items-center gap-4 text-xs font-mono text-slate-300">
           <div data-testid="pos-display">Pos: [{playerPosState[0].toFixed(2)}, {playerPosState[1].toFixed(2)}]</div>
@@ -584,12 +830,53 @@ export default function SandboxPrototypePage() {
           <directionalLight position={[5, 8, 5]} intensity={1.2} castShadow />
           <Suspense fallback={null}>
             <SandboxRoomGeometry onRegisterCollider={handleRegisterCollider} />
+            {/* Flask: отображается на столе только когда не held */}
+            {!isHeld && <PickableFlask pos={FLASK_ORIGIN} canPickup={canPickup} />}
+            {/* Held Rig: рендерится внутри Canvas по camera.quaternion */}
+            {isHeld && (
+              <HeldFlask
+                collidersRef={collidersRef}
+                roomInteriorRef={roomInteriorRef}
+                onDiagUpdate={handleHeldDiagUpdate}
+              />
+            )}
+            <PickupController
+              playerPosRef={playerPosRef}
+              isHeldRef={isHeldRef}
+              pickableItemsRef={pickableItemsRef}
+              canPickupRef={canPickupRef}
+              nearestPickupRef={nearestPickupRef}
+            />
             <PlayerCylinderDebug playerPos={playerPosState} />
             <TableExpandedBoundsDebug tableCol={tableCol} />
           </Suspense>
           <SandboxCameraController playerPosRef={playerPosRef} yaw={yaw} pitch={pitch} />
         </Canvas>
 
+        {/* Pickup Prompt — отображается при фокусе на колбе */}
+        {canPickup && !isHeld && (
+          <div className="pointer-events-none absolute inset-x-0 flex items-center justify-center" style={{ top: "45%" }}>
+            <div className="rounded-xl border border-emerald-500/70 bg-slate-900/90 px-5 py-2 text-center backdrop-blur">
+              <p className="text-base font-semibold text-emerald-300">
+                <span className="mr-2 rounded border border-emerald-400 px-1.5 py-0.5 font-mono text-sm">[E]</span>
+                Взять: Колба
+              </p>
+            </div>
+          </div>
+        )}
+        {/* Held Prompt — отображается пока колба в руке */}
+        {isHeld && (
+          <div className="pointer-events-none absolute inset-x-0 flex items-center justify-center" style={{ top: "45%" }}>
+            <div className="rounded-xl border border-amber-500/70 bg-slate-900/90 px-5 py-2 text-center backdrop-blur">
+              <p className="text-sm font-semibold text-amber-300">
+                <span className="mr-2 rounded border border-amber-400 px-1.5 py-0.5 font-mono text-sm">[E]</span>
+                Отпустить
+                <span className="ml-4 mr-1 rounded border border-slate-400 px-1.5 py-0.5 font-mono text-xs text-slate-300">[Esc]</span>
+                <span className="text-slate-300">Вернуть</span>
+              </p>
+            </div>
+          </div>
+        )}
         {/* Interaction Prompt — DOM overlay при canInteract */}
         {nearestInteractable?.canInteract && (
           <div className="pointer-events-none absolute inset-x-0 top-1/2 flex items-center justify-center -translate-y-1/2">
@@ -621,14 +908,25 @@ export default function SandboxPrototypePage() {
           <div className="text-cyan-300 font-mono" data-testid="room-interior-display">
             • Room Interior: X[{minXAllowed}..{maxXAllowed}] Z[{minZAllowed}..{maxZAllowed}]
           </div>
+          {isHeld && heldDiag && (
+            <div className="text-purple-300 font-mono text-[11px] space-y-0.5 border-t border-slate-700 pt-1 mt-1" data-testid="held-diag-display">
+              <div>• Held Diag: desiredDist={heldDiag.desiredDistance.toFixed(2)}m | resolvedDist={heldDiag.resolvedDistance.toFixed(2)}m</div>
+              <div>• Hit Obstacle: <span className={heldDiag.hitObstacleId ? "text-amber-400 font-bold" : "text-emerald-400"}>{heldDiag.hitObstacleId ?? "NONE"}</span> (dist: {heldDiag.hitDistance === Infinity ? "INF" : heldDiag.hitDistance.toFixed(2) + "m"})</div>
+              <div>• Desired WorldPos: [{heldDiag.desiredWorldPos.map((v) => v.toFixed(2)).join(", ")}]</div>
+              <div>• Final WorldPos: [{heldDiag.finalWorldPos.map((v) => v.toFixed(2)).join(", ")}]</div>
+              <div>• Object Radius: {heldDiag.objectRadius.toFixed(2)}m</div>
+            </div>
+          )}
         </div>
 
         {/* Панель инструкции */}
         <div className="pointer-events-none absolute bottom-4 left-4 rounded-xl border border-slate-700 bg-slate-900/80 p-3 text-xs backdrop-blur">
-          <p className="font-semibold text-cyan-300 mb-1">Управление (S7-V2.4 Furniture Collisions):</p>
+          <p className="font-semibold text-cyan-300 mb-1">Управление (S7-V2.6 PickUp):</p>
           <ul className="space-y-1 text-slate-300">
-            <li>• <span className="font-mono text-amber-300">W / A / S / D</span> — Движение с обходом и скольжением у стола</li>
-            <li>• <span className="font-mono text-amber-300">Оранжевый каркас</span> — Расширенные физические границы стола (+R+Skin)</li>
+            <li>• <span className="font-mono text-amber-300">W / A / S / D</span> — Движение с обходом и скольжением</li>
+            <li>• <span className="font-mono text-emerald-300">[E]</span> — Подойди к колбе, нацелься, возьми / отпусти</li>
+            <li>• <span className="font-mono text-amber-300">[Esc]</span> — Вернуть предмет на стол</li>
+            <li>• <span className="font-mono text-amber-300">Оранжевый каркас</span> — Расширенные бордеры стола</li>
           </ul>
         </div>
       </main>

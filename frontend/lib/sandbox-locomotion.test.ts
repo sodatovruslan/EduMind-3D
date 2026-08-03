@@ -2,10 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   calculateKinematicStep,
   computeDirectionVectors,
+  computeHeldWorldPos,
   computeInteractionTargets,
+  computePickupTarget,
   computeWorldMovementVector,
+  HeldRigConfig,
   isValidSpawnPosition,
+  PickableItem,
+  rayIntersectAABB,
   RegisteredCollider,
+  resolveHeldRigTransform,
   resolveObstacleCollisions,
   resolveWallCollisions,
   RoomInteriorBounds,
@@ -203,5 +209,186 @@ describe("Stage S-7 v2 — CheckPoint S7-V2.5 Wall Cabinets & Interaction Bounds
     // interaction-only cabinets are filtered out in resolveObstacleCollisions
     expect(res.blockedObstacleId).toBeNull();
     expect(res.nextPos[1]).toBeCloseTo(-3.0, 5); // Moves freely
+  });
+});
+
+// ─── S7-V2.6 — Prototype Object PickUp & Held Rig ───────────────────────
+
+const FLASK_ITEM: PickableItem = {
+  id: "flask_01",
+  name: "Колба",
+  worldPos: [0.6, 0.85, 0.55], // На столешнице, ближе к игроку
+  isPickedUp: false,
+};
+
+describe("Stage S-7 v2 — CheckPoint S7-V2.6 Prototype Object PickUp & Held Rig", () => {
+  it("15. computePickupTarget: Item in range → returns item", () => {
+    // Player at [0.5, 1.0] — XZ distance to flask [0.6, 0.55] = sqrt(0.01 + 0.20) ≈ 0.46m
+    const player: [number, number] = [0.5, 1.0];
+    const result = computePickupTarget(player, [FLASK_ITEM], { pickupDistance: 1.8 });
+    expect(result).not.toBeNull();
+    expect(result!.id).toBe("flask_01");
+  });
+
+  it("16. computePickupTarget: Item too far → null", () => {
+    // Player at [0, 2.5] — XZ distance to flask [0.6, 0.55] = sqrt(0.36 + 3.8) ≈ 2.04m > 1.8m
+    const player: [number, number] = [0, 2.5];
+    const result = computePickupTarget(player, [FLASK_ITEM], { pickupDistance: 1.8 });
+    expect(result).toBeNull();
+  });
+
+  it("17. computePickupTarget: Item already picked up → null", () => {
+    const pickedFlask: PickableItem = { ...FLASK_ITEM, isPickedUp: true };
+    const player: [number, number] = [0.5, 1.0]; // Close enough
+    const result = computePickupTarget(player, [pickedFlask], { pickupDistance: 1.8 });
+    expect(result).toBeNull();
+  });
+
+  it("18. computePickupTarget: Multiple items — returns closest in range", () => {
+    const farFlask: PickableItem = {
+      id: "flask_far",
+      name: "Дальняя колба",
+      worldPos: [-3.0, 0.85, -2.5],
+      isPickedUp: false,
+    };
+    // Player close to FLASK_ITEM but far from farFlask
+    const player: [number, number] = [0.5, 1.0];
+    const result = computePickupTarget(player, [FLASK_ITEM, farFlask], { pickupDistance: 1.8 });
+    expect(result).not.toBeNull();
+    expect(result!.id).toBe("flask_01");
+  });
+
+  // ─── Held Rig Math ───────────────────────────────────────────────────────
+
+  it("19. rayIntersectAABB: Ray hits box returns distance", () => {
+    // Ray from [0, 1.6, 3.0] along -Z hits box at Z in [0.5..1.5]
+    const hit = rayIntersectAABB([0, 1.6, 3.0], [0, 0, -1], -1, 1, 0, 2, 0.5, 1.5);
+    expect(hit).not.toBeNull();
+    expect(hit!).toBeCloseTo(1.5, 5); // 3.0 - 1.5 = 1.5m to front face
+  });
+
+  it("20. rayIntersectAABB: Ray misses box returns null", () => {
+    // Ray goes sideways, misses box entirely
+    const hit = rayIntersectAABB([5.0, 1.6, 0.0], [1, 0, 0], -1, 1, 0, 2, -1, 1);
+    expect(hit).toBeNull();
+  });
+
+  it("21. computeHeldWorldPos: yaw=0 pitch=0 forward offset correct", () => {
+    // Camera at [0, 1.6, 2.5], looking straight ahead (-Z), no lateral/vertical offset
+    const pos = computeHeldWorldPos([0, 1.6, 2.5], 0, 0, 0, 0, 0.55);
+    // forward = (0, 0, -1) => add 0.55 in -Z
+    expect(pos[0]).toBeCloseTo(0, 5);
+    expect(pos[1]).toBeCloseTo(1.6, 5);
+    expect(pos[2]).toBeCloseTo(2.5 - 0.55, 5); // 1.95
+  });
+
+  it("22. computeHeldWorldPos: lateral and vertical offset with yaw=0 pitch=0", () => {
+    const pos = computeHeldWorldPos([0, 1.6, 2.5], 0, 0, 0.25, -0.20, 0.55);
+    // right = (1,0,0), up = (0,1,0), forward = (0,0,-1)
+    expect(pos[0]).toBeCloseTo(0.25, 5);  // right * 0.25
+    expect(pos[1]).toBeCloseTo(1.40, 5);  // 1.6 + (-0.20)
+    expect(pos[2]).toBeCloseTo(1.95, 5);  // 2.5 - 0.55
+  });
+
+  it("23. computeHeldWorldPos: yaw=PI/2 (facing left -X) forward offset correct", () => {
+    // Camera facing -X, forward = (-1, 0, 0)
+    const pos = computeHeldWorldPos([0, 1.6, 0], Math.PI / 2, 0, 0, 0, 0.55);
+    expect(pos[0]).toBeCloseTo(-0.55, 4);
+    expect(pos[1]).toBeCloseTo(1.6, 5);
+    expect(pos[2]).toBeCloseTo(0, 5);
+  });
+
+  it("24. computeHeldWorldPos: pitch=PI/4 (looking up) forward lifts Y", () => {
+    // Camera at [0,1.6,0], pitch=PI/4 (up), forward = (0, sin(PI/4), -cos(PI/4))
+    const pos = computeHeldWorldPos([0, 1.6, 0], 0, Math.PI / 4, 0, 0, 0.55);
+    const expectedY = 1.6 + Math.sin(Math.PI / 4) * 0.55;
+    const expectedZ = 0 - Math.cos(Math.PI / 4) * 0.55;
+    expect(pos[0]).toBeCloseTo(0, 5);
+    expect(pos[1]).toBeCloseTo(expectedY, 4);
+    expect(pos[2]).toBeCloseTo(expectedZ, 4);
+  });
+
+  const MOCK_HELD_CONFIG: HeldRigConfig = {
+    forwardDistance: 0.35,
+    lateralOffset: 0.20,
+    verticalOffset: -0.15,
+    minSafeDistance: 0.12,
+    obstacleMargin: 0.04,
+    objectRadius: 0.05,
+  };
+
+  it("25. resolveHeldRigTransform: Looking down at table surface does NOT trigger false collision", () => {
+    // Player at [0, 1.6, 2.5], looking down at table (pitch = -0.5 rad ≈ -28°)
+    // Table is at Z=[-0.7..0.7], Y=[0..0.84]. Hand vector stays above table top.
+    const res = resolveHeldRigTransform(
+      [0, 1.6, 2.5],
+      0,
+      -0.5,
+      MOCK_HELD_CONFIG,
+      [MOCK_TABLE],
+      MOCK_ROOM
+    );
+
+    expect(res.hitObstacleId).toBeNull();
+    expect(res.resolvedDistance).toBeCloseTo(0.35, 5);
+    expect(res.finalWorldPos[0]).toBeCloseTo(res.desiredWorldPos[0], 5);
+    expect(res.finalWorldPos[1]).toBeCloseTo(res.desiredWorldPos[1], 5);
+    expect(res.finalWorldPos[2]).toBeCloseTo(res.desiredWorldPos[2], 5);
+  });
+
+  it("26. resolveHeldRigTransform: Standing right against wall reduces safe distance", () => {
+    // Camera at Z = -3.0 (facing back wall at Z = -3.3)
+    // Desired hand position goes into the wall (Z < -3.3)
+    const res = resolveHeldRigTransform(
+      [0, 1.6, -3.0],
+      0, // yaw = 0 (facing -Z)
+      0, // pitch = 0
+      MOCK_HELD_CONFIG,
+      [],
+      MOCK_ROOM // wall_back is at minZ = -3.3
+    );
+
+    expect(res.hitObstacleId).toBe("wall_back");
+    expect(res.resolvedDistance).toBeLessThan(0.35);
+    expect(res.resolvedDistance).toBeGreaterThanOrEqual(MOCK_HELD_CONFIG.minSafeDistance);
+  });
+
+  it("27. resolveHeldRigTransform: Position remains stable across different pitch angles", () => {
+    const resStraight = resolveHeldRigTransform([0, 1.6, 2.5], 0, 0, MOCK_HELD_CONFIG, [MOCK_TABLE], MOCK_ROOM);
+    const resDown = resolveHeldRigTransform([0, 1.6, 2.5], 0, -0.6, MOCK_HELD_CONFIG, [MOCK_TABLE], MOCK_ROOM);
+
+    // Both should have hitObstacleId = null and full resolved distance
+    expect(resStraight.hitObstacleId).toBeNull();
+    expect(resDown.hitObstacleId).toBeNull();
+    expect(resStraight.resolvedDistance).toBeCloseTo(0.35, 5);
+    expect(resDown.resolvedDistance).toBeCloseTo(0.35, 5);
+  });
+
+  // ─── Room Bounds Invariant Tests (S7-V2.3 Regression Protection) ──────────
+
+  it("28. Locomotion Invariant: Player cannot walk past left wall (-X)", () => {
+    const start: [number, number] = [-3.5, 0];
+    // Facing left wall (-X) at yaw=Math.PI/2, walk forward (+Z input moves -X)
+    const res = calculateKinematicStep(start, { x: 0, z: 1 }, Math.PI / 2, 5.0, 1.0, MOCK_ROOM, [MOCK_TABLE], R, SKIN);
+    expect(res.nextPos[0]).toBeGreaterThanOrEqual(MOCK_ROOM.minX + R + SKIN);
+    expect(res.blockedWall).toBe("left");
+  });
+
+  it("29. Locomotion Invariant: Huge delta cannot tunnel past room bounds", () => {
+    const start: [number, number] = [0, 0];
+    // Attempt huge 50m movement step to the left
+    const res = calculateKinematicStep(start, { x: -1, z: 0 }, Math.PI / 2, 50.0, 1.0, MOCK_ROOM, [MOCK_TABLE], R, SKIN);
+    expect(res.nextPos[0]).toBeGreaterThanOrEqual(MOCK_ROOM.minX + R + SKIN);
+    expect(res.nextPos[0]).toBeLessThanOrEqual(MOCK_ROOM.maxX - R - SKIN);
+    expect(res.nextPos[1]).toBeGreaterThanOrEqual(MOCK_ROOM.minZ + R + SKIN);
+    expect(res.nextPos[1]).toBeLessThanOrEqual(MOCK_ROOM.maxZ - R - SKIN);
+  });
+
+  it("30. Locomotion Invariant: Fallback DEFAULT_ROOM_INTERIOR prevents wall bypass even when room is undefined", () => {
+    const start: [number, number] = [-4.0, 0];
+    // Move left with room=undefined
+    const res = calculateKinematicStep(start, { x: -1, z: 0 }, Math.PI / 2, 5.0, 1.0, undefined, [MOCK_TABLE], R, SKIN);
+    // Must be clamped to DEFAULT_ROOM_INTERIOR.minX + R + SKIN = -4.2 + 0.37 = -3.83
+    expect(res.nextPos[0]).toBeGreaterThanOrEqual(-4.2 + R + SKIN);
   });
 });
