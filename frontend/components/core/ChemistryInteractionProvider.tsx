@@ -65,6 +65,7 @@ interface ChemistryInteractionContextValue {
   setAimPoint: (point: [number, number] | null) => void;
   setPlacementCandidate: (candidate: PlacementCandidate | null) => void;
   confirmPlacement: () => void;
+  toggleCap: (id?: string) => void;
   getPickupBlockedReason: (id: string) => string | null;
   getInteractableRuntimeState: (id: string) => InteractableRuntimeState;
   isInteractableAccessible: (id: string) => boolean;
@@ -90,6 +91,7 @@ interface ChemistryInteractionProviderProps {
   onBeginPickup?: (id: string) => void;
   onCancelPickup?: (id: string, origin: PickupOrigin) => void;
   onToggleCabinet?: (id: string) => void;
+  onToggleCap?: (id: string) => void;
   getCabinetState?: (id: string) => CabinetRuntimeState | null;
   canStoreInCabinet?: (itemId: string, cabinetId: string) => boolean;
   onStoreInCabinet?: (itemId: string, cabinetId: string) => boolean;
@@ -103,6 +105,7 @@ export function ChemistryInteractionProvider({
   onBeginPickup,
   onCancelPickup,
   onToggleCabinet,
+  onToggleCap,
   getCabinetState,
   canStoreInCabinet,
   onStoreInCabinet,
@@ -145,6 +148,8 @@ export function ChemistryInteractionProvider({
   canStoreInCabinetRef.current = canStoreInCabinet;
   const onStoreInCabinetRef = useRef(onStoreInCabinet);
   onStoreInCabinetRef.current = onStoreInCabinet;
+  const onToggleCapRef = useRef(onToggleCap);
+  onToggleCapRef.current = onToggleCap;
   const pickupOriginRef = useRef<PickupOrigin | null>(null);
 
   const runtimeStateFor = useCallback(
@@ -283,11 +288,19 @@ export function ChemistryInteractionProvider({
     setHeldYawOffset((y) => y + deltaYaw);
   }, []);
 
-  // Клавиатура: E — взять/подтвердить размещение, Escape — всегда безусловно
-  // отменить и вернуть, ArrowLeft/ArrowRight — вращение в руке. Не реагирует,
-  // пока пользователь печатает в любом текстовом поле (AI Teacher chat и
-  // т.п.), и игнорирует авто-повтор ОС при зажатой клавише (e.repeat) — без
-  // этого зажатая E бесконтрольно чередовала бы действия много раз в секунду.
+  const toggleCap = useCallback((targetId?: string) => {
+    const id =
+      targetId ??
+      (heldIdRef.current || (focusedKindRef.current === "item" ? focusedIdRef.current : null));
+    if (!id) return;
+    const capability = getInteractable(id);
+    if (capability?.storageKind?.startsWith("stock_")) {
+      onToggleCapRef.current?.(id);
+    }
+  }, []);
+
+  // Клавиатура: E — взять/подтвердить размещение, R — открыть/закрыть крышку, Escape — отменить,
+  // ArrowLeft/ArrowRight — вращение в руке.
   useEffect(() => {
     function isTypingTarget(target: EventTarget | null): boolean {
       if (!(target instanceof HTMLElement)) return false;
@@ -307,6 +320,8 @@ export function ChemistryInteractionProvider({
         } else if (focusedIdRef.current && focusedKindRef.current === "item") {
           pickUp(focusedIdRef.current);
         }
+      } else if (e.key === "r" || e.key === "R") {
+        toggleCap();
       } else if (e.key === "Escape") {
         if (heldIdRef.current) release();
       } else if (e.key === "ArrowLeft") {
@@ -318,7 +333,7 @@ export function ChemistryInteractionProvider({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [pickUp, release, rotateHeld, confirmPlacement, tryStoreHeldInFocusedCabinet]);
+  }, [pickUp, release, rotateHeld, confirmPlacement, tryStoreHeldInFocusedCabinet, toggleCap]);
 
   const value: ChemistryInteractionContextValue = {
     phase: heldId ? "held" : focusedId ? "focused" : "idle",
@@ -336,6 +351,7 @@ export function ChemistryInteractionProvider({
     setAimPoint,
     setPlacementCandidate,
     confirmPlacement,
+    toggleCap,
     getPickupBlockedReason,
     getInteractableRuntimeState: runtimeStateFor,
     isInteractableAccessible: isAccessible,

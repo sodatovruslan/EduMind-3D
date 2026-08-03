@@ -22,7 +22,7 @@ import {
 } from "@/lib/hazard-engine";
 import { CABINET_IDS } from "@/lib/cabinets";
 import { getInteractable } from "@/lib/interactables";
-import { findAvailableSlot, getSlot, type StorageSlot } from "@/lib/storage-slots";
+import { canStoreItemNow, findAvailableSlot, findSlotsForCabinet, getSlot, type StorageSlot } from "@/lib/storage-slots";
 
 /**
  * Chemistry World — Laboratory Workspace state (Stage 5). Тот же принцип,
@@ -121,6 +121,8 @@ export interface ToolItem extends PortableItemSpatialState {
   temperatureC?: number; // температура корпуса горелки; для остальных инструментов не задана
 }
 
+export type CapState = "closed" | "open";
+
 export interface StockBottle extends PortableItemSpatialState {
   id: string;
   substanceId: string;
@@ -128,6 +130,7 @@ export interface StockBottle extends PortableItemSpatialState {
   // на ту же массу, которая добавляется в Chemistry Engine.
   capacityGrams: number;
   remainingGrams: number;
+  capState: CapState;
   // Stage S-2 — Free Placement: поворот бутылки на столе, тот же смысл, что
   // rotationY у ContainerItem/ToolItem. Раньше отсутствовал, потому что
   // бутылки нельзя было ни повернуть, ни (из-за пробела в MOVE_ITEM ниже)
@@ -191,6 +194,8 @@ type Action =
     }
   | { type: "RELEASE_FROM_SLOT"; id: string }
   | { type: "TOGGLE_CABINET"; id: string }
+  | { type: "TOGGLE_BOTTLE_CAP"; id: string }
+  | { type: "SET_BOTTLE_CAP_STATE"; id: string; capState: CapState }
   | { type: "TOGGLE_BURNER"; id: string }
   | { type: "ADD_SUBSTANCE"; containerId: string; substanceId: string; grams: number }
   | { type: "POUR_FROM_STOCK"; bottleId: string; targetId: string; grams: number }
@@ -290,11 +295,36 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
       return { ...state, containers, tools, stockBottles };
     }
 
-    case "TOGGLE_CABINET":
+    case "TOGGLE_CABINET": {
+      const targetCabinet = state.cabinets.find((c) => c.id === action.id);
+      if (targetCabinet?.isOpen) {
+        const slotsInCabinet = new Set(findSlotsForCabinet(action.id).map((s) => s.id));
+        const hasOpenBottle = state.stockBottles.some(
+          (b) => b.storageSlotId !== null && slotsInCabinet.has(b.storageSlotId) && b.capState === "open"
+        );
+        if (hasOpenBottle) return state;
+      }
       return {
         ...state,
         cabinets: state.cabinets.map((cabinet) =>
           cabinet.id === action.id ? { ...cabinet, isOpen: !cabinet.isOpen } : cabinet
+        ),
+      };
+    }
+
+    case "TOGGLE_BOTTLE_CAP":
+      return {
+        ...state,
+        stockBottles: state.stockBottles.map((b) =>
+          b.id === action.id ? { ...b, capState: b.capState === "open" ? "closed" : "open" } : b
+        ),
+      };
+
+    case "SET_BOTTLE_CAP_STATE":
+      return {
+        ...state,
+        stockBottles: state.stockBottles.map((b) =>
+          b.id === action.id ? { ...b, capState: action.capState } : b
         ),
       };
 
@@ -330,7 +360,7 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
       if (state.emergencyStop) return state;
       const bottle = state.stockBottles.find((b) => b.id === action.bottleId);
       const target = state.containers.find((c) => c.id === action.targetId);
-      if (!bottle || !target || action.grams <= 0 || bottle.remainingGrams <= 0) return state;
+      if (!bottle || !target || action.grams <= 0 || bottle.remainingGrams <= 0 || bottle.capState !== "open") return state;
 
       const transferredGrams = Math.min(action.grams, bottle.remainingGrams);
       const updatedData = addSubstance(target.data, bottle.substanceId, transferredGrams);
@@ -510,12 +540,12 @@ function createInitialState(): WorkspaceState {
   );
 
   const stockBottles: StockBottle[] = [
-    { id: "stock-water", substanceId: "water", position: [-3.2, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500 },
-    { id: "stock-nacl", substanceId: "nacl", position: [-2.1, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500 },
-    { id: "stock-hcl", substanceId: "hcl", position: [-1.0, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500 },
-    { id: "stock-naoh", substanceId: "naoh", position: [0.1, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500 },
-    { id: "stock-cuso4", substanceId: "cuso4", position: [1.2, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500 },
-    { id: "stock-agno3", substanceId: "agno3", position: [2.3, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500 },
+    { id: "stock-water", substanceId: "water", position: [-3.2, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500, capState: "closed" },
+    { id: "stock-nacl", substanceId: "nacl", position: [-2.1, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500, capState: "closed" },
+    { id: "stock-hcl", substanceId: "hcl", position: [-1.0, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500, capState: "closed" },
+    { id: "stock-naoh", substanceId: "naoh", position: [0.1, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500, capState: "closed" },
+    { id: "stock-cuso4", substanceId: "cuso4", position: [1.2, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500, capState: "closed" },
+    { id: "stock-agno3", substanceId: "agno3", position: [2.3, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500, capState: "closed" },
   ];
 
   const tools: ToolItem[] = [
@@ -556,6 +586,8 @@ interface WorkspaceContextValue {
   ) => void;
   releaseItemFromSlot: (id: string) => void;
   toggleCabinet: (id: string) => void;
+  toggleBottleCap: (id: string) => void;
+  setBottleCapState: (id: string, capState: CapState) => void;
   findAvailableStorageSlot: (id: string, cabinetId: string) => StorageSlot | null;
   storeItemInCabinet: (id: string, cabinetId: string) => boolean;
   toggleBurner: (id: string) => void;
@@ -576,14 +608,14 @@ export function ChemistryWorkspaceProvider({ children }: { children: React.React
 
   const findAvailableStorageSlot = useCallback(
     (id: string, cabinetId: string): StorageSlot | null => {
-      const itemExists = [...state.containers, ...state.stockBottles, ...state.tools].some((item) => item.id === id);
-      if (!itemExists) return null;
+      const item = [...state.containers, ...state.stockBottles, ...state.tools].find((item) => item.id === id);
+      if (!item || !canStoreItemNow(item)) return null;
       const capability = getInteractable(id);
       if (!capability) return null;
       const occupied = new Set(
         [...state.containers, ...state.stockBottles, ...state.tools]
-          .filter((item) => item.id !== id && item.storageSlotId !== null)
-          .map((item) => item.storageSlotId as string)
+          .filter((i) => i.id !== id && i.storageSlotId !== null)
+          .map((i) => i.storageSlotId as string)
       );
       return findAvailableSlot(cabinetId, capability, occupied);
     },
@@ -628,6 +660,8 @@ export function ChemistryWorkspaceProvider({ children }: { children: React.React
     ),
     releaseItemFromSlot: useCallback((id) => dispatch({ type: "RELEASE_FROM_SLOT", id }), []),
     toggleCabinet: useCallback((id) => dispatch({ type: "TOGGLE_CABINET", id }), []),
+    toggleBottleCap: useCallback((id) => dispatch({ type: "TOGGLE_BOTTLE_CAP", id }), []),
+    setBottleCapState: useCallback((id, capState) => dispatch({ type: "SET_BOTTLE_CAP_STATE", id, capState }), []),
     findAvailableStorageSlot,
     storeItemInCabinet,
     toggleBurner: useCallback((id) => dispatch({ type: "TOGGLE_BURNER", id }), []),

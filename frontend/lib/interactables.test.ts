@@ -87,13 +87,13 @@ describe("state-dependent pickup policies", () => {
   });
 
   it.each(["stock-water", "stock-nacl", "stock-hcl", "stock-naoh", "stock-cuso4", "stock-agno3"])(
-    "%s не блокируется до появления cap-state, но готов к Stage S-4",
+    "%s разрешает pickup независимо от состояния крышки в Stage S-4",
     (id) => {
       const bottle = INTERACTABLE_REGISTRY[id];
       expect(bottle.canPickUpNow({})).toBe(true);
-      expect(bottle.canPickUpNow({ isCapOpen: false })).toBe(true);
-      expect(bottle.canPickUpNow({ isCapOpen: true })).toBe(false);
-      expect(bottle.blockedReason({ isCapOpen: true })).toBe("Сначала закройте крышку");
+      expect(bottle.canPickUpNow({ capState: "closed" })).toBe(true);
+      expect(bottle.canPickUpNow({ capState: "open" })).toBe(true);
+      expect(bottle.blockedReason({})).toBeNull();
     }
   );
 

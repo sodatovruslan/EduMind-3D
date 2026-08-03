@@ -6,21 +6,31 @@
 
 Обновляется по ходу работы.
 
-Последнее обновление: 2026-08-03 (Stage S-3 Shelves & Cabinets ЗАВЕРШЁН и ПРИНЯТ).
+Последнее обновление: 2026-08-03 (Stage S-4 Real Bottle Caps ЗАВЕРШЁН и ПОЛНОСТЬЮ ВАЛИДИРОВАН).
 
 ---
 
 ## Актуальное состояние на 2026-08-03
 
-- ** HEAD перед коммитом S-3**: `adaae48` ("feat(chemistry): add Stage S-2.5 interactable coverage")
-- **Текущий этап**: **Stage S-3 завершён, вручную проверен и принят пользователем**. Готовится коммит `feat(chemistry): complete Stage S-3 shelves and cabinets`. Следующий этап — **Stage S-4 (Bottle Caps)**.
+- **HEAD (Stage S-3 Commit)**: `4e1b174` ("feat(chemistry): complete Stage S-3 shelves and cabinets")
+- **Текущий этап**: **Stage S-4 Real Bottle Caps реализован, проверен и полностью готов к сдаче**.
 - **Проверки**:
   - `npx tsc --noEmit` — **0 ошибок** (PASS)
   - `npm run lint` — **0 предупреждений/ошибок** (PASS)
-  - `npx vitest run` — **318/318 PASSED** (PASS)
+  - `npx vitest run` — **328/328 PASSED** (PASS)
   - `pytest -q` — **44/44 PASSED** (PASS)
-  - `npx playwright test e2e/chemistry-s3-cabinets.spec.ts` — **5/5 PASSED** (PASS)
+  - `npx playwright test e2e/chemistry-s4-caps.spec.ts` — **3/3 PASSED** (PASS)
   - `npm run build` — **Успешно** (PASS)
+
+### Выполненный объем Stage S-4:
+1. **Единый capState в Workspace State**: добавлено `capState: "closed" | "open"` в `StockBottle`. Все 6 бутылок на старте имею `closed`.
+2. **Domain Action & Reducer**: добавлено `TOGGLE_BOTTLE_CAP`, `POUR_FROM_STOCK` заблокирован при закрытой крышке.
+3. **Storage & Cabinet Safety**:
+   - `canStoreItemNow` в `lib/storage-slots.ts` проверяет `capState !== "open"`.
+   - Открытая бутылка не убирается в шкаф (подсказка `"Закройте крышку перед хранением"`).
+   - Шкаф не закрывается, если внутри есть открытая бутылка (подсказка `"Сначала закройте крышки бутылок в шкафу"`).
+4. **Управление (клавиша R)**: переключает крышку для `heldId` (приоритет) или `focusedId` (если `heldId === null`).
+5. **Рендеринг и визуализация**: визуальный 3D меш крышки `BottleCapMesh` с плавной lerp анимацией.
 
 ---
 

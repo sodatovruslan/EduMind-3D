@@ -87,3 +87,23 @@ export function findAvailableSlot(
     ) ?? null
   );
 }
+
+export interface StorageConstraintItemState {
+  id?: string;
+  capState?: "closed" | "open";
+  isOn?: boolean;
+  hasActiveFlame?: boolean;
+  temperatureC?: number;
+}
+
+export function canStoreItemNow(itemState: StorageConstraintItemState): boolean {
+  if (itemState.capState === "open") return false;
+  if (itemState.isOn === true || itemState.hasActiveFlame === true) return false;
+  return true;
+}
+
+export function getBlockedStorageReason(itemState: StorageConstraintItemState): string | null {
+  if (itemState.capState === "open") return "Закройте крышку перед хранением";
+  if (itemState.isOn === true || itemState.hasActiveFlame === true) return "Сначала выключите горелку";
+  return null;
+}

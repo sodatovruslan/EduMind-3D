@@ -1101,6 +1101,7 @@ function FocusRing({ halfHeight, radius = 0.36 }: { halfHeight: number; radius?:
 // повторяет уже существующие подсказки (rounded-md/bg-slate-900/85/text-xs) —
 // редизайн интерфейса Stage S-1 не делает.
 function InteractionPrompt() {
+  const { state } = useChemistryWorkspace();
   const {
     focusedId,
     focusedKind,
@@ -1111,10 +1112,15 @@ function InteractionPrompt() {
     canStoreInCabinet,
   } = useChemistryInteraction();
 
-  // Stage S-2 — текст меняется по валидности текущей точки размещения:
-  // "поставить" только когда candidate есть (зелёное кольцо), иначе честно
-  // говорит, что тут нельзя — E в этот момент ничего не сделает
   let text: string | null = null;
+  const activeBottleId = heldId ?? (focusedKind === "item" ? focusedId : null);
+  const activeBottle = state.stockBottles.find((b) => b.id === activeBottleId);
+  const capHint = activeBottle
+    ? activeBottle.capState === "open"
+      ? "  ·  R — Закрыть крышку"
+      : "  ·  R — Открыть крышку"
+    : "";
+
   if (heldId) {
     const cap = getInteractable(heldId);
     const name = cap ? `: ${cap.displayName}` : "";
@@ -1123,6 +1129,8 @@ function InteractionPrompt() {
       const cabinetState = getCabinetState(focusedId);
       if (!cabinetState?.isOpen) {
         text = `Шкаф закрыт · T — к столу · C — к шкафам · Esc — вернуть${name}`;
+      } else if (activeBottle && activeBottle.capState === "open") {
+        text = `Закройте крышку перед хранением · T — к столу · C — к шкафам · Esc — вернуть${name}`;
       } else if (canStoreInCabinet(heldId, focusedId)) {
         text = `E — Убрать в шкаф: ${cabinet?.displayName ?? "Шкаф"} · T — к столу · C — к шкафам · Esc — вернуть${name}`;
       } else {
@@ -1130,18 +1138,28 @@ function InteractionPrompt() {
       }
     } else {
       text = placementCandidate
-        ? `E — Поставить${name}  ·  T — к столу  ·  C — к шкафам  ·  ←/→ — повернуть  ·  Esc — отменить`
-        : `Здесь нельзя поставить  ·  T — к столу  ·  C — к шкафам  ·  ←/→ — повернуть  ·  Esc — вернуть${name}`;
+        ? `E — Поставить${name}${capHint}  ·  T — к столу  ·  C — к шкафам  ·  ←/→ — повернуть  ·  Esc — отменить`
+        : `Здесь нельзя поставить${capHint}  ·  T — к столу  ·  C — к шкафам  ·  ←/→ — повернуть  ·  Esc — вернуть${name}`;
     }
   } else if (focusedId && focusedKind === "cabinet") {
     const cabinet = getCabinet(focusedId);
-    const action = getCabinetState(focusedId)?.isOpen ? "Закрыть" : "Открыть";
-    text = `E — ${action}: ${cabinet?.displayName ?? "Шкаф"}`;
+    const isOpen = getCabinetState(focusedId)?.isOpen;
+    if (isOpen) {
+      const slotsInCabinet = new Set(findSlotsForCabinet(focusedId).map((s) => s.id));
+      const hasOpenBottle = state.stockBottles.some(
+        (b) => b.storageSlotId !== null && slotsInCabinet.has(b.storageSlotId) && b.capState === "open"
+      );
+      text = hasOpenBottle
+        ? `Сначала закройте крышки бутылок в шкафу : ${cabinet?.displayName ?? "Шкаф"}`
+        : `E — Закрыть: ${cabinet?.displayName ?? "Шкаф"}`;
+    } else {
+      text = `E — Открыть: ${cabinet?.displayName ?? "Шкаф"}`;
+    }
   } else if (focusedId && focusedKind === "item") {
     const cap = getInteractable(focusedId);
     if (cap) {
       const blockedReason = getPickupBlockedReason(focusedId);
-      text = blockedReason ?? `E — Взять: ${cap.displayName}`;
+      text = blockedReason ?? `E — Взять: ${cap.displayName}${capHint}`;
     }
   }
 
@@ -1762,6 +1780,31 @@ function ContainerMesh({
   );
 }
 
+function BottleCapMesh({ capState }: { capState: "closed" | "open" }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const isOpen = capState === "open";
+  const targetPos = isOpen ? [0.08, 0.26, 0.03] : [0, 0.24, 0];
+  const targetRotZ = isOpen ? 0.25 : 0;
+
+  useFrame((_, delta) => {
+    if (!groupRef.current) return;
+    const step = Math.min(1, delta * 12);
+    groupRef.current.position.x = THREE.MathUtils.lerp(groupRef.current.position.x, targetPos[0], step);
+    groupRef.current.position.y = THREE.MathUtils.lerp(groupRef.current.position.y, targetPos[1], step);
+    groupRef.current.position.z = THREE.MathUtils.lerp(groupRef.current.position.z, targetPos[2], step);
+    groupRef.current.rotation.z = THREE.MathUtils.lerp(groupRef.current.rotation.z, targetRotZ, step);
+  });
+
+  return (
+    <group ref={groupRef} position={[0, 0.24, 0]}>
+      <mesh castShadow>
+        <cylinderGeometry args={[0.042, 0.045, 0.05, 12]} />
+        <meshStandardMaterial color="#475569" roughness={0.3} metalness={0.5} />
+      </mesh>
+    </group>
+  );
+}
+
 function StockBottleMesh({ bottle, isPouring }: { bottle: StockBottle; isPouring: boolean }) {
   const [hovered, setHovered] = useState(false);
   const { onPointerDown, isDragging } = useDragHandlers(bottle.id);
@@ -1790,15 +1833,14 @@ function StockBottleMesh({ bottle, isPouring }: { bottle: StockBottle; isPouring
         focusHalfHeight={0.16}
         focusRadius={capability?.interactionRadius}
       >
-        {!isHeld && (
-          <Html center style={{ pointerEvents: "none" }}>
-            <span
-              data-testid={`stock-bottle-target-${bottle.id}`}
-              data-remaining-grams={bottle.remainingGrams}
-              className="block h-px w-px opacity-0"
-            />
-          </Html>
-        )}
+        <Html center style={{ pointerEvents: "none" }}>
+          <span
+            data-testid={`stock-bottle-target-${bottle.id}`}
+            data-remaining-grams={bottle.remainingGrams}
+            data-cap-state={bottle.capState}
+            className="block h-px w-px opacity-0"
+          />
+        </Html>
         <Hitbox
           radius={interaction.registeredCapability?.interactionRadius ?? 0.17}
           height={interaction.registeredCapability?.interactionHeight ?? 0.5}
@@ -1826,6 +1868,7 @@ function StockBottleMesh({ bottle, isPouring }: { bottle: StockBottle; isPouring
                 roughness={0.4}
               />
             </mesh>
+            <BottleCapMesh capState={bottle.capState} />
           </PourTilt>
         </GrabLift>
 
@@ -2695,6 +2738,7 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
     setItemTransform,
     releaseItemFromSlot,
     toggleCabinet,
+    toggleBottleCap,
     findAvailableStorageSlot,
     storeItemInCabinet,
   } = useChemistryWorkspace();
@@ -2928,6 +2972,7 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
               isOn: tool?.isOn,
               temperatureC: tool?.temperatureC,
               hasActiveFlame: tool?.isOn,
+              capState: bottle?.capState,
             };
           }}
           isInteractableAccessible={(id) => {
@@ -2948,6 +2993,7 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
             })
           }
           onToggleCabinet={toggleCabinet}
+          onToggleCap={toggleBottleCap}
           getCabinetState={(id) => {
             const cabinet = state.cabinets.find((entry) => entry.id === id);
             return cabinet ? { isOpen: cabinet.isOpen } : null;

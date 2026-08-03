@@ -18,6 +18,7 @@ export interface InteractableRuntimeState {
   temperatureC?: number;
   hasActiveFlame?: boolean;
   isCapOpen?: boolean;
+  capState?: "closed" | "open";
 }
 
 export interface PlacementFootprint {
@@ -124,8 +125,6 @@ function stockBottle(displayName: string, storageKind: string): InteractableConf
     interactionHeight: 0.5,
     placementFootprint: { shape: "circle", radius: 0.17 },
     tableElevation: 0.16,
-    canPickUpNow: canPickUpCappedBottle,
-    blockedReason: cappedBottleBlockedReason,
     legacyDragMode: "pour",
   });
 }

@@ -169,6 +169,21 @@ export async function aimCameraAtSpikeCabinet(
   await page.waitForTimeout(700);
 }
 
+export async function focusSpikeCabinet(
+  page: Page,
+  canvas: IsolatedChemistrySession["canvas"]
+) {
+  const door = await projectedCenter(page, "spike-cabinet-door-target");
+  const state = page.getByTestId("spike-cabinet-state");
+  for (const [dx, dy] of [[0, 0], [0, -12], [-12, 0], [12, 0], [0, 12], [-20, 0], [20, 0]]) {
+    await page.mouse.move(door.x + dx, door.y + dy);
+    await page.waitForTimeout(150);
+    if ((await state.getAttribute("data-focused")) === "true") {
+      return;
+    }
+  }
+}
+
 export async function openSpikeCabinet(
   page: Page,
   canvas: IsolatedChemistrySession["canvas"]

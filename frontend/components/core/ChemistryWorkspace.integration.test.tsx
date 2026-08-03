@@ -78,6 +78,11 @@ describe("Drop / добавление вещества (реальный Chemist
     const conservedMassBefore = initialWater.remainingGrams + initialSalt.remainingGrams;
     const conservedWaterVolumeBefore = initialWater.remainingGrams / 1.0;
 
+    act(() => {
+      result.current.toggleBottleCap("stock-water");
+      result.current.toggleBottleCap("stock-nacl");
+    });
+
     act(() => result.current.pourFromStockBottle("stock-water", "beaker-1", 100));
     let beaker = result.current.state.containers.find((c) => c.id === "beaker-1")!;
     let water = result.current.state.stockBottles.find((b) => b.id === "stock-water")!;
