@@ -158,6 +158,57 @@ export async function bringProjectedTargetIntoCanvas(
   throw new Error(`OrbitControls could not bring projected target into canvas: ${JSON.stringify({ target, canvas })}`);
 }
 
+export async function aimCameraAtSpikeCabinet(
+  page: Page,
+  canvas: IsolatedChemistrySession["canvas"]
+) {
+  await page.mouse.move(canvas.x + canvas.width * 0.5, canvas.y + canvas.height * 0.78);
+  await page.mouse.down();
+  await page.mouse.move(canvas.x + canvas.width * 0.5, canvas.y + canvas.height * 0.48, { steps: 12 });
+  await page.mouse.up();
+  await page.waitForTimeout(700);
+}
+
+export async function openSpikeCabinet(
+  page: Page,
+  canvas: IsolatedChemistrySession["canvas"]
+) {
+  const door = await projectedCenter(page, "spike-cabinet-door-target");
+  if (
+    door.x < canvas.x ||
+    door.x > canvas.x + canvas.width ||
+    door.y < canvas.y ||
+    door.y > canvas.y + canvas.height
+  ) {
+    throw new Error(`Cabinet marker is outside canvas: ${JSON.stringify({ door, canvas })}`);
+  }
+  const state = page.getByTestId("spike-cabinet-state");
+  if ((await state.getAttribute("data-open")) === "true") return;
+
+  for (const [dx, dy] of [[0, 0], [0, -12], [-12, 0], [12, 0], [0, 12], [-20, 0], [20, 0]]) {
+    await page.mouse.move(door.x + dx, door.y + dy);
+    await page.waitForTimeout(100);
+    await page.mouse.click(door.x + dx, door.y + dy);
+    await page.waitForTimeout(150);
+    if ((await state.getAttribute("data-focused")) === "true") {
+      await page.keyboard.press("KeyE");
+      await page.waitForTimeout(300);
+    }
+    if ((await state.getAttribute("data-open")) === "true") {
+      await page.waitForTimeout(600);
+      return;
+    }
+  }
+
+  // Backup fallback: press E when aiming at door center
+  await page.mouse.move(door.x, door.y);
+  await page.keyboard.press("KeyE");
+  await page.waitForTimeout(600);
+  if ((await state.getAttribute("data-open")) !== "true") {
+    throw new Error(`Cabinet marker did not raycast or open: ${JSON.stringify({ door, canvas })}`);
+  }
+}
+
 export async function focusItem(
   page: Page,
   id: string,

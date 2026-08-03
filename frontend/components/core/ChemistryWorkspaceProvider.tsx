@@ -20,6 +20,9 @@ import {
   type HazardLevel,
   type HazardResult,
 } from "@/lib/hazard-engine";
+import { CABINET_IDS } from "@/lib/cabinets";
+import { getInteractable } from "@/lib/interactables";
+import { findAvailableSlot, getSlot, type StorageSlot } from "@/lib/storage-slots";
 
 /**
  * Chemistry World — Laboratory Workspace state (Stage 5). Тот же принцип,
@@ -32,11 +35,16 @@ import {
 export type ContainerVisualKind = ContainerKind;
 export type ToolKind = "burner" | "stand" | "pipette" | "thermometer" | "glass_rod" | "scale";
 
-export interface ContainerItem {
-  id: string;
-  kind: ContainerVisualKind;
+export interface PortableItemSpatialState {
   position: [number, number];
   rotationY: number;
+  elevation: number;
+  storageSlotId: string | null;
+}
+
+export interface ContainerItem extends PortableItemSpatialState {
+  id: string;
+  kind: ContainerVisualKind;
   data: Container;
   // Stage 5.5 v2 — Hazard Simulation: герметично закрыт (можно накапливать
   // давление) или открыт (пар свободно выходит)
@@ -51,7 +59,14 @@ export interface ContainerItem {
   lastHazardTemperatureC: number;
 }
 
-function createContainerItem(id: string, kind: ContainerVisualKind, position: [number, number], rotationY = 0): ContainerItem {
+function createContainerItem(
+  id: string,
+  kind: ContainerVisualKind,
+  position: [number, number],
+  rotationY = 0,
+  elevation = 0.05,
+  storageSlotId: string | null = null
+): ContainerItem {
   const data = createEmptyContainer(id, kind);
   const profile = CONTAINER_PHYSICS[kind];
   return {
@@ -59,6 +74,8 @@ function createContainerItem(id: string, kind: ContainerVisualKind, position: [n
     kind,
     position,
     rotationY,
+    elevation,
+    storageSlotId,
     data,
     isSealed: false,
     integrity: createDefaultIntegrity(profile),
@@ -97,25 +114,32 @@ export function isContainerOnStand(container: ContainerItem, tools: ToolItem[]):
   return Math.sqrt(dx * dx + dz * dz) <= STAND_PROXIMITY_RADIUS;
 }
 
-export interface ToolItem {
+export interface ToolItem extends PortableItemSpatialState {
   id: string;
   kind: ToolKind;
-  position: [number, number];
-  rotationY: number;
   isOn?: boolean; // для горелки
   temperatureC?: number; // температура корпуса горелки; для остальных инструментов не задана
 }
 
-export interface StockBottle {
+export interface StockBottle extends PortableItemSpatialState {
   id: string;
   substanceId: string;
-  position: [number, number];
+  // Реальный запас вещества: перенос в сосуд атомарно уменьшает это число
+  // на ту же массу, которая добавляется в Chemistry Engine.
+  capacityGrams: number;
+  remainingGrams: number;
   // Stage S-2 — Free Placement: поворот бутылки на столе, тот же смысл, что
   // rotationY у ContainerItem/ToolItem. Раньше отсутствовал, потому что
   // бутылки нельзя было ни повернуть, ни (из-за пробела в MOVE_ITEM ниже)
   // реально передвинуть — оба этих ограничения снимает Stage S-2.
-  rotationY: number;
 }
+
+export interface CabinetState {
+  id: string;
+  isOpen: boolean;
+}
+
+export type ItemTransform = PortableItemSpatialState;
 
 export interface ReactionLogEntry {
   reactionId: string;
@@ -137,6 +161,7 @@ interface WorkspaceState {
   containers: ContainerItem[];
   tools: ToolItem[];
   stockBottles: StockBottle[];
+  cabinets: CabinetState[];
   selectedItemId: string | null;
   activeContainerId: string; // сосуд, который проверяет Experiment Validator
   reactionLog: ReactionLogEntry[]; // id реакций, реально сработавших за сессию (по всем сосудам)
@@ -156,9 +181,19 @@ type Action =
   // (не дискретный) поворот в момент подтверждённого размещения — ROTATE_ITEM
   // выше умеет только шаг +45°, для размещения нужен ровно накопленный в
   // руке поворот
-  | { type: "SET_ITEM_TRANSFORM"; id: string; position: [number, number]; rotationY: number }
+  | {
+      type: "SET_ITEM_TRANSFORM";
+      id: string;
+      position: [number, number];
+      rotationY: number;
+      elevation?: number;
+      storageSlotId?: string | null;
+    }
+  | { type: "RELEASE_FROM_SLOT"; id: string }
+  | { type: "TOGGLE_CABINET"; id: string }
   | { type: "TOGGLE_BURNER"; id: string }
   | { type: "ADD_SUBSTANCE"; containerId: string; substanceId: string; grams: number }
+  | { type: "POUR_FROM_STOCK"; bottleId: string; targetId: string; grams: number }
   | { type: "POUR"; sourceId: string; targetId: string }
   | { type: "HEAT_TICK"; deltaC: number }
   | { type: "SET_ACTIVE_CONTAINER"; id: string }
@@ -207,16 +242,61 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
     // data (химия) удерживаемого предмета
     case "SET_ITEM_TRANSFORM": {
       const containers = state.containers.map((c) =>
-        c.id === action.id ? { ...c, position: action.position, rotationY: action.rotationY } : c
+        c.id === action.id
+          ? {
+              ...c,
+              position: action.position,
+              rotationY: action.rotationY,
+              elevation: action.elevation ?? c.elevation,
+              storageSlotId: action.storageSlotId === undefined ? c.storageSlotId : action.storageSlotId,
+            }
+          : c
       );
       const tools = state.tools.map((t) =>
-        t.id === action.id ? { ...t, position: action.position, rotationY: action.rotationY } : t
+        t.id === action.id
+          ? {
+              ...t,
+              position: action.position,
+              rotationY: action.rotationY,
+              elevation: action.elevation ?? t.elevation,
+              storageSlotId: action.storageSlotId === undefined ? t.storageSlotId : action.storageSlotId,
+            }
+          : t
       );
       const stockBottles = state.stockBottles.map((b) =>
-        b.id === action.id ? { ...b, position: action.position, rotationY: action.rotationY } : b
+        b.id === action.id
+          ? {
+              ...b,
+              position: action.position,
+              rotationY: action.rotationY,
+              elevation: action.elevation ?? b.elevation,
+              storageSlotId: action.storageSlotId === undefined ? b.storageSlotId : action.storageSlotId,
+            }
+          : b
       );
       return { ...state, containers, tools, stockBottles };
     }
+
+    case "RELEASE_FROM_SLOT": {
+      const containers = state.containers.map((item) =>
+        item.id === action.id ? { ...item, storageSlotId: null } : item
+      );
+      const tools = state.tools.map((item) =>
+        item.id === action.id ? { ...item, storageSlotId: null } : item
+      );
+      const stockBottles = state.stockBottles.map((item) =>
+        item.id === action.id ? { ...item, storageSlotId: null } : item
+      );
+      return { ...state, containers, tools, stockBottles };
+    }
+
+    case "TOGGLE_CABINET":
+      return {
+        ...state,
+        cabinets: state.cabinets.map((cabinet) =>
+          cabinet.id === action.id ? { ...cabinet, isOpen: !cabinet.isOpen } : cabinet
+        ),
+      };
 
     case "TOGGLE_BURNER": {
       // Emergency Stop блокирует новый нагрев, но не блокирует его выключение —
@@ -243,6 +323,31 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
         containers: state.containers.map((c) => (c.id === action.containerId ? { ...c, data: reacted } : c)),
         reactionLog: log,
         firstAddedOrder: { ...state.firstAddedOrder, [action.containerId]: newOrder },
+      };
+    }
+
+    case "POUR_FROM_STOCK": {
+      if (state.emergencyStop) return state;
+      const bottle = state.stockBottles.find((b) => b.id === action.bottleId);
+      const target = state.containers.find((c) => c.id === action.targetId);
+      if (!bottle || !target || action.grams <= 0 || bottle.remainingGrams <= 0) return state;
+
+      const transferredGrams = Math.min(action.grams, bottle.remainingGrams);
+      const updatedData = addSubstance(target.data, bottle.substanceId, transferredGrams);
+      const { container: reacted, log } = applyReactionsAndLog(updatedData, action.targetId, state.reactionLog);
+      const existingOrder = state.firstAddedOrder[action.targetId] ?? [];
+      const newOrder = existingOrder.includes(bottle.substanceId)
+        ? existingOrder
+        : [...existingOrder, bottle.substanceId];
+
+      return {
+        ...state,
+        containers: state.containers.map((c) => (c.id === action.targetId ? { ...c, data: reacted } : c)),
+        stockBottles: state.stockBottles.map((b) =>
+          b.id === action.bottleId ? { ...b, remainingGrams: b.remainingGrams - transferredGrams } : b
+        ),
+        reactionLog: log,
+        firstAddedOrder: { ...state.firstAddedOrder, [action.targetId]: newOrder },
       };
     }
 
@@ -393,30 +498,40 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
 function createInitialState(): WorkspaceState {
   const beaker = createContainerItem("beaker-1", "beaker", [0, 0]);
   const testTube = createContainerItem("test-tube-1", "test_tube", [-1.2, 0.6]);
-  const flask = createContainerItem("flask-1", "flask", [1.2, 0.6]);
+  const flaskSlot = getSlot("cabinet-left-inner-slot-1");
+  if (!flaskSlot) throw new Error("Missing initial flask storage slot");
+  const flask = createContainerItem(
+    "flask-1",
+    "flask",
+    flaskSlot.position,
+    flaskSlot.rotationY,
+    flaskSlot.elevation,
+    flaskSlot.id
+  );
 
   const stockBottles: StockBottle[] = [
-    { id: "stock-water", substanceId: "water", position: [-3.2, -1.6], rotationY: 0 },
-    { id: "stock-nacl", substanceId: "nacl", position: [-2.1, -1.6], rotationY: 0 },
-    { id: "stock-hcl", substanceId: "hcl", position: [-1.0, -1.6], rotationY: 0 },
-    { id: "stock-naoh", substanceId: "naoh", position: [0.1, -1.6], rotationY: 0 },
-    { id: "stock-cuso4", substanceId: "cuso4", position: [1.2, -1.6], rotationY: 0 },
-    { id: "stock-agno3", substanceId: "agno3", position: [2.3, -1.6], rotationY: 0 },
+    { id: "stock-water", substanceId: "water", position: [-3.2, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500 },
+    { id: "stock-nacl", substanceId: "nacl", position: [-2.1, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500 },
+    { id: "stock-hcl", substanceId: "hcl", position: [-1.0, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500 },
+    { id: "stock-naoh", substanceId: "naoh", position: [0.1, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500 },
+    { id: "stock-cuso4", substanceId: "cuso4", position: [1.2, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500 },
+    { id: "stock-agno3", substanceId: "agno3", position: [2.3, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500 },
   ];
 
   const tools: ToolItem[] = [
-    { id: "burner-1", kind: "burner", position: [2.6, 1.4], rotationY: 0, isOn: false, temperatureC: 20 },
-    { id: "stand-1", kind: "stand", position: [2.6, 1.4], rotationY: 0 },
-    { id: "pipette-1", kind: "pipette", position: [-2.6, 1.4], rotationY: 0 },
-    { id: "thermometer-1", kind: "thermometer", position: [0, 1.4], rotationY: 0 },
-    { id: "glass-rod-1", kind: "glass_rod", position: [-1.8, 1.4], rotationY: 0 },
-    { id: "scale-1", kind: "scale", position: [1.5, -0.4], rotationY: 0 },
+    { id: "burner-1", kind: "burner", position: [2.6, 1.4], rotationY: 0, elevation: 0, storageSlotId: null, isOn: false, temperatureC: 20 },
+    { id: "stand-1", kind: "stand", position: [2.6, 1.4], rotationY: 0, elevation: 0, storageSlotId: null },
+    { id: "pipette-1", kind: "pipette", position: [-2.6, 1.4], rotationY: 0, elevation: 0.05, storageSlotId: null },
+    { id: "thermometer-1", kind: "thermometer", position: [0, 1.4], rotationY: 0, elevation: 0.05, storageSlotId: null },
+    { id: "glass-rod-1", kind: "glass_rod", position: [-1.8, 1.4], rotationY: 0, elevation: 0.05, storageSlotId: null },
+    { id: "scale-1", kind: "scale", position: [1.5, -0.4], rotationY: 0, elevation: 0, storageSlotId: null },
   ];
 
   return {
     containers: [beaker, testTube, flask],
     tools,
     stockBottles,
+    cabinets: CABINET_IDS.map((id) => ({ id, isOpen: false })),
     selectedItemId: null,
     activeContainerId: beaker.id,
     reactionLog: [],
@@ -433,9 +548,19 @@ interface WorkspaceContextValue {
   select: (id: string | null) => void;
   moveItem: (id: string, position: [number, number]) => void;
   rotateItem: (id: string) => void;
-  setItemTransform: (id: string, position: [number, number], rotationY: number) => void;
+  setItemTransform: (
+    id: string,
+    position: [number, number],
+    rotationY: number,
+    options?: { elevation?: number; storageSlotId?: string | null }
+  ) => void;
+  releaseItemFromSlot: (id: string) => void;
+  toggleCabinet: (id: string) => void;
+  findAvailableStorageSlot: (id: string, cabinetId: string) => StorageSlot | null;
+  storeItemInCabinet: (id: string, cabinetId: string) => boolean;
   toggleBurner: (id: string) => void;
   addSubstanceToContainer: (containerId: string, substanceId: string, grams: number) => void;
+  pourFromStockBottle: (bottleId: string, targetId: string, grams: number) => void;
   pourInto: (sourceId: string, targetId: string) => void;
   heatTick: (deltaC: number) => void;
   setActiveContainer: (id: string) => void;
@@ -449,18 +574,69 @@ const WorkspaceContext = createContext<WorkspaceContextValue | undefined>(undefi
 export function ChemistryWorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(reducer, undefined, createInitialState);
 
+  const findAvailableStorageSlot = useCallback(
+    (id: string, cabinetId: string): StorageSlot | null => {
+      const itemExists = [...state.containers, ...state.stockBottles, ...state.tools].some((item) => item.id === id);
+      if (!itemExists) return null;
+      const capability = getInteractable(id);
+      if (!capability) return null;
+      const occupied = new Set(
+        [...state.containers, ...state.stockBottles, ...state.tools]
+          .filter((item) => item.id !== id && item.storageSlotId !== null)
+          .map((item) => item.storageSlotId as string)
+      );
+      return findAvailableSlot(cabinetId, capability, occupied);
+    },
+    [state.containers, state.stockBottles, state.tools]
+  );
+
+  const storeItemInCabinet = useCallback(
+    (id: string, cabinetId: string): boolean => {
+      const cabinet = state.cabinets.find((entry) => entry.id === cabinetId);
+      if (!cabinet?.isOpen) return false;
+      const slot = findAvailableStorageSlot(id, cabinetId);
+      if (!slot) return false;
+      dispatch({
+        type: "SET_ITEM_TRANSFORM",
+        id,
+        position: slot.position,
+        rotationY: slot.rotationY,
+        elevation: slot.elevation,
+        storageSlotId: slot.id,
+      });
+      return true;
+    },
+    [findAvailableStorageSlot, state.cabinets]
+  );
+
   const value: WorkspaceContextValue = {
     state,
     select: useCallback((id) => dispatch({ type: "SELECT", id }), []),
     moveItem: useCallback((id, position) => dispatch({ type: "MOVE_ITEM", id, position }), []),
     rotateItem: useCallback((id) => dispatch({ type: "ROTATE_ITEM", id }), []),
     setItemTransform: useCallback(
-      (id, position, rotationY) => dispatch({ type: "SET_ITEM_TRANSFORM", id, position, rotationY }),
+      (id, position, rotationY, options) =>
+        dispatch({
+          type: "SET_ITEM_TRANSFORM",
+          id,
+          position,
+          rotationY,
+          elevation: options?.elevation,
+          storageSlotId: options?.storageSlotId,
+        }),
       []
     ),
+    releaseItemFromSlot: useCallback((id) => dispatch({ type: "RELEASE_FROM_SLOT", id }), []),
+    toggleCabinet: useCallback((id) => dispatch({ type: "TOGGLE_CABINET", id }), []),
+    findAvailableStorageSlot,
+    storeItemInCabinet,
     toggleBurner: useCallback((id) => dispatch({ type: "TOGGLE_BURNER", id }), []),
     addSubstanceToContainer: useCallback(
       (containerId, substanceId, grams) => dispatch({ type: "ADD_SUBSTANCE", containerId, substanceId, grams }),
+      []
+    ),
+    pourFromStockBottle: useCallback(
+      (bottleId, targetId, grams) => dispatch({ type: "POUR_FROM_STOCK", bottleId, targetId, grams }),
       []
     ),
     pourInto: useCallback((sourceId, targetId) => dispatch({ type: "POUR", sourceId, targetId }), []),

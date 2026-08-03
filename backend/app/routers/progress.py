@@ -1,5 +1,4 @@
 import json
-
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,10 +16,7 @@ from app.schemas.progress import (
 )
 from app.services.ai_service import get_lab_summary
 from app.services.progress_service import get_profile_with_stats, profile_to_dict, record_lab_completed, record_task_event
-
 router = APIRouter(prefix="/api/progress", tags=["progress"])
-
-
 @router.get("/me", response_model=ProgressHistoryOut)
 async def get_my_progress(
     db: AsyncSession = Depends(get_db),

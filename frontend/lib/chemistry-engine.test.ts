@@ -42,6 +42,17 @@ describe("chemistry-engine — addSubstance / solubility", () => {
     expect(c.contents.find((x) => x.substanceId === "nacl")?.grams).toBeCloseTo(180, 5);
     expect(c.precipitate.find((x) => x.substanceId === "nacl")?.grams).toBeCloseTo(20, 5);
   });
+
+  it("re-dissolves an existing salt precipitate when water is added later", () => {
+    let c = createEmptyContainer("c1", "beaker");
+    c = addSubstance(c, "nacl", 20);
+    expect(c.precipitate.find((x) => x.substanceId === "nacl")?.grams).toBeCloseTo(20, 5);
+
+    c = addSubstance(c, "water", 100); // предел NaCl = 36 г
+    expect(c.contents.find((x) => x.substanceId === "nacl")?.grams).toBeCloseTo(20, 5);
+    expect(c.precipitate.find((x) => x.substanceId === "nacl")).toBeUndefined();
+    expect(totalMassG(c)).toBeCloseTo(120, 5);
+  });
 });
 
 describe("chemistry-engine — computeColorHex", () => {
@@ -119,6 +130,22 @@ describe("chemistry-engine — pour", () => {
     const { target } = pour(hot, cold, 1);
     // равные массы при 80°C и 20°C -> среднее 50°C
     expect(target.temperatureC).toBeCloseTo(50, 5);
+  });
+
+  it("rebalances target solubility when water is poured onto an existing salt precipitate", () => {
+    let source = createEmptyContainer("src", "test_tube");
+    source = addSubstance(source, "water", 100);
+    let target = createEmptyContainer("tgt", "beaker");
+    target = addSubstance(target, "nacl", 40);
+
+    const massBefore = totalMassG(source) + totalMassG(target);
+    const result = pour(source, target, 1);
+    const dissolved = result.target.contents.find((x) => x.substanceId === "nacl")?.grams ?? 0;
+    const precipitated = result.target.precipitate.find((x) => x.substanceId === "nacl")?.grams ?? 0;
+
+    expect(dissolved).toBeCloseTo(36, 5);
+    expect(precipitated).toBeCloseTo(4, 5);
+    expect(totalMassG(result.source) + totalMassG(result.target)).toBeCloseTo(massBefore, 5);
   });
 });
 

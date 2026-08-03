@@ -9,6 +9,8 @@ import {
 } from "./ChemistryInteractionProvider";
 import { ChemistryWorkspaceProvider, useChemistryWorkspace } from "./ChemistryWorkspaceProvider";
 import { PORTABLE_CHEMISTRY_IDS } from "../../lib/interactables";
+import { getInteractable } from "../../lib/interactables";
+import { getSlot } from "../../lib/storage-slots";
 
 /**
  * Stage S-1 — Focus & Pickup Core. Проверяет саму state machine
@@ -588,5 +590,169 @@ describe("Stage S-2 — интеграция с ChemistryWorkspaceProvider (SET_
 
     const bottle = result.current.state.stockBottles.find((b) => b.id === "stock-nacl")!;
     expect(bottle.position).toEqual([4, -2]);
+  });
+});
+
+describe("Stage S-3 — Interaction Core + Slot Registry", () => {
+  function StorageBridge({ children }: { children: ReactNode }) {
+    const workspace = useChemistryWorkspace();
+    const allItems = [
+      ...workspace.state.containers,
+      ...workspace.state.stockBottles,
+      ...workspace.state.tools,
+    ];
+    const itemById = (id: string) => allItems.find((item) => item.id === id);
+
+    return (
+      <ChemistryInteractionProvider
+        onConfirmPlacement={(id, position, rotationY) => {
+          const capability = getInteractable(id);
+          workspace.setItemTransform(id, position, rotationY, {
+            elevation: capability?.tableElevation ?? 0,
+            storageSlotId: null,
+          });
+        }}
+        getInteractableState={(id) => {
+          const item = itemById(id);
+          return item
+            ? {
+                position: item.position,
+                elevation: item.elevation,
+                rotationY: item.rotationY,
+                storageSlotId: item.storageSlotId,
+                isOn: "isOn" in item ? item.isOn : undefined,
+                temperatureC: "temperatureC" in item ? item.temperatureC : undefined,
+              }
+            : {};
+        }}
+        isInteractableAccessible={(id) => {
+          const slotId = itemById(id)?.storageSlotId;
+          if (!slotId) return true;
+          const slot = getSlot(slotId);
+          return workspace.state.cabinets.find((cabinet) => cabinet.id === slot?.cabinetId)?.isOpen === true;
+        }}
+        onBeginPickup={workspace.releaseItemFromSlot}
+        onCancelPickup={(id, origin) =>
+          workspace.setItemTransform(id, origin.position, origin.rotationY, {
+            elevation: origin.elevation,
+            storageSlotId: origin.storageSlotId,
+          })
+        }
+        onToggleCabinet={workspace.toggleCabinet}
+        getCabinetState={(id) => {
+          const cabinet = workspace.state.cabinets.find((entry) => entry.id === id);
+          return cabinet ? { isOpen: cabinet.isOpen } : null;
+        }}
+        canStoreInCabinet={(itemId, cabinetId) => workspace.findAvailableStorageSlot(itemId, cabinetId) !== null}
+        onStoreInCabinet={workspace.storeItemInCabinet}
+      >
+        {children}
+      </ChemistryInteractionProvider>
+    );
+  }
+
+  function storageWrapper({ children }: { children: ReactNode }) {
+    return (
+      <ChemistryWorkspaceProvider>
+        <StorageBridge>{children}</StorageBridge>
+      </ChemistryWorkspaceProvider>
+    );
+  }
+
+  it("не позволяет взять предмет сквозь закрытую дверь и E переключает только cabinet state", () => {
+    const { result } = renderHook(
+      () => ({ workspace: useChemistryWorkspace(), interaction: useChemistryInteraction() }),
+      { wrapper: storageWrapper }
+    );
+
+    act(() => result.current.interaction.pickUp("flask-1"));
+    expect(result.current.interaction.heldId).toBeNull();
+
+    act(() => result.current.interaction.setFocused("cabinet-left-inner", "cabinet"));
+    act(() => dispatchKey("e"));
+    expect(result.current.workspace.state.cabinets.find((cabinet) => cabinet.id === "cabinet-left-inner")?.isOpen).toBe(true);
+    expect(result.current.interaction.heldId).toBeNull();
+  });
+
+  it("pickup освобождает слот, а Escape восстанавливает storageSlotId и полный transform", () => {
+    const { result } = renderHook(
+      () => ({ workspace: useChemistryWorkspace(), interaction: useChemistryInteraction() }),
+      { wrapper: storageWrapper }
+    );
+    const origin = result.current.workspace.state.containers.find((item) => item.id === "flask-1")!;
+    const originSnapshot = {
+      position: [...origin.position],
+      elevation: origin.elevation,
+      rotationY: origin.rotationY,
+      storageSlotId: origin.storageSlotId,
+    };
+
+    act(() => result.current.interaction.setFocused("cabinet-left-inner", "cabinet"));
+    act(() => dispatchKey("e"));
+    act(() => result.current.interaction.setFocused("flask-1", "item"));
+    act(() => dispatchKey("e"));
+    expect(result.current.interaction.heldId).toBe("flask-1");
+    expect(result.current.workspace.state.containers.find((item) => item.id === "flask-1")!.storageSlotId).toBeNull();
+
+    act(() => dispatchKey("Escape"));
+    expect(result.current.interaction.heldId).toBeNull();
+    expect(result.current.workspace.state.containers.find((item) => item.id === "flask-1")).toMatchObject(originSnapshot);
+  });
+
+  it("E над открытым совместимым шкафом атомарно завершает Held и занимает слот", () => {
+    const { result } = renderHook(
+      () => ({ workspace: useChemistryWorkspace(), interaction: useChemistryInteraction() }),
+      { wrapper: storageWrapper }
+    );
+
+    act(() => result.current.interaction.setFocused("cabinet-left-inner", "cabinet"));
+    act(() => dispatchKey("e"));
+    act(() => result.current.interaction.setFocused("flask-1", "item"));
+    act(() => dispatchKey("e"));
+    act(() => result.current.interaction.setFocused("cabinet-left-inner", "cabinet"));
+    expect(result.current.interaction.canStoreInCabinet("flask-1", "cabinet-left-inner")).toBe(true);
+
+    act(() => dispatchKey("e"));
+    const flask = result.current.workspace.state.containers.find((item) => item.id === "flask-1")!;
+    const slot = getSlot("cabinet-left-inner-slot-1")!;
+    expect(result.current.interaction.heldId).toBeNull();
+    expect(flask).toMatchObject({
+      position: slot.position,
+      elevation: slot.elevation,
+      rotationY: slot.rotationY,
+      storageSlotId: slot.id,
+    });
+  });
+
+  it("table placement очищает slot, а следующий Escape использует новую table origin", () => {
+    const { result } = renderHook(
+      () => ({ workspace: useChemistryWorkspace(), interaction: useChemistryInteraction() }),
+      { wrapper: storageWrapper }
+    );
+
+    act(() => result.current.interaction.setFocused("cabinet-left-inner", "cabinet"));
+    act(() => dispatchKey("e"));
+    act(() => result.current.interaction.setFocused("flask-1", "item"));
+    act(() => dispatchKey("e"));
+    act(() => result.current.interaction.setPlacementCandidate({ position: [1.4, -0.8], rotationY: 0.3, surface: "table" }));
+    act(() => dispatchKey("e"));
+
+    const placed = result.current.workspace.state.containers.find((item) => item.id === "flask-1")!;
+    expect(placed).toMatchObject({
+      position: [1.4, -0.8],
+      elevation: 0.05,
+      rotationY: 0.3,
+      storageSlotId: null,
+    });
+
+    act(() => result.current.interaction.setFocused("flask-1", "item"));
+    act(() => dispatchKey("e"));
+    act(() => dispatchKey("Escape"));
+    expect(result.current.workspace.state.containers.find((item) => item.id === "flask-1")).toMatchObject({
+      position: [1.4, -0.8],
+      elevation: 0.05,
+      rotationY: 0.3,
+      storageSlotId: null,
+    });
   });
 });

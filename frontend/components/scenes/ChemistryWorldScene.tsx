@@ -18,10 +18,13 @@ import {
 import { ChemistryDragProvider, useChemistryDrag } from "@/components/core/ChemistryDragProvider";
 import {
   ChemistryInteractionProvider,
+  useCabinetInteractable,
   useChemistryInteraction,
   useInteractable,
 } from "@/components/core/ChemistryInteractionProvider";
 import { getInteractable } from "@/lib/interactables";
+import { CABINET_REGISTRY, getCabinet, type CabinetConfig } from "@/lib/cabinets";
+import { findSlotsForCabinet, getSlot } from "@/lib/storage-slots";
 import { suppressRaycastTree } from "@/lib/interaction-raycast";
 import {
   TABLE_SURFACE,
@@ -85,6 +88,8 @@ function usePrefersReducedMotion(): boolean {
 
 const HEAT_RATE_C_PER_SEC = 12;
 const DROP_PROXIMITY_RADIUS = 0.5;
+const STOCK_POUR_GRAMS_BY_SUBSTANCE: Record<string, number> = { water: 100 };
+const DEFAULT_STOCK_POUR_GRAMS = 20;
 const GRAB_LIFT_HEIGHT = 0.14;
 const GRAB_LIFT_SPEED = 10; // 1/сек, скорость lerp подъема при захвате/отпускании
 
@@ -500,21 +505,140 @@ function useWallProximityFade() {
   return { backRef, leftRef, rightRef };
 }
 
+function CabinetMesh({ config, woodTexture }: { config: CabinetConfig; woodTexture: THREE.Texture }) {
+  const interaction = useCabinetInteractable(config.id);
+  const { state: workspace } = useChemistryWorkspace();
+  const doorRef = useRef<THREE.Group>(null);
+  const isOpen = interaction.state?.isOpen ?? false;
+
+  useFrame((_, delta) => {
+    if (!doorRef.current) return;
+    const target = isOpen ? config.doorOpenAngleRad : 0;
+    doorRef.current.rotation.y += (target - doorRef.current.rotation.y) * Math.min(1, delta * 7);
+  });
+
+  const focus = (event: ThreeEvent<PointerEvent>) => {
+    event.stopPropagation();
+    interaction.pointerHandlers?.onPointerOver();
+  };
+  const blur = () => interaction.pointerHandlers?.onPointerOut();
+  const select = (event: ThreeEvent<PointerEvent>) => {
+    event.stopPropagation();
+    interaction.pointerHandlers?.onPointerOver();
+  };
+  const materialColor = interaction.isFocused ? "#b9783f" : "#8a5a34";
+  const occupiedSlotIds = new Set(
+    [...workspace.containers, ...workspace.stockBottles, ...workspace.tools]
+      .map((item) => item.storageSlotId)
+      .filter((slotId): slotId is string => slotId !== null)
+  );
+
+  return (
+    <group position={config.worldPosition}>
+      <mesh position={[-0.52, 0, 0.015]} castShadow receiveShadow onPointerOver={focus} onPointerOut={blur} onPointerDown={select}>
+        <boxGeometry args={[0.06, config.size[1], 0.52]} />
+        <meshStandardMaterial map={woodTexture} color={materialColor} roughness={0.55} metalness={0.1} />
+      </mesh>
+      <mesh position={[0.52, 0, 0.015]} castShadow receiveShadow onPointerOver={focus} onPointerOut={blur} onPointerDown={select}>
+        <boxGeometry args={[0.06, config.size[1], 0.52]} />
+        <meshStandardMaterial map={woodTexture} color={materialColor} roughness={0.55} metalness={0.1} />
+      </mesh>
+      <mesh position={[0, 0.32, 0.015]} castShadow receiveShadow onPointerOver={focus} onPointerOut={blur} onPointerDown={select}>
+        <boxGeometry args={[0.98, 0.06, 0.52]} />
+        <meshStandardMaterial map={woodTexture} color={materialColor} roughness={0.55} metalness={0.1} />
+      </mesh>
+      <mesh position={[0, -0.32, 0.015]} castShadow receiveShadow onPointerOver={focus} onPointerOut={blur} onPointerDown={select}>
+        <boxGeometry args={[0.98, 0.06, 0.52]} />
+        <meshStandardMaterial map={woodTexture} color={materialColor} roughness={0.55} metalness={0.1} />
+      </mesh>
+      <mesh position={[0, 0, -0.245]} castShadow receiveShadow>
+        <boxGeometry args={[0.98, 0.58, 0.06]} />
+        <meshStandardMaterial map={woodTexture} color="#6f472b" roughness={0.62} metalness={0.05} />
+      </mesh>
+      <mesh
+        position={[0, config.shelfLocalY, 0.015]}
+        castShadow
+        receiveShadow
+        onPointerOver={focus}
+        onPointerOut={blur}
+        onPointerDown={select}
+      >
+        <boxGeometry args={[0.98, 0.04, 0.52]} />
+        <meshStandardMaterial map={woodTexture} color={materialColor} roughness={0.58} metalness={0.05} />
+      </mesh>
+
+      <group ref={doorRef} position={[-0.51, 0, 0.28]}>
+        <mesh position={[0.51, 0, 0]} onPointerOver={focus} onPointerOut={blur} onPointerDown={select} castShadow>
+          <boxGeometry args={config.doorHitboxSize} />
+          <meshStandardMaterial
+            color="#5c3a20"
+            emissive={interaction.isFocused ? "#f59e0b" : "#000000"}
+            emissiveIntensity={interaction.isFocused ? 0.28 : 0}
+            roughness={0.4}
+            metalness={0.15}
+          />
+        </mesh>
+        <mesh position={[0.91, 0, 0.02]} rotation={[Math.PI / 2, 0, 0]}>
+          <cylinderGeometry args={[0.015, 0.015, 0.12, 8]} />
+          <meshStandardMaterial color="#d4d4d8" metalness={0.8} roughness={0.3} />
+        </mesh>
+      </group>
+
+      <Html position={[0, 0.42, 0.32]} center style={{ pointerEvents: "none" }}>
+        <span
+          data-testid={`cabinet-state-${config.id}`}
+          data-open={isOpen ? "true" : "false"}
+          data-focused={interaction.isFocused ? "true" : "false"}
+          className="block h-px w-px opacity-0"
+        />
+        {config.id === "cabinet-left-inner" && (
+          <span
+            data-testid="spike-cabinet-state"
+            data-open={isOpen ? "true" : "false"}
+            data-focused={interaction.isFocused ? "true" : "false"}
+            className="block h-px w-px opacity-0"
+          />
+        )}
+      </Html>
+      <Html position={[0, 0, 0.32]} center style={{ pointerEvents: "none" }}>
+        <span
+          data-testid={`cabinet-door-target-${config.id}`}
+          className="block h-px w-px opacity-0"
+        />
+        {config.id === "cabinet-left-inner" && (
+          <span
+            data-testid="spike-cabinet-door-target"
+            className="block h-px w-px opacity-0"
+          />
+        )}
+      </Html>
+      {findSlotsForCabinet(config.id).map((slot) => (
+        <Html
+          key={slot.id}
+          position={[
+            slot.position[0] - config.worldPosition[0],
+            slot.elevation - config.worldPosition[1],
+            slot.position[1] - config.worldPosition[2],
+          ]}
+          center
+          style={{ pointerEvents: "none" }}
+        >
+          <span
+            data-testid={`storage-slot-${slot.id}`}
+            data-occupied={occupiedSlotIds.has(slot.id) ? "true" : "false"}
+            className="block h-px w-px opacity-0"
+          />
+        </Html>
+      ))}
+    </group>
+  );
+}
+
 function Room() {
   const floorTex = useLabFloorTexture();
   const wallTex = useLabWallTexture();
   const woodTex = useCabinetWoodTexture();
   const { backRef, leftRef, rightRef } = useWallProximityFade();
-
-  // навесные (верхние) шкафы — подняты над столом (y=1.7, стол/предметы
-  // не поднимаются выше ~0.9), поэтому не пересекаются со столом ни по
-  // X, ни по Z
-  const cabinetPositions: Array<[number, number, number]> = [
-    [-4.6, 1.8, -ROOM_HALF_DEPTH + 0.28],
-    [-3.0, 1.8, -ROOM_HALF_DEPTH + 0.28],
-    [3.0, 1.8, -ROOM_HALF_DEPTH + 0.28],
-    [4.6, 1.8, -ROOM_HALF_DEPTH + 0.28],
-  ];
 
   return (
     <group>
@@ -563,21 +687,8 @@ function Room() {
 
       {/* настенные шкафы вдоль задней стены — по бокам от рабочей зоны,
           не пересекаются с предметами стола (те не выходят за X:[-3.2,2.6]) */}
-      {cabinetPositions.map((pos, i) => (
-        <group key={i} position={pos}>
-          <mesh castShadow receiveShadow>
-            <boxGeometry args={[1.1, 0.7, 0.55]} />
-            <meshStandardMaterial map={woodTex} roughness={0.55} metalness={0.1} />
-          </mesh>
-          <mesh position={[0, 0, 0.28]}>
-            <boxGeometry args={[1.02, 0.62, 0.02]} />
-            <meshStandardMaterial color="#5c3a20" roughness={0.4} metalness={0.15} />
-          </mesh>
-          <mesh position={[0.4, 0, 0.29]}>
-            <cylinderGeometry args={[0.015, 0.015, 0.12, 8]} />
-            <meshStandardMaterial color="#d4d4d8" metalness={0.8} roughness={0.3} />
-          </mesh>
-        </group>
+      {Object.values(CABINET_REGISTRY).map((cabinet) => (
+        <CabinetMesh key={cabinet.id} config={cabinet} woodTexture={woodTex} />
       ))}
     </group>
   );
@@ -895,6 +1006,8 @@ function HeldRaycastGate({ disabled, children }: { disabled: boolean; children: 
 
 const TABLE_CAMERA_POSITION: [number, number, number] = [0.4, 3.6, 6.4];
 const TABLE_CAMERA_TARGET: [number, number, number] = [0, 0.1, 0];
+const CABINET_CAMERA_POSITION: [number, number, number] = [0, 2.5, 3.4];
+const CABINET_CAMERA_TARGET: [number, number, number] = [0, 1.75, -2.9];
 
 function PlacementCameraShortcut() {
   const { camera, invalidate } = useThree();
@@ -903,7 +1016,10 @@ function PlacementCameraShortcut() {
   useEffect(() => {
     if (!heldId) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.repeat || (event.key !== "t" && event.key !== "T")) return;
+      if (
+        event.repeat ||
+        (event.key !== "t" && event.key !== "T" && event.key !== "c" && event.key !== "C")
+      ) return;
       const target = event.target;
       if (
         target instanceof HTMLElement &&
@@ -911,8 +1027,9 @@ function PlacementCameraShortcut() {
       ) {
         return;
       }
-      camera.position.set(...TABLE_CAMERA_POSITION);
-      camera.lookAt(...TABLE_CAMERA_TARGET);
+      const toCabinets = event.key === "c" || event.key === "C";
+      camera.position.set(...(toCabinets ? CABINET_CAMERA_POSITION : TABLE_CAMERA_POSITION));
+      camera.lookAt(...(toCabinets ? CABINET_CAMERA_TARGET : TABLE_CAMERA_TARGET));
       camera.updateMatrixWorld();
       invalidate();
     };
@@ -984,7 +1101,15 @@ function FocusRing({ halfHeight, radius = 0.36 }: { halfHeight: number; radius?:
 // повторяет уже существующие подсказки (rounded-md/bg-slate-900/85/text-xs) —
 // редизайн интерфейса Stage S-1 не делает.
 function InteractionPrompt() {
-  const { focusedId, heldId, placementCandidate, getPickupBlockedReason } = useChemistryInteraction();
+  const {
+    focusedId,
+    focusedKind,
+    heldId,
+    placementCandidate,
+    getPickupBlockedReason,
+    getCabinetState,
+    canStoreInCabinet,
+  } = useChemistryInteraction();
 
   // Stage S-2 — текст меняется по валидности текущей точки размещения:
   // "поставить" только когда candidate есть (зелёное кольцо), иначе честно
@@ -993,10 +1118,26 @@ function InteractionPrompt() {
   if (heldId) {
     const cap = getInteractable(heldId);
     const name = cap ? `: ${cap.displayName}` : "";
-    text = placementCandidate
-      ? `E — Поставить${name}  ·  T — к столу  ·  ←/→ — повернуть  ·  Esc — отменить`
-      : `Здесь нельзя поставить  ·  T — к столу  ·  ←/→ — повернуть  ·  Esc — вернуть${name}`;
-  } else if (focusedId) {
+    if (focusedId && focusedKind === "cabinet") {
+      const cabinet = getCabinet(focusedId);
+      const cabinetState = getCabinetState(focusedId);
+      if (!cabinetState?.isOpen) {
+        text = `Шкаф закрыт · T — к столу · C — к шкафам · Esc — вернуть${name}`;
+      } else if (canStoreInCabinet(heldId, focusedId)) {
+        text = `E — Убрать в шкаф: ${cabinet?.displayName ?? "Шкаф"} · T — к столу · C — к шкафам · Esc — вернуть${name}`;
+      } else {
+        text = `Нет совместимого свободного слота · T — к столу · C — к шкафам · Esc — вернуть${name}`;
+      }
+    } else {
+      text = placementCandidate
+        ? `E — Поставить${name}  ·  T — к столу  ·  C — к шкафам  ·  ←/→ — повернуть  ·  Esc — отменить`
+        : `Здесь нельзя поставить  ·  T — к столу  ·  C — к шкафам  ·  ←/→ — повернуть  ·  Esc — вернуть${name}`;
+    }
+  } else if (focusedId && focusedKind === "cabinet") {
+    const cabinet = getCabinet(focusedId);
+    const action = getCabinetState(focusedId)?.isOpen ? "Закрыть" : "Открыть";
+    text = `E — ${action}: ${cabinet?.displayName ?? "Шкаф"}`;
+  } else if (focusedId && focusedKind === "item") {
     const cap = getInteractable(focusedId);
     if (cap) {
       const blockedReason = getPickupBlockedReason(focusedId);
@@ -1459,7 +1600,7 @@ function ContainerMesh({
   const { state } = useChemistryWorkspace();
   const { onPointerDown, isDragging } = useDragHandlers(item.id);
   const interaction = useInteractable(item.id);
-  const { capability, isHeld, pointerHandlers } = interaction;
+  const { capability, isAccessible, isHeld, pointerHandlers, canUseLegacyDrag } = interaction;
   const [hovered, setHovered] = useState(false);
   const isSelected = state.selectedItemId === item.id;
   const isActive = state.activeContainerId === item.id;
@@ -1491,11 +1632,12 @@ function ContainerMesh({
 
   return (
     <group
-      position={isHeld ? [0, 0, 0] : [item.position[0], 0.05, item.position[1]]}
+      position={isHeld ? [0, 0, 0] : [item.position[0], item.elevation, item.position[1]]}
       rotation={isHeld ? [0, 0, 0] : [0, item.rotationY, 0]}
-      onPointerDown={!isHeld && capability?.legacyDragMode !== "none" ? onPointerDown : undefined}
+      onPointerDown={!isHeld && canUseLegacyDrag ? onPointerDown : undefined}
       onPointerOver={(e: ThreeEvent<PointerEvent>) => {
         e.stopPropagation();
+        if (!isAccessible) return;
         setHovered(true);
         pointerHandlers?.onPointerOver();
       }}
@@ -1513,8 +1655,24 @@ function ContainerMesh({
         <Html center style={{ pointerEvents: "none" }}>
           <span
             data-testid={`container-target-${item.id}`}
+            data-storage-slot-id={item.storageSlotId ?? "none"}
+            data-elevation={item.elevation}
+            data-water-grams={item.data.contents.find((entry) => entry.substanceId === "water")?.grams ?? 0}
+            data-nacl-dissolved-grams={item.data.contents.find((entry) => entry.substanceId === "nacl")?.grams ?? 0}
+            data-nacl-precipitate-grams={item.data.precipitate.find((entry) => entry.substanceId === "nacl")?.grams ?? 0}
             className="block h-px w-px opacity-0"
           />
+          {item.id === "flask-1" && (
+            <span
+              data-testid="spike-flask-target"
+              data-storage-slot-id={item.storageSlotId ?? "none"}
+              data-elevation={item.elevation}
+              data-water-grams={item.data.contents.find((entry) => entry.substanceId === "water")?.grams ?? 0}
+              data-nacl-dissolved-grams={item.data.contents.find((entry) => entry.substanceId === "nacl")?.grams ?? 0}
+              data-nacl-precipitate-grams={item.data.precipitate.find((entry) => entry.substanceId === "nacl")?.grams ?? 0}
+              className="block h-px w-px opacity-0"
+            />
+          )}
         </Html>
         {process.env.NODE_ENV !== "production" && !isHeld && (
           <Html center style={{ pointerEvents: "none" }}>
@@ -1522,14 +1680,22 @@ function ContainerMesh({
               data-testid={`workspace-transform-${item.id}`}
               data-x={item.position[0]}
               data-z={item.position[1]}
+              data-elevation={item.elevation}
               data-rotation-y={item.rotationY}
+              data-storage-slot-id={item.storageSlotId ?? "none"}
               className="block h-px w-px opacity-0"
             />
           </Html>
         )}
+        <Html position={[0.42, -0.03, 0]} center style={{ pointerEvents: "none" }}>
+          <span data-testid={`container-drop-zone-water-${item.id}`} className="block h-px w-px opacity-0" />
+        </Html>
+        <Html position={[-0.42, -0.03, 0]} center style={{ pointerEvents: "none" }}>
+          <span data-testid={`container-drop-zone-reagent-${item.id}`} className="block h-px w-px opacity-0" />
+        </Html>
         <Hitbox
-          radius={capability?.interactionRadius ?? 0.32}
-          height={capability?.interactionHeight ?? halfHeight * 2 + 0.1}
+          radius={interaction.registeredCapability?.interactionRadius ?? 0.32}
+          height={interaction.registeredCapability?.interactionHeight ?? halfHeight * 2 + 0.1}
         />
 
         <GrabLift isDragging={isDragging}>
@@ -1600,15 +1766,16 @@ function StockBottleMesh({ bottle, isPouring }: { bottle: StockBottle; isPouring
   const [hovered, setHovered] = useState(false);
   const { onPointerDown, isDragging } = useDragHandlers(bottle.id);
   const interaction = useInteractable(bottle.id);
-  const { capability, isHeld, pointerHandlers } = interaction;
+  const { capability, isAccessible, isHeld, pointerHandlers, canUseLegacyDrag } = interaction;
   const substance = SUBSTANCES[bottle.substanceId];
 
   return (
     <group
-      position={isHeld ? [0, 0, 0] : [bottle.position[0], 0.16, bottle.position[1]]}
-      onPointerDown={!isHeld && capability?.legacyDragMode !== "none" ? onPointerDown : undefined}
+      position={isHeld ? [0, 0, 0] : [bottle.position[0], bottle.elevation, bottle.position[1]]}
+      onPointerDown={!isHeld && canUseLegacyDrag ? onPointerDown : undefined}
       onPointerOver={(e: ThreeEvent<PointerEvent>) => {
         e.stopPropagation();
+        if (!isAccessible) return;
         setHovered(true);
         pointerHandlers?.onPointerOver();
       }}
@@ -1627,13 +1794,14 @@ function StockBottleMesh({ bottle, isPouring }: { bottle: StockBottle; isPouring
           <Html center style={{ pointerEvents: "none" }}>
             <span
               data-testid={`stock-bottle-target-${bottle.id}`}
+              data-remaining-grams={bottle.remainingGrams}
               className="block h-px w-px opacity-0"
             />
           </Html>
         )}
         <Hitbox
-          radius={capability?.interactionRadius ?? 0.17}
-          height={capability?.interactionHeight ?? 0.5}
+          radius={interaction.registeredCapability?.interactionRadius ?? 0.17}
+          height={interaction.registeredCapability?.interactionHeight ?? 0.5}
         />
 
         <GrabLift isDragging={isDragging}>
@@ -1664,7 +1832,7 @@ function StockBottleMesh({ bottle, isPouring }: { bottle: StockBottle; isPouring
         {hovered && !isDragging && !isHeld && (
           <Html position={[0, 0.35, 0]} center distanceFactor={9} style={{ pointerEvents: "none" }}>
             <div className="pointer-events-none whitespace-nowrap rounded-md border border-white/10 bg-slate-900/90 px-2 py-1 text-xs text-slate-100">
-              {substance?.name} ({substance?.formula})
+              {substance?.name} ({substance?.formula}) · {bottle.remainingGrams.toFixed(0)} г
             </div>
           </Html>
         )}
@@ -1691,7 +1859,7 @@ function BurnerMesh({ tool }: { tool: ToolItem }) {
   const { toggleBurner } = useChemistryWorkspace();
   const { onPointerDown, isDragging } = useDragHandlers(tool.id);
   const interaction = useInteractable(tool.id);
-  const { capability, isHeld, pointerHandlers } = interaction;
+  const { capability, isAccessible, isHeld, pointerHandlers, canUseLegacyDrag } = interaction;
   const [hovered, setHovered] = useState(false);
   const flameRef = useRef<THREE.Mesh>(null);
   // Stage C-3: настоящая GLB-модель горелки (Poly Haven "Bunsen Burner",
@@ -1708,11 +1876,12 @@ function BurnerMesh({ tool }: { tool: ToolItem }) {
 
   return (
     <group
-      position={isHeld ? [0, 0, 0] : [tool.position[0], 0, tool.position[1]]}
+      position={isHeld ? [0, 0, 0] : [tool.position[0], tool.elevation, tool.position[1]]}
       rotation={isHeld ? [0, 0, 0] : [0, tool.rotationY, 0]}
-      onPointerDown={!isHeld && capability?.legacyDragMode !== "none" ? onPointerDown : undefined}
+      onPointerDown={!isHeld && canUseLegacyDrag ? onPointerDown : undefined}
       onPointerOver={(e: ThreeEvent<PointerEvent>) => {
         e.stopPropagation();
+        if (!isAccessible) return;
         setHovered(true);
         pointerHandlers?.onPointerOver();
       }}
@@ -1789,15 +1958,16 @@ function PlacementDiagnosticMarkers() {
 function StandMesh({ tool }: { tool: ToolItem }) {
   const { onPointerDown, isDragging } = useDragHandlers(tool.id);
   const interaction = useInteractable(tool.id);
-  const { capability, isHeld, pointerHandlers } = interaction;
+  const { capability, isAccessible, isHeld, pointerHandlers, canUseLegacyDrag } = interaction;
   const [hovered, setHovered] = useState(false);
   return (
     <group
-      position={isHeld ? [0, 0, 0] : [tool.position[0], 0, tool.position[1]]}
+      position={isHeld ? [0, 0, 0] : [tool.position[0], tool.elevation, tool.position[1]]}
       rotation={isHeld ? [0, 0, 0] : [0, tool.rotationY, 0]}
-      onPointerDown={!isHeld && capability?.legacyDragMode !== "none" ? onPointerDown : undefined}
+      onPointerDown={!isHeld && canUseLegacyDrag ? onPointerDown : undefined}
       onPointerOver={(e: ThreeEvent<PointerEvent>) => {
         e.stopPropagation();
+        if (!isAccessible) return;
         setHovered(true);
         pointerHandlers?.onPointerOver();
       }}
@@ -1850,15 +2020,16 @@ const PIPETTE_TUBE_GEOMETRY = latheGeometry(
 function PipetteMesh({ tool }: { tool: ToolItem }) {
   const { onPointerDown, isDragging } = useDragHandlers(tool.id);
   const interaction = useInteractable(tool.id);
-  const { capability, isHeld, pointerHandlers } = interaction;
+  const { capability, isAccessible, isHeld, pointerHandlers, canUseLegacyDrag } = interaction;
   const [hovered, setHovered] = useState(false);
   return (
     <group
-      position={isHeld ? [0, 0, 0] : [tool.position[0], 0.05, tool.position[1]]}
+      position={isHeld ? [0, 0, 0] : [tool.position[0], tool.elevation, tool.position[1]]}
       rotation={isHeld ? [0, 0, 0] : [0, tool.rotationY, 0]}
-      onPointerDown={!isHeld && capability?.legacyDragMode !== "none" ? onPointerDown : undefined}
+      onPointerDown={!isHeld && canUseLegacyDrag ? onPointerDown : undefined}
       onPointerOver={(e: ThreeEvent<PointerEvent>) => {
         e.stopPropagation();
+        if (!isAccessible) return;
         setHovered(true);
         pointerHandlers?.onPointerOver();
       }}
@@ -1901,17 +2072,18 @@ function ThermometerMesh({ tool }: { tool: ToolItem }) {
   const { state } = useChemistryWorkspace();
   const { onPointerDown, isDragging } = useDragHandlers(tool.id);
   const interaction = useInteractable(tool.id);
-  const { capability, isHeld, pointerHandlers } = interaction;
+  const { capability, isAccessible, isHeld, pointerHandlers, canUseLegacyDrag } = interaction;
   const [hovered, setHovered] = useState(false);
   const active = state.containers.find((c) => c.id === state.activeContainerId);
 
   return (
     <group
-      position={isHeld ? [0, 0, 0] : [tool.position[0], 0.05, tool.position[1]]}
+      position={isHeld ? [0, 0, 0] : [tool.position[0], tool.elevation, tool.position[1]]}
       rotation={isHeld ? [0, 0, 0] : [0, tool.rotationY, 0]}
-      onPointerDown={!isHeld && capability?.legacyDragMode !== "none" ? onPointerDown : undefined}
+      onPointerDown={!isHeld && canUseLegacyDrag ? onPointerDown : undefined}
       onPointerOver={(e: ThreeEvent<PointerEvent>) => {
         e.stopPropagation();
+        if (!isAccessible) return;
         setHovered(true);
         pointerHandlers?.onPointerOver();
       }}
@@ -1950,16 +2122,17 @@ function ThermometerMesh({ tool }: { tool: ToolItem }) {
 function GlassRodMesh({ tool }: { tool: ToolItem }) {
   const { onPointerDown, isDragging } = useDragHandlers(tool.id);
   const interaction = useInteractable(tool.id);
-  const { capability, isHeld, pointerHandlers } = interaction;
+  const { capability, isAccessible, isHeld, pointerHandlers, canUseLegacyDrag } = interaction;
   const [hovered, setHovered] = useState(false);
 
   return (
     <group
-      position={isHeld ? [0, 0, 0] : [tool.position[0], 0.05, tool.position[1]]}
+      position={isHeld ? [0, 0, 0] : [tool.position[0], tool.elevation, tool.position[1]]}
       rotation={isHeld ? [0, 0, 0] : [0, tool.rotationY, 0]}
-      onPointerDown={!isHeld && capability?.legacyDragMode !== "none" ? onPointerDown : undefined}
+      onPointerDown={!isHeld && canUseLegacyDrag ? onPointerDown : undefined}
       onPointerOver={(e: ThreeEvent<PointerEvent>) => {
         e.stopPropagation();
+        if (!isAccessible) return;
         setHovered(true);
         pointerHandlers?.onPointerOver();
       }}
@@ -1993,18 +2166,19 @@ function ScaleMesh({ tool }: { tool: ToolItem }) {
   const { state } = useChemistryWorkspace();
   const { onPointerDown, isDragging } = useDragHandlers(tool.id);
   const interaction = useInteractable(tool.id);
-  const { capability, isHeld, pointerHandlers } = interaction;
+  const { capability, isAccessible, isHeld, pointerHandlers, canUseLegacyDrag } = interaction;
   const [hovered, setHovered] = useState(false);
   const active = state.containers.find((c) => c.id === state.activeContainerId);
   const massG = active ? totalMassG(active.data) : 0;
 
   return (
     <group
-      position={isHeld ? [0, 0, 0] : [tool.position[0], 0, tool.position[1]]}
+      position={isHeld ? [0, 0, 0] : [tool.position[0], tool.elevation, tool.position[1]]}
       rotation={isHeld ? [0, 0, 0] : [0, tool.rotationY, 0]}
-      onPointerDown={!isHeld && capability?.legacyDragMode !== "none" ? onPointerDown : undefined}
+      onPointerDown={!isHeld && canUseLegacyDrag ? onPointerDown : undefined}
       onPointerOver={(e: ThreeEvent<PointerEvent>) => {
         e.stopPropagation();
+        if (!isAccessible) return;
         setHovered(true);
         pointerHandlers?.onPointerOver();
       }}
@@ -2149,7 +2323,7 @@ function InteractableVisualRig({
 function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer, debugMode }: ChemistrySceneProps) {
   const { state, heatTick, hazardTick } = useChemistryWorkspace();
   const { draggingId } = useChemistryDrag();
-  const { focusedId, heldId, aimPoint, heldYawOffset, setPlacementCandidate } = useChemistryInteraction();
+  const { focusedId, focusedKind, heldId, aimPoint, heldYawOffset, setPlacementCandidate } = useChemistryInteraction();
   const hazardAccumRef = useRef(0);
 
   useFrame((_, delta) => {
@@ -2226,13 +2400,13 @@ function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer
 
     const occupants: PlacementOccupant[] = [
       ...state.containers
-        .filter((c) => c.id !== heldId)
+        .filter((c) => c.id !== heldId && c.storageSlotId === null)
         .map((c) => ({ position: c.position, radius: radiusFor(c.id, getFootprintRadius(c.kind)) })),
       ...state.tools
-        .filter((t) => t.id !== heldId)
+        .filter((t) => t.id !== heldId && t.storageSlotId === null)
         .map((t) => ({ position: t.position, radius: radiusFor(t.id, getFootprintRadius(t.kind)) })),
       ...state.stockBottles
-        .filter((b) => b.id !== heldId)
+        .filter((b) => b.id !== heldId && b.storageSlotId === null)
         .map((b) => ({ position: b.position, radius: radiusFor(b.id, STOCK_BOTTLE_FOOTPRINT_RADIUS) })),
     ];
 
@@ -2254,6 +2428,7 @@ function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer
             data-dragging-id={draggingId ?? "none"}
             data-held-id={heldId ?? "none"}
             data-focused-id={focusedId ?? "none"}
+            data-focused-kind={focusedKind ?? "none"}
             data-placement-valid={placementCandidate ? "true" : "false"}
             data-aim-x={aimPoint?.[0] ?? "none"}
             data-aim-z={aimPoint?.[1] ?? "none"}
@@ -2511,7 +2686,18 @@ export default function ChemistryWorldScene({ simulation }: ChemistryWorldSceneP
 const POUR_ANIMATION_MS = 750;
 
 function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
-  const { state, addSubstanceToContainer, pourInto, moveItem, setActiveContainer, setItemTransform } = useChemistryWorkspace();
+  const {
+    state,
+    pourFromStockBottle,
+    pourInto,
+    moveItem,
+    setActiveContainer,
+    setItemTransform,
+    releaseItemFromSlot,
+    toggleCabinet,
+    findAvailableStorageSlot,
+    storeItemInCabinet,
+  } = useChemistryWorkspace();
   const { quality, setQuality } = useQuality();
   const [pourAnimation, setPourAnimation] = useState<PourAnimationState | null>(null);
   const [addAnimation, setAddAnimation] = useState<AddAnimationState | null>(null);
@@ -2611,11 +2797,12 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
   useEffect(() => {
     if (!addAnimation) return;
     const timer = setTimeout(() => {
-      addSubstanceToContainer(addAnimation.targetId, addAnimation.substanceId, 20);
+      const grams = STOCK_POUR_GRAMS_BY_SUBSTANCE[addAnimation.substanceId] ?? DEFAULT_STOCK_POUR_GRAMS;
+      pourFromStockBottle(addAnimation.bottleId, addAnimation.targetId, grams);
       setAddAnimation(null);
     }, POUR_ANIMATION_MS);
     return () => clearTimeout(timer);
-  }, [addAnimation, addSubstanceToContainer]);
+  }, [addAnimation, pourFromStockBottle]);
 
   // звук успешной реакции — ровно по новым записям в state.reactionLog
   // (их туда пишет исключительно Reaction Engine), не по таймеру и не
@@ -2721,18 +2908,54 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
       <ExperimentProgressProvider labState={{ container: activeContainer.data, occurredReactionIds }}>
         <ChemistryDragProvider>
         <ChemistryInteractionProvider
-          onConfirmPlacement={(id, position, rotationY) => setItemTransform(id, position, rotationY)}
+          onConfirmPlacement={(id, position, rotationY) => {
+            const capability = getInteractable(id);
+            setItemTransform(id, position, rotationY, {
+              elevation: capability?.tableElevation,
+              storageSlotId: null,
+            });
+          }}
           getInteractableState={(id) => {
             const container = state.containers.find((item) => item.id === id);
             const bottle = state.stockBottles.find((item) => item.id === id);
             const tool = state.tools.find((item) => item.id === id);
+            const item = container ?? bottle ?? tool;
             return {
-              rotationY: container?.rotationY ?? bottle?.rotationY ?? tool?.rotationY,
+              position: item?.position,
+              elevation: item?.elevation,
+              rotationY: item?.rotationY,
+              storageSlotId: item?.storageSlotId,
               isOn: tool?.isOn,
               temperatureC: tool?.temperatureC,
               hasActiveFlame: tool?.isOn,
             };
           }}
+          isInteractableAccessible={(id) => {
+            const item =
+              state.containers.find((entry) => entry.id === id) ??
+              state.stockBottles.find((entry) => entry.id === id) ??
+              state.tools.find((entry) => entry.id === id);
+            if (!item?.storageSlotId) return true;
+            const slot = getSlot(item.storageSlotId);
+            if (!slot) return false;
+            return state.cabinets.find((cabinet) => cabinet.id === slot.cabinetId)?.isOpen === true;
+          }}
+          onBeginPickup={releaseItemFromSlot}
+          onCancelPickup={(id, origin) =>
+            setItemTransform(id, origin.position, origin.rotationY, {
+              elevation: origin.elevation,
+              storageSlotId: origin.storageSlotId,
+            })
+          }
+          onToggleCabinet={toggleCabinet}
+          getCabinetState={(id) => {
+            const cabinet = state.cabinets.find((entry) => entry.id === id);
+            return cabinet ? { isOpen: cabinet.isOpen } : null;
+          }}
+          canStoreInCabinet={(itemId, cabinetId) =>
+            findAvailableStorageSlot(itemId, cabinetId) !== null
+          }
+          onStoreInCabinet={storeItemInCabinet}
         >
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
             <div className="flex-1 rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">

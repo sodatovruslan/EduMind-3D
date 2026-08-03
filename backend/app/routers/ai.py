@@ -20,10 +20,7 @@ from app.schemas.ai import (
 )
 from app.services.ai_service import get_grading_feedback, get_hint, get_teacher_response
 from app.services.grader_service import build_grading_context
-
 router = APIRouter(prefix="/api/ai", tags=["ai"])
-
-
 @router.post("/hint", response_model=HintResponse)
 async def ask_hint(
     payload: HintRequest,

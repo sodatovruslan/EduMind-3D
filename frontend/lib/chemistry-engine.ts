@@ -185,6 +185,51 @@ function amountOf(list: ContainedAmount[], substanceId: string): number {
   return list.find((c) => c.substanceId === substanceId)?.grams ?? 0;
 }
 
+// задает АБСОЛЮТНОЕ количество вещества в списке (не прибавляет, как
+// addToList) — убирает запись, если новое количество ~0
+function setAmount(list: ContainedAmount[], substanceId: string, grams: number): ContainedAmount[] {
+  const filtered = list.filter((c) => c.substanceId !== substanceId);
+  if (grams <= 1e-9) return filtered;
+  return [...filtered, { substanceId, grams }];
+}
+
+// пересчитывает растворимость КАЖДОГО растворимого вещества в контейнере
+// (и уже растворенного, и уже выпавшего в осадок) против ТЕКУЩЕГО количества
+// воды. Это устраняет реальный баг: раньше решение "сколько выпадет в осадок"
+// принималось ОДИН РАЗ, в момент addSubstance() для конкретного вещества, и
+// больше никогда не пересматривалось — если воду добавляли ПОСЛЕ соли (или
+// частями), уже выпавший осадок оставался осадком навсегда, даже когда воды
+// в итоге становилось более чем достаточно для полного растворения. Реальная
+// растворимость зависит от текущего состояния, а не от порядка добавления
+// реагентов, поэтому пересчет запускается при КАЖДОМ изменении состава
+// (addSubstance и pour ниже), а не только при добавлении самого растворимого
+// вещества.
+function rebalanceSolubility(container: Container): Container {
+  const waterGrams = amountOf(container.contents, "water");
+  const waterLiters = waterGrams / SUBSTANCES.water.densityGPerMl / 1000;
+
+  const solubleIds = new Set<string>();
+  container.contents.forEach((c) => solubleIds.add(c.substanceId));
+  container.precipitate.forEach((c) => solubleIds.add(c.substanceId));
+
+  let contents = container.contents;
+  let precipitate = container.precipitate;
+
+  for (const substanceId of solubleIds) {
+    const substance = SUBSTANCES[substanceId];
+    if (!substance || substance.solubilityGPerLiterWater === undefined) continue;
+    const totalG = amountOf(contents, substanceId) + amountOf(precipitate, substanceId);
+    if (totalG <= 0) continue;
+    const maxDissolvableG = waterLiters > 0 ? substance.solubilityGPerLiterWater * waterLiters : 0;
+    const newDissolvedG = Math.min(totalG, maxDissolvableG);
+    const newPrecipitateG = totalG - newDissolvedG;
+    contents = setAmount(contents, substanceId, newDissolvedG);
+    precipitate = setAmount(precipitate, substanceId, newPrecipitateG);
+  }
+
+  return { ...container, contents, precipitate };
+}
+
 export function totalMassG(container: Container): number {
   return [...container.contents, ...container.precipitate].reduce((sum, c) => sum + c.grams, 0);
 }
@@ -259,24 +304,14 @@ export function heat(container: Container, deltaC: number): Container {
 export function addSubstance(container: Container, substanceId: string, grams: number): Container {
   const substance = SUBSTANCES[substanceId];
   if (!substance || grams <= 0) return container;
-
-  if (substance.solubilityGPerLiterWater !== undefined) {
-    const waterGrams = amountOf(container.contents, "water");
-    const waterLiters = waterGrams / SUBSTANCES.water.densityGPerMl / 1000;
-    const alreadyDissolvedG = amountOf(container.contents, substanceId);
-    const maxDissolvableG = waterLiters > 0 ? substance.solubilityGPerLiterWater * waterLiters : 0;
-    const roomForMoreG = Math.max(0, maxDissolvableG - alreadyDissolvedG);
-    const dissolvedG = Math.min(grams, roomForMoreG);
-    const precipitateG = grams - dissolvedG;
-
-    return {
-      ...container,
-      contents: addToList(container.contents, substanceId, dissolvedG),
-      precipitate: addToList(container.precipitate, substanceId, precipitateG),
-    };
-  }
-
-  return { ...container, contents: addToList(container.contents, substanceId, grams) };
+  // Сначала масса реально попадает в сосуд, затем ЕДИНАЯ функция приводит
+  // dissolved/precipitate к равновесию относительно текущего количества
+  // воды. Благодаря этому результат не зависит от порядка добавления:
+  // вода, добавленная после соли, растворяет ранее выпавший осадок.
+  return rebalanceSolubility({
+    ...container,
+    contents: addToList(container.contents, substanceId, grams),
+  });
 }
 
 // переливание: сохраняет массу, температура принимающего контейнера —
@@ -315,5 +350,10 @@ export function pour(source: Container, target: Container, fraction = 1): { sour
     precipitate: remainingPrecipitate,
   };
 
-  return { source: newSource, target: newTarget };
+  // После переноса количество воды могло измениться с обеих сторон, поэтому
+  // растворимость пересчитывается и в источнике, и в приёмнике.
+  return {
+    source: rebalanceSolubility(newSource),
+    target: rebalanceSolubility(newTarget),
+  };
 }

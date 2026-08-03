@@ -7,6 +7,7 @@ import {
   type InteractableRuntimeState,
   type PlacementSurfaceKind,
 } from "@/lib/interactables";
+import { getCabinet, type CabinetConfig } from "@/lib/cabinets";
 
 /**
  * Chemistry World — Interaction Core, Stage S-1 (Focus & Pickup) + Stage S-2
@@ -29,6 +30,18 @@ import {
  * модулей (например Electricity Lab) с их собственным домен-состоянием.
  */
 export type InteractionPhase = "idle" | "focused" | "held";
+export type FocusedKind = "item" | "cabinet";
+
+export interface PickupOrigin {
+  position: [number, number];
+  elevation: number;
+  rotationY: number;
+  storageSlotId: string | null;
+}
+
+export interface CabinetRuntimeState {
+  isOpen: boolean;
+}
 
 export interface PlacementCandidate {
   position: [number, number];
@@ -39,12 +52,13 @@ export interface PlacementCandidate {
 interface ChemistryInteractionContextValue {
   phase: InteractionPhase;
   focusedId: string | null;
+  focusedKind: FocusedKind | null;
   heldId: string | null;
   heldYawOffset: number;
   aimPoint: [number, number] | null;
   placementCandidate: PlacementCandidate | null;
-  setFocused: (id: string) => void;
-  clearFocused: (id: string) => void;
+  setFocused: (id: string, kind?: FocusedKind) => void;
+  clearFocused: (id: string, kind?: FocusedKind) => void;
   pickUp: (id: string) => void;
   release: () => void;
   rotateHeld: (deltaYaw: number) => void;
@@ -52,6 +66,10 @@ interface ChemistryInteractionContextValue {
   setPlacementCandidate: (candidate: PlacementCandidate | null) => void;
   confirmPlacement: () => void;
   getPickupBlockedReason: (id: string) => string | null;
+  getInteractableRuntimeState: (id: string) => InteractableRuntimeState;
+  isInteractableAccessible: (id: string) => boolean;
+  getCabinetState: (id: string) => CabinetRuntimeState | null;
+  canStoreInCabinet: (itemId: string, cabinetId: string) => boolean;
 }
 
 const ChemistryInteractionContext = createContext<ChemistryInteractionContextValue | undefined>(undefined);
@@ -68,14 +86,29 @@ interface ChemistryInteractionProviderProps {
   // записи в домен, и делает это чужими руками (колбэк, не прямой импорт).
   onConfirmPlacement?: (id: string, position: [number, number], rotationY: number) => void;
   getInteractableState?: (id: string) => InteractableRuntimeState;
+  isInteractableAccessible?: (id: string) => boolean;
+  onBeginPickup?: (id: string) => void;
+  onCancelPickup?: (id: string, origin: PickupOrigin) => void;
+  onToggleCabinet?: (id: string) => void;
+  getCabinetState?: (id: string) => CabinetRuntimeState | null;
+  canStoreInCabinet?: (itemId: string, cabinetId: string) => boolean;
+  onStoreInCabinet?: (itemId: string, cabinetId: string) => boolean;
 }
 
 export function ChemistryInteractionProvider({
   children,
   onConfirmPlacement,
   getInteractableState,
+  isInteractableAccessible,
+  onBeginPickup,
+  onCancelPickup,
+  onToggleCabinet,
+  getCabinetState,
+  canStoreInCabinet,
+  onStoreInCabinet,
 }: ChemistryInteractionProviderProps) {
   const [focusedId, setFocusedId] = useState<string | null>(null);
+  const [focusedKind, setFocusedKind] = useState<FocusedKind | null>(null);
   const [heldId, setHeldId] = useState<string | null>(null);
   const [heldYawOffset, setHeldYawOffset] = useState(0);
   const [aimPoint, setAimPointState] = useState<[number, number] | null>(null);
@@ -85,6 +118,8 @@ export function ChemistryInteractionProvider({
   // слушателя на каждый рендер (тот же прием, что и в ChemistryDragProvider)
   const focusedIdRef = useRef(focusedId);
   focusedIdRef.current = focusedId;
+  const focusedKindRef = useRef(focusedKind);
+  focusedKindRef.current = focusedKind;
   const heldIdRef = useRef(heldId);
   heldIdRef.current = heldId;
   const placementCandidateRef = useRef(placementCandidate);
@@ -96,30 +131,56 @@ export function ChemistryInteractionProvider({
   onConfirmPlacementRef.current = onConfirmPlacement;
   const getInteractableStateRef = useRef(getInteractableState);
   getInteractableStateRef.current = getInteractableState;
+  const isInteractableAccessibleRef = useRef(isInteractableAccessible);
+  isInteractableAccessibleRef.current = isInteractableAccessible;
+  const onBeginPickupRef = useRef(onBeginPickup);
+  onBeginPickupRef.current = onBeginPickup;
+  const onCancelPickupRef = useRef(onCancelPickup);
+  onCancelPickupRef.current = onCancelPickup;
+  const onToggleCabinetRef = useRef(onToggleCabinet);
+  onToggleCabinetRef.current = onToggleCabinet;
+  const getCabinetStateRef = useRef(getCabinetState);
+  getCabinetStateRef.current = getCabinetState;
+  const canStoreInCabinetRef = useRef(canStoreInCabinet);
+  canStoreInCabinetRef.current = canStoreInCabinet;
+  const onStoreInCabinetRef = useRef(onStoreInCabinet);
+  onStoreInCabinetRef.current = onStoreInCabinet;
+  const pickupOriginRef = useRef<PickupOrigin | null>(null);
 
   const runtimeStateFor = useCallback(
     (id: string): InteractableRuntimeState => getInteractableStateRef.current?.(id) ?? {},
     []
   );
 
+  const isAccessible = useCallback(
+    (id: string): boolean => isInteractableAccessibleRef.current?.(id) ?? true,
+    []
+  );
+
   const getPickupBlockedReason = useCallback((id: string) => {
+    if (isInteractableAccessibleRef.current?.(id) === false) return null;
     const capability = getInteractable(id);
     if (!capability) return null;
     const runtimeState = runtimeStateFor(id);
     return capability.canPickUpNow(runtimeState) ? null : capability.blockedReason(runtimeState);
   }, [runtimeStateFor]);
 
-  const setFocused = useCallback((id: string) => {
+  const setFocused = useCallback((id: string, kind: FocusedKind = "item") => {
     // нельзя сфокусироваться на новом предмете, пока один уже в руке —
-    // однопредметная модель "одна рука"
-    setFocusedId((current) => (heldIdRef.current ? current : id));
+    // однопредметная модель "одна рука". Шкаф остаётся доступен для возврата.
+    if (heldIdRef.current && kind === "item") return;
+    setFocusedId(id);
+    setFocusedKind(kind);
   }, []);
 
-  const clearFocused = useCallback((id: string) => {
+  const clearFocused = useCallback((id: string, kind?: FocusedKind) => {
     // снимаем фокус, только если он реально принадлежит этому id — защита
     // от гонки onPointerOut/onPointerOver при быстром переходе между
     // соседними предметами
-    setFocusedId((current) => (current === id ? null : current));
+    if (focusedIdRef.current !== id) return;
+    if (kind && focusedKindRef.current !== kind) return;
+    setFocusedId(null);
+    setFocusedKind(null);
   }, []);
 
   const setAimPoint = useCallback((point: [number, number] | null) => {
@@ -133,10 +194,21 @@ export function ChemistryInteractionProvider({
 
   const pickUp = useCallback((id: string) => {
     if (heldIdRef.current) return; // уже держим другой предмет — no-op
+    if (isInteractableAccessibleRef.current?.(id) === false) return;
     const capability = getInteractable(id);
     if (!capability || !capability.canBeHeld) return; // нет способности — no-op
     const runtimeState = runtimeStateFor(id);
     if (!capability.canPickUpNow(runtimeState)) return;
+    pickupOriginRef.current =
+      runtimeState.position && runtimeState.elevation !== undefined
+        ? {
+            position: [...runtimeState.position],
+            elevation: runtimeState.elevation,
+            rotationY: runtimeState.rotationY ?? 0,
+            storageSlotId: runtimeState.storageSlotId ?? null,
+          }
+        : null;
+    onBeginPickupRef.current?.(id);
     setHeldId(id);
     setHeldYawOffset(runtimeState.rotationY ?? 0);
     setAimPointState(null);
@@ -151,6 +223,10 @@ export function ChemistryInteractionProvider({
   // было в ChemistryWorkspaceProvider (никогда не менялось, раз запись не
   // произошла) — не требует отдельного снапшота "исходного transform".
   const release = useCallback(() => {
+    const id = heldIdRef.current;
+    const origin = pickupOriginRef.current;
+    if (id && origin?.storageSlotId) onCancelPickupRef.current?.(id, origin);
+    pickupOriginRef.current = null;
     setHeldId(null);
     setHeldYawOffset(0);
     setAimPointState(null);
@@ -168,12 +244,39 @@ export function ChemistryInteractionProvider({
     const capability = getInteractable(id);
     if (!capability?.canBePlaced || !capability.allowedSurfaces.includes(candidate.surface)) return;
     onConfirmPlacementRef.current?.(id, candidate.position, candidate.rotationY);
+    pickupOriginRef.current = null;
     setHeldId(null);
     setHeldYawOffset(0);
     setAimPointState(null);
     placementCandidateRef.current = null;
     setPlacementCandidateState(null);
   }, []);
+
+  const cabinetStateFor = useCallback(
+    (id: string): CabinetRuntimeState | null => getCabinetStateRef.current?.(id) ?? null,
+    []
+  );
+
+  const canStoreHeldInCabinet = useCallback(
+    (itemId: string, cabinetId: string): boolean =>
+      cabinetStateFor(cabinetId)?.isOpen === true &&
+      (canStoreInCabinetRef.current?.(itemId, cabinetId) ?? false),
+    [cabinetStateFor]
+  );
+
+  const tryStoreHeldInFocusedCabinet = useCallback((): boolean => {
+    const itemId = heldIdRef.current;
+    const cabinetId = focusedKindRef.current === "cabinet" ? focusedIdRef.current : null;
+    if (!itemId || !cabinetId || !canStoreHeldInCabinet(itemId, cabinetId)) return false;
+    if (onStoreInCabinetRef.current?.(itemId, cabinetId) !== true) return false;
+    pickupOriginRef.current = null;
+    setHeldId(null);
+    setHeldYawOffset(0);
+    setAimPointState(null);
+    placementCandidateRef.current = null;
+    setPlacementCandidateState(null);
+    return true;
+  }, [canStoreHeldInCabinet]);
 
   const rotateHeld = useCallback((deltaYaw: number) => {
     if (!heldIdRef.current) return; // нечего вращать — no-op
@@ -198,8 +301,10 @@ export function ChemistryInteractionProvider({
 
       if (e.key === "e" || e.key === "E") {
         if (heldIdRef.current) {
-          confirmPlacement();
-        } else if (focusedIdRef.current) {
+          if (!tryStoreHeldInFocusedCabinet()) confirmPlacement();
+        } else if (focusedIdRef.current && focusedKindRef.current === "cabinet") {
+          onToggleCabinetRef.current?.(focusedIdRef.current);
+        } else if (focusedIdRef.current && focusedKindRef.current === "item") {
           pickUp(focusedIdRef.current);
         }
       } else if (e.key === "Escape") {
@@ -213,11 +318,12 @@ export function ChemistryInteractionProvider({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [pickUp, release, rotateHeld, confirmPlacement]);
+  }, [pickUp, release, rotateHeld, confirmPlacement, tryStoreHeldInFocusedCabinet]);
 
   const value: ChemistryInteractionContextValue = {
     phase: heldId ? "held" : focusedId ? "focused" : "idle",
     focusedId,
+    focusedKind,
     heldId,
     heldYawOffset,
     aimPoint,
@@ -231,6 +337,10 @@ export function ChemistryInteractionProvider({
     setPlacementCandidate,
     confirmPlacement,
     getPickupBlockedReason,
+    getInteractableRuntimeState: runtimeStateFor,
+    isInteractableAccessible: isAccessible,
+    getCabinetState: cabinetStateFor,
+    canStoreInCabinet: canStoreHeldInCabinet,
   };
 
   return <ChemistryInteractionContext.Provider value={value}>{children}</ChemistryInteractionContext.Provider>;
@@ -253,31 +363,67 @@ export function useChemistryInteraction(): ChemistryInteractionContextValue {
 export function useInteractable(id: string) {
   const {
     focusedId,
+    focusedKind,
     heldId,
     heldYawOffset,
     placementCandidate,
     setFocused,
     clearFocused,
     getPickupBlockedReason,
+    getInteractableRuntimeState,
+    isInteractableAccessible,
   } = useChemistryInteraction();
-  const capability: InteractableConfig | null = getInteractable(id);
-  const isFocused = focusedId === id;
+  const registeredCapability = getInteractable(id);
+  const runtimeState = getInteractableRuntimeState(id);
+  const accessible = isInteractableAccessible(id);
+  const capability: InteractableConfig | null = accessible ? registeredCapability : null;
+  const isFocused = focusedKind === "item" && focusedId === id;
   const isHeld = heldId === id;
 
   return {
     capability,
+    registeredCapability,
+    isAccessible: accessible,
     isFocused,
     isHeld,
     heldYawOffset: isHeld ? heldYawOffset : 0,
-    blockedReason: getPickupBlockedReason(id),
+    blockedReason: accessible ? getPickupBlockedReason(id) : null,
+    canUseLegacyDrag:
+      Boolean(capability && capability.legacyDragMode !== "none") && runtimeState.storageSlotId == null,
     // предмет визуально "садится" на превью-точку на столе, только пока сам
     // держится И точка валидна — иначе (не держим, либо точка красная/её нет)
     // остаётся у руки, как в Stage S-1
     placementTarget: isHeld ? placementCandidate : null,
     pointerHandlers: capability
       ? {
-          onPointerOver: () => setFocused(id),
-          onPointerOut: () => clearFocused(id),
+          onPointerOver: () => setFocused(id, "item"),
+          onPointerOut: () => clearFocused(id, "item"),
+        }
+      : undefined,
+  };
+}
+
+export function useCabinetInteractable(id: string) {
+  const {
+    focusedId,
+    focusedKind,
+    heldId,
+    setFocused,
+    clearFocused,
+    getCabinetState,
+    canStoreInCabinet,
+  } = useChemistryInteraction();
+  const config: CabinetConfig | null = getCabinet(id);
+  const state = config ? getCabinetState(id) : null;
+  return {
+    config,
+    state,
+    isFocused: focusedKind === "cabinet" && focusedId === id,
+    canStoreHeldItem: heldId ? canStoreInCabinet(heldId, id) : false,
+    pointerHandlers: config
+      ? {
+          onPointerOver: () => setFocused(id, "cabinet"),
+          onPointerOut: () => clearFocused(id, "cabinet"),
         }
       : undefined,
   };
