@@ -1,7 +1,7 @@
 /**
- * Stage S-7 v2 — Sandbox Locomotion & Dynamic Room Bounds Helper (S7-V2.3)
- * Provides pure kinematic vector math, dynamic room interior boundary extraction,
- * spawn validation, and sliding wall collision resolution.
+ * Stage S-7 v2 — Sandbox Locomotion & Universal Obstacle Collisions (S7-V2.4)
+ * Provides pure kinematic vector math, room bounds clamping, tunneling protection (substepping),
+ * and universal "floor-obstacle" Box3 collision resolution with kinematic sliding.
  */
 
 export interface Vector2D {
@@ -9,11 +9,26 @@ export interface Vector2D {
   z: number;
 }
 
+export type CollisionRole =
+  | "room-boundary"     // Границы стен комнаты
+  | "floor-obstacle"    // Напольные коллизионные объекты (столы, тумбы)
+  | "interaction-only"  // Настенные шкафы (для reach-дистанции <= 1.8m, но без напольной коллизии)
+  | "non-collidable";   // Декоративные визуальные меши
+
+export interface RegisteredCollider {
+  id: string;
+  name: string;
+  role: CollisionRole;
+  bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
+  minY: number;
+  maxY: number;
+}
+
 export interface RoomInteriorBounds {
-  minX: number; // Левая внутренняя грань (max.x левой стены)
-  maxX: number; // Правая внутренняя грань (min.x правой стены)
-  minZ: number; // Задняя внутренняя грань (max.z задней стены)
-  maxZ: number; // Передняя внутренняя грань (min.z передней стены)
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
 }
 
 export function computeDirectionVectors(yawRad: number): {
@@ -53,29 +68,53 @@ export function computeWorldMovementVector(
 }
 
 /**
- * Валидация стартовой позиции спавна игрока внутри объёма комнаты
+ * Валидация спавна игрока с учётом комнат и всех floor-obstacle препятствий
  */
 export function isValidSpawnPosition(
   pos: [number, number],
   room: RoomInteriorBounds,
-  playerRadius: number,
-  skinWidth: number
+  obstacles: RegisteredCollider[] = [],
+  playerRadius: number = 0.35,
+  skinWidth: number = 0.02
 ): boolean {
   const minAllowedX = room.minX + playerRadius + skinWidth;
   const maxAllowedX = room.maxX - playerRadius - skinWidth;
   const minAllowedZ = room.minZ + playerRadius + skinWidth;
   const maxAllowedZ = room.maxZ - playerRadius - skinWidth;
 
-  return (
-    pos[0] >= minAllowedX &&
-    pos[0] <= maxAllowedX &&
-    pos[1] >= minAllowedZ &&
-    pos[1] <= maxAllowedZ
-  );
+  if (
+    pos[0] < minAllowedX ||
+    pos[0] > maxAllowedX ||
+    pos[1] < minAllowedZ ||
+    pos[1] > maxAllowedZ
+  ) {
+    return false;
+  }
+
+  // Проверка пересечения со всеми floor-obstacle
+  for (const obs of obstacles) {
+    if (obs.role !== "floor-obstacle") continue;
+
+    const expMinX = obs.bounds.minX - playerRadius - skinWidth;
+    const expMaxX = obs.bounds.maxX + playerRadius + skinWidth;
+    const expMinZ = obs.bounds.minZ - playerRadius - skinWidth;
+    const expMaxZ = obs.bounds.maxZ + playerRadius + skinWidth;
+
+    if (
+      pos[0] > expMinX &&
+      pos[0] < expMaxX &&
+      pos[1] > expMinZ &&
+      pos[1] < expMaxZ
+    ) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /**
- * Определение кинематического шага с полным предотвращением вылета за стены (Wall Collision Sliding & Clamping)
+ * Разрешение коллизий со стенами комнаты (Room Boundary Clamping)
  */
 export function resolveWallCollisions(
   currentPos: [number, number],
@@ -98,7 +137,6 @@ export function resolveWallCollisions(
   let blockedX: "none" | "left" | "right" = "none";
   let blockedZ: "none" | "back" | "front" = "none";
 
-  // Ограничение по оси X (Левая / Правая стена)
   if (nextX < minAllowedX) {
     nextX = minAllowedX;
     blockedX = "left";
@@ -107,7 +145,6 @@ export function resolveWallCollisions(
     blockedX = "right";
   }
 
-  // Ограничение по оси Z (Задняя / Передняя стена)
   if (nextZ < minAllowedZ) {
     nextZ = minAllowedZ;
     blockedZ = "back";
@@ -125,18 +162,98 @@ export function resolveWallCollisions(
     blockedWall = blockedZ;
   }
 
-  const resolvedDelta: Vector2D = {
-    x: nextX - currentPos[0],
-    z: nextZ - currentPos[1],
-  };
-
   return {
     nextPos: [nextX, nextZ],
-    resolvedDelta,
+    resolvedDelta: { x: nextX - currentPos[0], z: nextZ - currentPos[1] },
     blockedWall,
   };
 }
 
+/**
+ * Универсальное разрешение кинематических коллизий напольной мебели (Universal Floor Obstacles)
+ * Позволяет кинематически скользить вдоль граней любых объектов роли "floor-obstacle".
+ */
+export function resolveObstacleCollisions(
+  currentPos: [number, number],
+  requestedDelta: Vector2D,
+  obstacles: RegisteredCollider[],
+  playerRadius: number,
+  skinWidth: number
+): {
+  nextPos: [number, number];
+  resolvedDelta: Vector2D;
+  blockedObstacleId: string | null;
+  blockedSide: "none" | "front" | "back" | "left" | "right" | "corner";
+} {
+  let posX = currentPos[0];
+  let posZ = currentPos[1];
+  let targetX = posX + requestedDelta.x;
+  let targetZ = posZ + requestedDelta.z;
+
+  let blockedObstacleId: string | null = null;
+  let blockedSide: "none" | "front" | "back" | "left" | "right" | "corner" = "none";
+
+  const activeObstacles = obstacles.filter((o) => o.role === "floor-obstacle");
+
+  // Независимая проверка и отсечение оси X
+  for (const obs of activeObstacles) {
+    const expMinX = obs.bounds.minX - playerRadius - skinWidth;
+    const expMaxX = obs.bounds.maxX + playerRadius + skinWidth;
+    const expMinZ = obs.bounds.minZ - playerRadius - skinWidth;
+    const expMaxZ = obs.bounds.maxZ + playerRadius + skinWidth;
+
+    // Проверяем, находится ли текущий Z внутри расширенной Z-зоны препятствия
+    if (posZ > expMinZ && posZ < expMaxZ) {
+      // Попытка шагнуть влево сквозь правую грань объекта
+      if (posX >= expMaxX && targetX < expMaxX) {
+        targetX = expMaxX;
+        blockedObstacleId = obs.id;
+        blockedSide = "right";
+      }
+      // Попытка шагнуть вправо сквозь левую грань объекта
+      else if (posX <= expMinX && targetX > expMinX) {
+        targetX = expMinX;
+        blockedObstacleId = obs.id;
+        blockedSide = "left";
+      }
+    }
+  }
+
+  // Независимая проверка и отсечение оси Z
+  for (const obs of activeObstacles) {
+    const expMinX = obs.bounds.minX - playerRadius - skinWidth;
+    const expMaxX = obs.bounds.maxX + playerRadius + skinWidth;
+    const expMinZ = obs.bounds.minZ - playerRadius - skinWidth;
+    const expMaxZ = obs.bounds.maxZ + playerRadius + skinWidth;
+
+    // Проверяем, находится ли обновлённый X (targetX) внутри расширенной X-зоны
+    if (targetX > expMinX && targetX < expMaxX) {
+      // Попытка шагнуть назад (вперёд по Z) сквозь переднюю грань (minZ)
+      if (posZ <= expMinZ && targetZ > expMinZ) {
+        targetZ = expMinZ;
+        blockedObstacleId = obs.id;
+        blockedSide = blockedSide !== "none" ? "corner" : "front";
+      }
+      // Попытка шагнуть вперёд (назад по Z) сквозь заднюю грань (maxZ)
+      else if (posZ >= expMaxZ && targetZ < expMaxZ) {
+        targetZ = expMaxZ;
+        blockedObstacleId = obs.id;
+        blockedSide = blockedSide !== "none" ? "corner" : "back";
+      }
+    }
+  }
+
+  return {
+    nextPos: [targetX, targetZ],
+    resolvedDelta: { x: targetX - currentPos[0], z: targetZ - currentPos[1] },
+    blockedObstacleId,
+    blockedSide,
+  };
+}
+
+/**
+ * Главный кинематический шаг с поддержкой субстеппинга (Substepping) против туннелирования
+ */
 export function calculateKinematicStep(
   currentPos: [number, number],
   inputVec: Vector2D,
@@ -144,6 +261,7 @@ export function calculateKinematicStep(
   speed: number,
   deltaSec: number,
   room?: RoomInteriorBounds,
+  obstacles: RegisteredCollider[] = [],
   playerRadius: number = 0.35,
   skinWidth: number = 0.02
 ): {
@@ -151,38 +269,66 @@ export function calculateKinematicStep(
   requestedDelta: Vector2D;
   resolvedDelta: Vector2D;
   blockedWall: "none" | "left" | "right" | "back" | "front" | "corner";
+  blockedObstacleId: string | null;
+  blockedObstacleSide: "none" | "front" | "back" | "left" | "right" | "corner";
 } {
   const worldMove = computeWorldMovementVector(inputVec, yawRad);
-  const dist = speed * deltaSec;
+  const totalDist = speed * deltaSec;
 
   const requestedDelta: Vector2D = {
-    x: worldMove.x * dist,
-    z: worldMove.z * dist,
+    x: worldMove.x * totalDist,
+    z: worldMove.z * totalDist,
   };
 
-  if (!room) {
-    const nextPos: [number, number] = [
-      currentPos[0] + requestedDelta.x,
-      currentPos[1] + requestedDelta.z,
-    ];
-    return {
-      nextPos,
-      requestedDelta,
-      resolvedDelta: requestedDelta,
-      blockedWall: "none",
-    };
+  // Вычисление субстеппинга для защиты от туннелирования
+  const maxSubStepDist = Math.max(0.05, playerRadius * 0.5);
+  const numSubSteps = Math.max(1, Math.ceil(totalDist / maxSubStepDist));
+  const subDelta: Vector2D = {
+    x: requestedDelta.x / numSubSteps,
+    z: requestedDelta.z / numSubSteps,
+  };
+
+  let currPos: [number, number] = [currentPos[0], currentPos[1]];
+  let finalBlockedWall: "none" | "left" | "right" | "back" | "front" | "corner" = "none";
+  let finalBlockedObstacleId: string | null = null;
+  let finalBlockedObstacleSide: "none" | "front" | "back" | "left" | "right" | "corner" = "none";
+
+  for (let i = 0; i < numSubSteps; i++) {
+    // 2. Коллизии с напольной мебелью (floor-obstacle)
+    const obsRes = resolveObstacleCollisions(
+      currPos,
+      subDelta,
+      obstacles,
+      playerRadius,
+      skinWidth
+    );
+
+    // 3. Коллизии со стенами комнаты (Room Boundaries)
+    let wallRes: { nextPos: [number, number]; blockedWall: "none" | "left" | "right" | "back" | "front" | "corner" } = { nextPos: obsRes.nextPos, blockedWall: "none" };
+    if (room) {
+      const deltaFromObs: Vector2D = {
+        x: obsRes.nextPos[0] - currPos[0],
+        z: obsRes.nextPos[1] - currPos[1],
+      };
+      const wRes = resolveWallCollisions(currPos, deltaFromObs, room, playerRadius, skinWidth);
+      wallRes = { nextPos: wRes.nextPos, blockedWall: wRes.blockedWall };
+      if (wRes.blockedWall !== "none") finalBlockedWall = wRes.blockedWall;
+    }
+
+    if (obsRes.blockedObstacleId) {
+      finalBlockedObstacleId = obsRes.blockedObstacleId;
+      finalBlockedObstacleSide = obsRes.blockedSide;
+    }
+
+    currPos = obsRes.nextPos;
   }
 
-  const resolved = resolveWallCollisions(
-    currentPos,
-    requestedDelta,
-    room,
-    playerRadius,
-    skinWidth
-  );
-
   return {
-    ...resolved,
+    nextPos: currPos,
     requestedDelta,
+    resolvedDelta: { x: currPos[0] - currentPos[0], z: currPos[1] - currentPos[1] },
+    blockedWall: finalBlockedWall,
+    blockedObstacleId: finalBlockedObstacleId,
+    blockedObstacleSide: finalBlockedObstacleSide,
   };
 }

@@ -6,11 +6,12 @@ import * as THREE from "three";
 import {
   calculateKinematicStep,
   isValidSpawnPosition,
+  RegisteredCollider,
   RoomInteriorBounds,
   Vector2D,
 } from "@/lib/sandbox-locomotion";
 
-// 1. Централизованный SandboxConfig прототипа (S7-V2.3)
+// 1. Централизованный SandboxConfig прототипа (S7-V2.4)
 const SANDBOX_CONFIG = {
   playerRadius: 0.35,
   eyeHeight: 1.6,
@@ -19,21 +20,6 @@ const SANDBOX_CONFIG = {
   defaultFov: 65,
   moveSpeed: 2.5,
 };
-
-// 2. Явные роли коллайдеров (CollisionRole)
-export type CollisionRole =
-  | "room-boundary"     // Границы стен комнаты (Wall Box3)
-  | "floor-obstacle"    // Напольная мебель (главный стол)
-  | "non-collidable";   // Декоративные объекты
-
-export interface RegisteredCollider {
-  id: string;
-  name: string;
-  role: CollisionRole;
-  bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
-  minY: number;
-  maxY: number;
-}
 
 const START_POS: [number, number] = [0, 2.5];
 const TABLE_CENTER = [0, 0.8, 0];
@@ -80,12 +66,16 @@ function SandboxCameraController({
   return null;
 }
 
+// Регистрация столешницы с обновлением матрицы updateWorldMatrix(true, true)
 function RegisteredTableMesh({ onRegister }: { onRegister: (collider: RegisteredCollider) => void }) {
   const groupRef = useRef<THREE.Group>(null);
 
   useEffect(() => {
     if (groupRef.current) {
+      // Обязательное обновление мировых матриц перед вычислением Box3
+      groupRef.current.updateWorldMatrix(true, true);
       const box = new THREE.Box3().setFromObject(groupRef.current);
+
       onRegister({
         id: "main_table",
         name: "Главный стол",
@@ -104,10 +94,12 @@ function RegisteredTableMesh({ onRegister }: { onRegister: (collider: Registered
 
   return (
     <group ref={groupRef} position={[0, 0.4, 0]}>
+      {/* Столешница */}
       <mesh position={[0, 0.4, 0]}>
         <boxGeometry args={[3.0, 0.08, 1.4]} />
         <meshStandardMaterial color="#e2e8f0" roughness={0.2} metalness={0.1} />
       </mesh>
+      {/* Ножки */}
       <mesh position={[-1.4, -0.2, -0.6]}>
         <boxGeometry args={[0.08, 0.8, 0.08]} />
         <meshStandardMaterial color="#475569" />
@@ -147,6 +139,7 @@ function RegisteredWallMesh({
 
   useEffect(() => {
     if (meshRef.current) {
+      meshRef.current.updateWorldMatrix(true, true);
       const box = new THREE.Box3().setFromObject(meshRef.current);
       onRegister({
         id,
@@ -193,7 +186,6 @@ function SandboxRoomGeometry({ onRegisterCollider }: { onRegisterCollider: (coll
   );
 }
 
-// Визуальный 3D-индикатор цилиндра игрока и границ стен
 function PlayerCylinderDebug({ playerPos }: { playerPos: [number, number] }) {
   return (
     <group position={[playerPos[0], 0.8, playerPos[1]]}>
@@ -205,6 +197,23 @@ function PlayerCylinderDebug({ playerPos }: { playerPos: [number, number] }) {
   );
 }
 
+// 3D Wireframe-визуализация расширенной AABB зоны коллизии стола
+function TableExpandedBoundsDebug({ tableCol }: { tableCol: RegisteredCollider | undefined }) {
+  if (!tableCol) return null;
+
+  const width = tableCol.bounds.maxX - tableCol.bounds.minX + (SANDBOX_CONFIG.playerRadius + SANDBOX_CONFIG.skinWidth) * 2;
+  const depth = tableCol.bounds.maxZ - tableCol.bounds.minZ + (SANDBOX_CONFIG.playerRadius + SANDBOX_CONFIG.skinWidth) * 2;
+  const centerX = (tableCol.bounds.minX + tableCol.bounds.maxX) / 2;
+  const centerZ = (tableCol.bounds.minZ + tableCol.bounds.maxZ) / 2;
+
+  return (
+    <mesh position={[centerX, 0.4, centerZ]}>
+      <boxGeometry args={[width, 0.8, depth]} />
+      <meshBasicMaterial color="#f59e0b" wireframe transparent opacity={0.4} />
+    </mesh>
+  );
+}
+
 export default function SandboxPrototypePage() {
   const [playerPosState, setPlayerPosState] = useState<[number, number]>(START_POS);
   const [yaw, setYaw] = useState<number>(START_YAW);
@@ -213,6 +222,7 @@ export default function SandboxPrototypePage() {
   const [lookButton, setLookButton] = useState<number>(-1);
   const [isMoving, setIsMoving] = useState(false);
   const [blockedWall, setBlockedWall] = useState<"none" | "left" | "right" | "back" | "front" | "corner">("none");
+  const [blockedObstacle, setBlockedObstacle] = useState<{ id: string | null; side: string }>({ id: null, side: "none" });
   const [keysState, setKeysState] = useState({ keyW: false, keyA: false, keyS: false, keyD: false });
   const [colliders, setColliders] = useState<Record<string, RegisteredCollider>>({});
   const [roomInterior, setRoomInterior] = useState<RoomInteriorBounds | null>(null);
@@ -227,30 +237,31 @@ export default function SandboxPrototypePage() {
   const lastPosRef = useRef({ x: 0, y: 0 });
   const lastUiUpdateRef = useRef<number>(0);
   const roomInteriorRef = useRef<RoomInteriorBounds | null>(null);
+  const collidersRef = useRef<RegisteredCollider[]>([]);
 
   const handleRegisterCollider = React.useCallback((collider: RegisteredCollider) => {
     setColliders((prev) => {
       const next = { ...prev, [collider.id]: collider };
+      collidersRef.current = Object.values(next);
 
-      // Динамическое извлечение RoomInteriorBounds по мешам стен
       const wallLeft = next["wall_left"];
       const wallRight = next["wall_right"];
       const wallBack = next["wall_back"];
 
       if (wallLeft && wallRight && wallBack) {
         const bounds: RoomInteriorBounds = {
-          minX: wallLeft.bounds.maxX, // max.x левой стены
-          maxX: wallRight.bounds.minX, // min.x правой стены
-          minZ: wallBack.bounds.maxZ, // max.z задней стены
-          maxZ: 3.2, // Передний предел комнаты
+          minX: wallLeft.bounds.maxX,
+          maxX: wallRight.bounds.minX,
+          minZ: wallBack.bounds.maxZ,
+          maxZ: 3.2,
         };
         setRoomInterior(bounds);
         roomInteriorRef.current = bounds;
 
-        const valid = isValidSpawnPosition(START_POS, bounds, SANDBOX_CONFIG.playerRadius, SANDBOX_CONFIG.skinWidth);
+        const valid = isValidSpawnPosition(START_POS, bounds, Object.values(next), SANDBOX_CONFIG.playerRadius, SANDBOX_CONFIG.skinWidth);
         setIsSpawnValid(valid);
         if (!valid) {
-          console.error(`[DevError] Invalid player spawn position ${JSON.stringify(START_POS)} inside room bounds ${JSON.stringify(bounds)}`);
+          console.error(`[DevError] Invalid player spawn position ${JSON.stringify(START_POS)} inside room bounds or furniture collision`);
         }
       }
 
@@ -366,7 +377,7 @@ export default function SandboxPrototypePage() {
     e.preventDefault();
   };
 
-  // Кинематический tick движения на refs с ограничением стен (Wall Collisions & Sliding)
+  // Кинематический tick движения со субстеппингом и универсальным решением коллизий мебели
   useEffect(() => {
     let animId: number;
     let lastTime = performance.now();
@@ -385,6 +396,7 @@ export default function SandboxPrototypePage() {
           SANDBOX_CONFIG.moveSpeed,
           deltaSec,
           roomInteriorRef.current ?? undefined,
+          collidersRef.current,
           SANDBOX_CONFIG.playerRadius,
           SANDBOX_CONFIG.skinWidth
         );
@@ -396,11 +408,13 @@ export default function SandboxPrototypePage() {
           lastUiUpdateRef.current = now;
           setPlayerPosState(step.nextPos);
           setBlockedWall(step.blockedWall);
+          setBlockedObstacle({ id: step.blockedObstacleId, side: step.blockedObstacleSide });
         }
         setIsMoving(step.nextPos[0] !== playerPosRef.current[0] || step.nextPos[1] !== playerPosRef.current[1]);
       } else {
         setIsMoving(false);
         setBlockedWall("none");
+        setBlockedObstacle({ id: null, side: "none" });
         if (playerPosRef.current !== playerPosState) {
           setPlayerPosState(playerPosRef.current);
         }
@@ -419,6 +433,11 @@ export default function SandboxPrototypePage() {
   const minZAllowed = roomInterior ? (roomInterior.minZ + SANDBOX_CONFIG.playerRadius + SANDBOX_CONFIG.skinWidth).toFixed(2) : "-2.83";
   const maxZAllowed = roomInterior ? (roomInterior.maxZ - SANDBOX_CONFIG.playerRadius - SANDBOX_CONFIG.skinWidth).toFixed(2) : "2.83";
 
+  const expTableMinX = tableCol ? (tableCol.bounds.minX - SANDBOX_CONFIG.playerRadius - SANDBOX_CONFIG.skinWidth).toFixed(2) : "-1.87";
+  const expTableMaxX = tableCol ? (tableCol.bounds.maxX + SANDBOX_CONFIG.playerRadius + SANDBOX_CONFIG.skinWidth).toFixed(2) : "1.87";
+  const expTableMinZ = tableCol ? (tableCol.bounds.minZ - SANDBOX_CONFIG.playerRadius - SANDBOX_CONFIG.skinWidth).toFixed(2) : "-0.67";
+  const expTableMaxZ = tableCol ? (tableCol.bounds.maxZ + SANDBOX_CONFIG.playerRadius + SANDBOX_CONFIG.skinWidth).toFixed(2) : "1.47";
+
   return (
     <div
       className="flex h-screen w-screen flex-col bg-slate-950 text-slate-100 select-none"
@@ -433,15 +452,18 @@ export default function SandboxPrototypePage() {
       data-player-z={playerPosState[1].toFixed(2)}
       data-is-moving={isMoving ? "true" : "false"}
       data-blocked-wall={blockedWall}
+      data-blocked-obstacle={blockedObstacle.id ? `${blockedObstacle.id}:${blockedObstacle.side}` : "none"}
       data-spawn-valid={isSpawnValid ? "true" : "false"}
       data-room-interior={`X[${minXAllowed}..${maxXAllowed}] Z[${minZAllowed}..${maxZAllowed}]`}
+      data-table-bounds={tableCol ? `X[${tableCol.bounds.minX}..${tableCol.bounds.maxX}] Z[${tableCol.bounds.minZ}..${tableCol.bounds.maxZ}]` : ""}
+      data-expanded-table={`X[${expTableMinX}..${expTableMaxX}] Z[${expTableMinZ}..${expTableMaxZ}]`}
       data-yaw={yaw.toFixed(3)}
       data-pitch={pitch.toFixed(3)}
     >
       <header className="flex items-center justify-between border-b border-slate-800 bg-slate-900 px-6 py-3 shrink-0">
         <div>
-          <h1 className="text-lg font-bold text-cyan-400">Stage S-7 v2 — Sandbox Dev Prototype (S7-V2.3 Room Bounds)</h1>
-          <p className="text-xs text-slate-400">Изолированный 3D-прототип (Динамические границы стен комнаты и скольжение)</p>
+          <h1 className="text-lg font-bold text-cyan-400">Stage S-7 v2 — Sandbox Dev Prototype (S7-V2.4 Furniture Collisions)</h1>
+          <p className="text-xs text-slate-400">Изолированный 3D-прототип (Универсальные коллизии мебели и скольжение)</p>
         </div>
         <div className="flex items-center gap-4 text-xs font-mono text-slate-300">
           <div data-testid="pos-display">Pos: [{playerPosState[0].toFixed(2)}, {playerPosState[1].toFixed(2)}]</div>
@@ -465,42 +487,39 @@ export default function SandboxPrototypePage() {
           <Suspense fallback={null}>
             <SandboxRoomGeometry onRegisterCollider={handleRegisterCollider} />
             <PlayerCylinderDebug playerPos={playerPosState} />
+            <TableExpandedBoundsDebug tableCol={tableCol} />
           </Suspense>
           <SandboxCameraController playerPosRef={playerPosRef} yaw={yaw} pitch={pitch} />
         </Canvas>
 
-        {/* Отладочная панель Debug Bounds */}
+        {/* Панель отладки Debug Bounds */}
         <div className="pointer-events-none absolute top-4 left-4 rounded-xl border border-slate-700 bg-slate-900/80 p-3 text-xs backdrop-blur space-y-1">
-          <p className="font-semibold text-cyan-300">Debug Bounds & Room Interior (S7-V2.3):</p>
+          <p className="font-semibold text-cyan-300">Debug Bounds & Furniture Collisions (S7-V2.4):</p>
+          {tableCol && (
+            <>
+              <div className="text-emerald-400 font-mono" data-testid="table-bounds-display">
+                • Table Box3 ({tableCol.role}): X[{tableCol.bounds.minX}..{tableCol.bounds.maxX}] Z[{tableCol.bounds.minZ}..{tableCol.bounds.maxZ}]
+              </div>
+              <div className="text-amber-300 font-mono" data-testid="expanded-table-display">
+                • Expanded Table Bounds (+R+Skin): X[{expTableMinX}..{expTableMaxX}] Z[{expTableMinZ}..{expTableMaxZ}]
+              </div>
+            </>
+          )}
+          <div className="text-amber-400 font-mono" data-testid="blocked-obstacle-display">
+            • Obstacle Collision: <span className={blockedObstacle.id ? "text-red-400 font-bold" : "text-emerald-400"}>{blockedObstacle.id ? `${blockedObstacle.id} (${blockedObstacle.side.toUpperCase()})` : "NONE"}</span>
+          </div>
           <div className="text-cyan-300 font-mono" data-testid="room-interior-display">
             • Room Interior: X[{minXAllowed}..{maxXAllowed}] Z[{minZAllowed}..{maxZAllowed}]
           </div>
-          <div className="text-amber-300 font-mono" data-testid="blocked-wall-display">
-            • Wall Collision Status: <span className={blockedWall !== "none" ? "text-red-400 font-bold" : "text-emerald-400"}>{blockedWall.toUpperCase()}</span>
-          </div>
-          <div className="text-emerald-400 font-mono">
-            • Player Radius R={SANDBOX_CONFIG.playerRadius}m, Skin={SANDBOX_CONFIG.skinWidth}m (Spawn: {isSpawnValid ? "VALID" : "INVALID"})
-          </div>
-          {tableCol && (
-            <div className="text-slate-400 font-mono">
-              • Table Box3 ({tableCol.role}): X[{tableCol.bounds.minX}..{tableCol.bounds.maxX}] Z[{tableCol.bounds.minZ}..{tableCol.bounds.maxZ}]
-            </div>
-          )}
         </div>
 
-        {/* Индикатор управления */}
+        {/* Панель инструкции */}
         <div className="pointer-events-none absolute bottom-4 left-4 rounded-xl border border-slate-700 bg-slate-900/80 p-3 text-xs backdrop-blur">
-          <p className="font-semibold text-cyan-300 mb-1">Управление (S7-V2.3 Room Bounds):</p>
+          <p className="font-semibold text-cyan-300 mb-1">Управление (S7-V2.4 Furniture Collisions):</p>
           <ul className="space-y-1 text-slate-300">
-            <li>• <span className="font-mono text-amber-300">W / A / S / D</span> — Перемещение с блокировкой и скольжением у стен</li>
-            <li>• <span className="font-mono text-cyan-300">Голубой цилиндр R=0.35m</span> — Граница физического тела игрока</li>
+            <li>• <span className="font-mono text-amber-300">W / A / S / D</span> — Движение с обходом и скольжением у стола</li>
+            <li>• <span className="font-mono text-amber-300">Оранжевый каркас</span> — Расширенные физические границы стола (+R+Skin)</li>
           </ul>
-          <div className="mt-2 flex gap-2 font-mono text-[11px]">
-            <span className={keysState.keyW ? "text-emerald-400 font-bold" : "text-slate-500"}>[W]</span>
-            <span className={keysState.keyA ? "text-emerald-400 font-bold" : "text-slate-500"}>[A]</span>
-            <span className={keysState.keyS ? "text-emerald-400 font-bold" : "text-slate-500"}>[S]</span>
-            <span className={keysState.keyD ? "text-emerald-400 font-bold" : "text-slate-500"}>[D]</span>
-          </div>
         </div>
       </main>
     </div>

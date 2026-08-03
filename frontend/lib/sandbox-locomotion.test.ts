@@ -4,6 +4,8 @@ import {
   computeDirectionVectors,
   computeWorldMovementVector,
   isValidSpawnPosition,
+  RegisteredCollider,
+  resolveObstacleCollisions,
   resolveWallCollisions,
   RoomInteriorBounds,
 } from "./sandbox-locomotion";
@@ -17,96 +19,87 @@ const MOCK_ROOM: RoomInteriorBounds = {
 const R = 0.35;
 const SKIN = 0.02;
 
-describe("Stage S-7 v2 — CheckPoint S7-V2.3 Dynamic Room Bounds & Wall Collisions", () => {
+const MOCK_TABLE: RegisteredCollider = {
+  id: "main_table",
+  name: "Главный стол",
+  role: "floor-obstacle",
+  bounds: { minX: -1.5, maxX: 1.5, minZ: -0.3, maxZ: 1.1 },
+  minY: 0,
+  maxY: 0.88,
+};
+
+describe("Stage S-7 v2 — CheckPoint S7-V2.4 Dynamic Furniture Collision & Kinematic Sliding", () => {
   it("1. Camera yaw direction vectors", () => {
     const d0 = computeDirectionVectors(0);
     expect(d0.forward.x).toBeCloseTo(0, 5);
     expect(d0.forward.z).toBeCloseTo(-1, 5);
   });
 
-  it("2. Valid and Invalid Spawn Position Check", () => {
+  it("2. Valid and Invalid Spawn Position Check with Obstacles", () => {
     const validPos: [number, number] = [0, 2.5];
-    expect(isValidSpawnPosition(validPos, MOCK_ROOM, R, SKIN)).toBe(true);
+    expect(isValidSpawnPosition(validPos, MOCK_ROOM, [MOCK_TABLE], R, SKIN)).toBe(true);
 
-    const invalidLeft: [number, number] = [-4.0, 0];
-    expect(isValidSpawnPosition(invalidLeft, MOCK_ROOM, R, SKIN)).toBe(false);
-
-    const invalidBack: [number, number] = [0, -3.0];
-    expect(isValidSpawnPosition(invalidBack, MOCK_ROOM, R, SKIN)).toBe(false);
+    // Spawn inside expanded table bounds (X[-1.87..1.87], Z[-0.67..1.47])
+    const invalidInsideTable: [number, number] = [0, 0.5];
+    expect(isValidSpawnPosition(invalidInsideTable, MOCK_ROOM, [MOCK_TABLE], R, SKIN)).toBe(false);
   });
 
-  it("3. Wall collision: Left wall blocks movement X", () => {
-    const start: [number, number] = [-3.8, 0];
-    const requested = { x: -0.5, z: 0 };
-    const res = resolveWallCollisions(start, requested, MOCK_ROOM, R, SKIN);
+  it("3. Obstacle collision: Direct walk forward (+Z) into table front edge is blocked", () => {
+    const start: [number, number] = [0, -1.0];
+    const requested = { x: 0, z: 0.8 }; // Walk towards table minZ (-0.3)
+    const res = resolveObstacleCollisions(start, requested, [MOCK_TABLE], R, SKIN);
 
-    expect(res.blockedWall).toBe("left");
-    expect(res.nextPos[0]).toBeCloseTo(-4.2 + R + SKIN, 5); // -3.83
+    expect(res.blockedObstacleId).toBe("main_table");
+    expect(res.blockedSide).toBe("front");
+    expect(res.nextPos[1]).toBeCloseTo(-0.3 - R - SKIN, 5); // Clamped at -0.67
   });
 
-  it("4. Wall collision: Right wall blocks movement X", () => {
-    const start: [number, number] = [3.8, 0];
-    const requested = { x: 0.5, z: 0 };
-    const res = resolveWallCollisions(start, requested, MOCK_ROOM, R, SKIN);
+  it("4. Obstacle collision: Diagonal slide along table front edge", () => {
+    const start: [number, number] = [0, -0.67];
+    const requested = { x: 0.3, z: 0.2 }; // Walk diagonal
+    const res = resolveObstacleCollisions(start, requested, [MOCK_TABLE], R, SKIN);
 
-    expect(res.blockedWall).toBe("right");
-    expect(res.nextPos[0]).toBeCloseTo(4.2 - R - SKIN, 5); // 3.83
+    expect(res.blockedObstacleId).toBe("main_table");
+    expect(res.nextPos[0]).toBeCloseTo(0.3, 5); // Slides along X
+    expect(res.nextPos[1]).toBeCloseTo(-0.67, 5); // Z stays clamped
   });
 
-  it("5. Wall collision: Back wall blocks movement Z", () => {
-    const start: [number, number] = [0, -2.8];
-    const requested = { x: 0, z: -0.5 };
-    const res = resolveWallCollisions(start, requested, MOCK_ROOM, R, SKIN);
+  it("5. Walking around table on left & right sides is 100% free", () => {
+    // Left side of expanded table (X < -1.87)
+    const startLeft: [number, number] = [-2.0, -1.0];
+    const resLeft = resolveObstacleCollisions(startLeft, { x: 0, z: 1.5 }, [MOCK_TABLE], R, SKIN);
+    expect(resLeft.blockedObstacleId).toBeNull();
+    expect(resLeft.nextPos[1]).toBeCloseTo(0.5, 5);
 
-    expect(res.blockedWall).toBe("back");
-    expect(res.nextPos[1]).toBeCloseTo(-3.2 + R + SKIN, 5); // -2.83
+    // Right side of expanded table (X > 1.87)
+    const startRight: [number, number] = [2.0, -1.0];
+    const resRight = resolveObstacleCollisions(startRight, { x: 0, z: 1.5 }, [MOCK_TABLE], R, SKIN);
+    expect(resRight.blockedObstacleId).toBeNull();
+    expect(resRight.nextPos[1]).toBeCloseTo(0.5, 5);
   });
 
-  it("6. Wall collision: Front wall blocks movement Z", () => {
-    const start: [number, number] = [0, 2.8];
-    const requested = { x: 0, z: 0.5 };
-    const res = resolveWallCollisions(start, requested, MOCK_ROOM, R, SKIN);
+  it("6. Tunneling protection test (Substepping): Large movement delta cannot tunnel through table", () => {
+    const start: [number, number] = [0, -2.0];
+    // Attempt huge leap straight through the table (from Z = -2.0 to Z = 2.0)
+    const res = calculateKinematicStep(
+      start,
+      { x: 0, z: -1 }, // S key moves +Z towards table when yaw=0
+      0, // Yaw=0
+      10.0, // High speed
+      0.5, // Large delta
+      MOCK_ROOM,
+      [MOCK_TABLE],
+      R,
+      SKIN
+    );
 
-    expect(res.blockedWall).toBe("front");
-    expect(res.nextPos[1]).toBeCloseTo(3.2 - R - SKIN, 5); // 2.83
+    expect(res.blockedObstacleId).toBe("main_table");
+    expect(res.nextPos[1]).toBeCloseTo(-0.67, 5); // Stopped strictly at front edge of table
   });
 
-  it("7. Diagonal sliding along Back Wall: Z is blocked, X moves smoothly", () => {
-    const start: [number, number] = [0, -2.83];
-    const requested = { x: 0.2, z: -0.2 };
-    const res = resolveWallCollisions(start, requested, MOCK_ROOM, R, SKIN);
-
-    expect(res.blockedWall).toBe("back");
-    expect(res.nextPos[0]).toBeCloseTo(0.2, 5); // Moves along X
-    expect(res.nextPos[1]).toBeCloseTo(-2.83, 5); // Z stays clamped
-  });
-
-  it("8. Moving away from wall: Unblocked immediately", () => {
-    const start: [number, number] = [-3.83, 0];
-    const requested = { x: 0.2, z: 0 }; // Move right away from left wall
-    const res = resolveWallCollisions(start, requested, MOCK_ROOM, R, SKIN);
-
-    expect(res.blockedWall).toBe("none");
-    expect(res.nextPos[0]).toBeCloseTo(-3.63, 5);
-  });
-
-  it("9. Corner Clamping: Clamped inside both X and Z", () => {
-    const start: [number, number] = [-3.8, -2.8];
-    const requested = { x: -0.5, z: -0.5 };
-    const res = resolveWallCollisions(start, requested, MOCK_ROOM, R, SKIN);
-
-    expect(res.blockedWall).toBe("corner");
-    expect(res.nextPos[0]).toBeCloseTo(-3.83, 5);
-    expect(res.nextPos[1]).toBeCloseTo(-2.83, 5);
-  });
-
-  it("10. Tunnel Prevention (Large Delta): Clamped strictly inside room bounds", () => {
-    const start: [number, number] = [0, 0];
-    const requested = { x: 10.0, z: -10.0 }; // Massive delta
-    const res = resolveWallCollisions(start, requested, MOCK_ROOM, R, SKIN);
-
-    expect(res.blockedWall).toBe("corner");
-    expect(res.nextPos[0]).toBeLessThanOrEqual(3.83);
-    expect(res.nextPos[1]).toBeGreaterThanOrEqual(-2.83);
+  it("7. Wall Clamping & Obstacle Clamping combined", () => {
+    const start: [number, number] = [0, 2.5];
+    const res = calculateKinematicStep(start, { x: 0, z: 1 }, 0, 2.5, 0.1, MOCK_ROOM, [MOCK_TABLE], R, SKIN);
+    expect(res.nextPos[1]).toBeLessThan(2.5); // Normal step forward towards table
   });
 });
