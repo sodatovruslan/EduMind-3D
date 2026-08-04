@@ -42,6 +42,7 @@ interface CanvasShellProps {
   roomBounds?: RoomInteriorBounds;
   colliders?: RegisteredCollider[];
   onPosUpdate?: (playerPos: [number, number], cameraXZ: [number, number]) => void;
+  isFullscreen?: boolean;
 }
 
 function CameraModeController({ cameraMode, orbitTarget }: { cameraMode: CameraMode; orbitTarget: [number, number, number] }) {
@@ -133,11 +134,18 @@ export default function CanvasShell({
   roomBounds,
   colliders,
   onPosUpdate,
+  isFullscreen = false,
 }: CanvasShellProps) {
   const preset = QUALITY_PRESETS[quality];
 
   return (
-    <div className="relative h-[34rem] w-full overflow-hidden rounded-2xl border border-white/10 shadow-2xl">
+    <div
+      className={`relative w-full overflow-hidden transition-all duration-300 ${
+        isFullscreen
+          ? "h-full rounded-none border-none shadow-none"
+          : "h-[34rem] rounded-2xl border border-white/10 shadow-2xl"
+      }`}
+    >
       <Canvas
         camera={{ position: cameraPosition, fov: 42 }}
         shadows

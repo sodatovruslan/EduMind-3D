@@ -8,7 +8,7 @@ test.describe("Stage S-7 v2 — Stage S7-V2.12 Observation & Teacher Report Veri
     await page.locator("main").click();
     await page.waitForTimeout(300);
 
-    const overlay = page.locator("text=READY (4/4 walls)");
+    const overlay = page.locator("text=Свободный (Sandbox S-7)");
     await expect(overlay).toBeVisible({ timeout: 20000 });
 
     // Активно перемещаемся клавишами WASD по лабе
@@ -34,7 +34,7 @@ test.describe("Stage S-7 v2 — Stage S7-V2.12 Observation & Teacher Report Veri
     await page.locator("main").click();
     await page.waitForTimeout(300);
 
-    const overlay = page.locator("text=READY (4/4 walls)");
+    const overlay = page.locator("text=Свободный (Sandbox S-7)");
     await expect(overlay).toBeVisible({ timeout: 20000 });
 
     // 1. Подходим к столу

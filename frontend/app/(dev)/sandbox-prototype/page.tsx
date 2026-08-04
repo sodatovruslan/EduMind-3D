@@ -851,6 +851,13 @@ export default function SandboxPrototypePage() {
             playerRadius: SANDBOX_CONFIG.playerRadius,
             skinWidth: SANDBOX_CONFIG.skinWidth,
           }}
+          onToggleFullscreen={() => {
+            if (!document.fullscreenElement) {
+              document.documentElement.requestFullscreen?.().catch(() => {});
+            } else {
+              document.exitFullscreen?.().catch(() => {});
+            }
+          }}
         />
         <Canvas camera={{ position: [playerPosState[0], SANDBOX_CONFIG.eyeHeight, playerPosState[1]], fov: SANDBOX_CONFIG.defaultFov }}>
           <ambientLight intensity={0.5} />

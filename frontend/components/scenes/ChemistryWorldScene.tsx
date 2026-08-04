@@ -2864,8 +2864,8 @@ function ChemistryCanvas({
   }, [registryReady, wallBoxes]);
 
   const handlePosUpdate = useCallback((plr: [number, number], cam: [number, number]) => {
-    setPlayerXZ(plr);
-    setCameraXZ(cam);
+    setPlayerXZ((prev) => (Math.hypot(prev[0] - plr[0], prev[1] - plr[1]) < 0.01 ? prev : plr));
+    setCameraXZ((prev) => (Math.hypot(prev[0] - cam[0], prev[1] - cam[1]) < 0.01 ? prev : cam));
   }, []);
 
   const [collidersMap, setCollidersMap] = useState<Record<string, RegisteredCollider>>({});
@@ -2891,63 +2891,98 @@ function ChemistryCanvas({
   const [cameraMode, setCameraMode] = useState<CameraMode>("orbit");
   const isInteractionActive = !!draggingId || !!heldId;
 
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    function handleFullscreenChange() {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    }
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+    };
+  }, []);
+
+  const handleToggleFullscreen = useCallback(() => {
+    if (!wrapperRef.current) return;
+    if (!document.fullscreenElement) {
+      wrapperRef.current.requestFullscreen?.().catch((err) => {
+        console.warn("Fullscreen request error:", err);
+      });
+    } else {
+      document.exitFullscreen?.().catch((err) => {
+        console.warn("Exit fullscreen error:", err);
+      });
+    }
+  }, []);
+
   return (
     <SandboxReachContext.Provider value={{ cameraMode, playerXZ, obstacles: colliders, heldId }}>
-      <div ref={wrapperRef} className="relative">
-        <SandboxModeOverlay
-        cameraMode={cameraMode}
-        onToggleMode={() => setCameraMode((m) => (m === "orbit" ? "sandbox" : "orbit"))}
-        disabled={isInteractionActive || !registryReady}
-        disabledReason={
-          isInteractionActive
-            ? "Переключение режимов недоступно во время активного взаимодействия с предметом"
-            : `Переключение недоступно: коллизионный реестр стен сцены инициализируется (${registeredWallCount}/4 стен)`
+      <div
+        ref={wrapperRef}
+        className={
+          isFullscreen
+            ? "fixed inset-0 z-50 h-screen w-screen bg-slate-950 flex flex-col justify-center select-none"
+            : "relative w-full"
         }
-        diagnostics={{
-          wallBoxes,
-          registryReady,
-          dynamicRoomBounds,
-          cameraXZ,
-          playerXZ,
-          playerRadius: 0.20,
-          skinWidth: 0.01,
-        }}
-      />
-      <CanvasShell
-        cameraMode={cameraMode}
-        roomBounds={dynamicRoomBounds}
-        colliders={colliders}
-        onPosUpdate={handlePosUpdate}
-        cameraPosition={[0.4, 3.6, 6.4]}
-        target={[0, 0.1, 0]}
-        floorY={-0.1}
-        bloomIntensity={0.3}
-        quality={quality}
-        orbitEnabled={!draggingId && !heldId}
-        // target — центр рабочего стола (см. Workbench), не центр комнаты и
-        // не мировой origin (совпадают здесь, но нарочно к столу). Дистанция
-        // и углы подобраны так, чтобы при ЛЮБОЙ комбинации (max дистанция +
-        // крайние polar/azimuth) камера оставалась строго внутри стен
-        // (см. расчет допусков в комментарии у ROOM_HALF_WIDTH/DEPTH выше)
-        minPolarAngle={Math.PI / 7}
-        maxPolarAngle={1.42}
-        minDistance={2.2}
-        maxDistance={7}
-        minAzimuthAngle={-Math.PI / 2.8}
-        maxAzimuthAngle={Math.PI / 2.8}
-        showFloor={false}
       >
-        <ChemistryScene
-          onDrop={onDrop}
-          pourAnimation={pourAnimation}
-          addAnimation={addAnimation}
-          safetyByContainer={safetyByContainer}
-          debugMode={debugMode}
-          onRegisterWall={handleRegisterWall}
-          onRegisterCollider={handleRegisterCollider}
+        <SandboxModeOverlay
+          cameraMode={cameraMode}
+          onToggleMode={() => setCameraMode((m) => (m === "orbit" ? "sandbox" : "orbit"))}
+          disabled={isInteractionActive || !registryReady}
+          disabledReason={
+            isInteractionActive
+              ? "Переключение режимов недоступно во время активного взаимодействия с предметом"
+              : `Переключение недоступно: коллизионный реестр стен сцены инициализируется (${registeredWallCount}/4 стен)`
+          }
+          diagnostics={{
+            wallBoxes,
+            registryReady,
+            dynamicRoomBounds,
+            cameraXZ,
+            playerXZ,
+            playerRadius: 0.20,
+            skinWidth: 0.01,
+          }}
+          isFullscreen={isFullscreen}
+          onToggleFullscreen={handleToggleFullscreen}
         />
-      </CanvasShell>
-    </div>
+        <CanvasShell
+          cameraMode={cameraMode}
+          roomBounds={dynamicRoomBounds}
+          colliders={colliders}
+          onPosUpdate={handlePosUpdate}
+          cameraPosition={[0.4, 3.6, 6.4]}
+          target={[0, 0.1, 0]}
+          floorY={-0.1}
+          bloomIntensity={0.3}
+          quality={quality}
+          orbitEnabled={!draggingId && !heldId}
+          // target — центр рабочего стола (см. Workbench), не центр комнаты и
+          // не мировой origin (совпадают здесь, но нарочно к столу). Дистанция
+          // и углы подобраны так, чтобы при ЛЮБОЙ комбинации (max дистанция +
+          // крайние polar/azimuth) камера оставалась строго внутри стен
+          // (см. расчет допусков в комментарии у ROOM_HALF_WIDTH/DEPTH выше)
+          minPolarAngle={Math.PI / 7}
+          maxPolarAngle={1.42}
+          minDistance={2.2}
+          maxDistance={7}
+          minAzimuthAngle={-Math.PI / 2.8}
+          maxAzimuthAngle={Math.PI / 2.8}
+          showFloor={false}
+          isFullscreen={isFullscreen}
+        >
+          <ChemistryScene
+            onDrop={onDrop}
+            pourAnimation={pourAnimation}
+            addAnimation={addAnimation}
+            safetyByContainer={safetyByContainer}
+            debugMode={debugMode}
+            onRegisterWall={handleRegisterWall}
+            onRegisterCollider={handleRegisterCollider}
+          />
+        </CanvasShell>
+      </div>
     </SandboxReachContext.Provider>
   );
 }
