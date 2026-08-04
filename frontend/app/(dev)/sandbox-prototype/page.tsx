@@ -18,14 +18,16 @@ import {
   RoomInteriorBounds,
   Vector2D,
 } from "@/lib/sandbox-locomotion";
+import { CameraMode } from "@/lib/chemistry-lab-modes";
+import { SandboxModeOverlay } from "@/components/chemistry/sandbox/SandboxModeOverlay";
 
 // 1. Централизованный SandboxConfig прототипа (S7-V2.6)
 const SANDBOX_CONFIG = {
-  playerRadius: 0.35,
+  playerRadius: 0.20,
   eyeHeight: 1.6,
   interactionDistance: 1.8,
   pickupDistance: 1.8,
-  skinWidth: 0.02,
+  skinWidth: 0.01,
   defaultFov: 65,
   moveSpeed: 2.5,
 };
@@ -232,20 +234,23 @@ function RegisteredWallMesh({
 }
 
 function SandboxRoomGeometry({ onRegisterCollider }: { onRegisterCollider: (collider: RegisteredCollider) => void }) {
+  const ROOM_HALF_WIDTH = 7.0;
+  const ROOM_HALF_DEPTH = 3.2;
+  const ROOM_HEIGHT = 3.0;
+  const ROOM_Z_CENTER = 2.4;
+  const ROOM_Z_LENGTH = 11.2;
+
   return (
     <group>
-      <mesh position={[0, -0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[8.4, 6.4]} />
+      <mesh position={[0, -0.01, ROOM_Z_CENTER]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[ROOM_HALF_WIDTH * 2, ROOM_Z_LENGTH]} />
         <meshStandardMaterial color="#1e293b" roughness={0.8} />
       </mesh>
-      <mesh position={[0, 3.6, 0]} rotation={[Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[8.4, 6.4]} />
-        <meshStandardMaterial color="#0f172a" roughness={0.9} />
-      </mesh>
 
-      <RegisteredWallMesh id="wall_back" name="Задняя стена" position={[0, 1.8, -3.2]} args={[8.4, 3.6]} onRegister={onRegisterCollider} />
-      <RegisteredWallMesh id="wall_left" name="Левая стена" position={[-4.2, 1.8, 0]} args={[6.4, 3.6]} rotation={[0, Math.PI / 2, 0]} onRegister={onRegisterCollider} />
-      <RegisteredWallMesh id="wall_right" name="Правая стена" position={[4.2, 1.8, 0]} args={[6.4, 3.6]} rotation={[0, -Math.PI / 2, 0]} onRegister={onRegisterCollider} />
+      <RegisteredWallMesh id="wall-back" name="Задняя стена" position={[0, ROOM_HEIGHT / 2, -ROOM_HALF_DEPTH]} args={[ROOM_HALF_WIDTH * 2, ROOM_HEIGHT]} onRegister={onRegisterCollider} />
+      <RegisteredWallMesh id="wall-left" name="Левая стена" position={[-ROOM_HALF_WIDTH, ROOM_HEIGHT / 2, ROOM_Z_CENTER]} args={[ROOM_Z_LENGTH, ROOM_HEIGHT]} rotation={[0, Math.PI / 2, 0]} onRegister={onRegisterCollider} />
+      <RegisteredWallMesh id="wall-right" name="Правая стена" position={[ROOM_HALF_WIDTH, ROOM_HEIGHT / 2, ROOM_Z_CENTER]} args={[ROOM_Z_LENGTH, ROOM_HEIGHT]} rotation={[0, -Math.PI / 2, 0]} onRegister={onRegisterCollider} />
+      <RegisteredWallMesh id="wall-front" name="Передняя граница" position={[0, ROOM_HEIGHT / 2, ROOM_Z_CENTER + ROOM_Z_LENGTH / 2]} args={[ROOM_HALF_WIDTH * 2, ROOM_HEIGHT]} onRegister={onRegisterCollider} />
 
       <RegisteredTableMesh onRegister={onRegisterCollider} />
       {/* Настенные шкафы (interaction-only) на задней стене */}
@@ -438,6 +443,7 @@ function PickupController({
 }
 
 export default function SandboxPrototypePage() {
+  const [cameraMode, setCameraMode] = useState<CameraMode>("sandbox");
   const [playerPosState, setPlayerPosState] = useState<[number, number]>(START_POS);
   const [yaw, setYaw] = useState<number>(START_YAW);
   const [pitch, setPitch] = useState<number>(START_PITCH);
@@ -490,16 +496,17 @@ export default function SandboxPrototypePage() {
       const next = { ...prev, [collider.id]: collider };
       collidersRef.current = Object.values(next);
 
-      const wallLeft = next["wall_left"];
-      const wallRight = next["wall_right"];
-      const wallBack = next["wall_back"];
+      const wallLeft = next["wall-left"];
+      const wallRight = next["wall-right"];
+      const wallBack = next["wall-back"];
+      const wallFront = next["wall-front"];
 
-      if (wallLeft && wallRight && wallBack) {
+      if (wallLeft && wallRight && wallBack && wallFront) {
         const bounds: RoomInteriorBounds = {
-          minX: wallLeft.bounds.maxX,
-          maxX: wallRight.bounds.minX,
-          minZ: wallBack.bounds.maxZ,
-          maxZ: 3.2,
+          minX: wallLeft.bounds.minX,
+          maxX: wallRight.bounds.maxX,
+          minZ: wallBack.bounds.minZ,
+          maxZ: wallFront.bounds.maxZ,
         };
         setRoomInterior(bounds);
         roomInteriorRef.current = bounds;
@@ -753,8 +760,8 @@ export default function SandboxPrototypePage() {
           setCanPickup(canPickupRef.current);
         }
 
-        if (playerPosRef.current !== playerPosState) {
-          setPlayerPosState(playerPosRef.current);
+        if (playerPosRef.current[0] !== playerPosState[0] || playerPosRef.current[1] !== playerPosState[1]) {
+          setPlayerPosState([...playerPosRef.current]);
         }
       }
 
@@ -825,6 +832,26 @@ export default function SandboxPrototypePage() {
         onPointerCancel={handlePointerUp}
         onContextMenu={handleContextMenu}
       >
+        <SandboxModeOverlay
+          cameraMode={cameraMode}
+          onToggleMode={() => setCameraMode((m) => (m === "orbit" ? "sandbox" : "orbit"))}
+          disabled={isHeld}
+          disabledReason="Переключение режимов недоступно во время удержания колбы"
+          diagnostics={{
+            wallBoxes: {
+              "wall-left": { minX: -7.0, maxX: -7.0, minZ: -3.2, maxZ: 8.0, innerPlane: -7.0 },
+              "wall-right": { minX: 7.0, maxX: 7.0, minZ: -3.2, maxZ: 8.0, innerPlane: 7.0 },
+              "wall-back": { minX: -7.0, maxX: 7.0, minZ: -3.2, maxZ: -3.2, innerPlane: -3.2 },
+              "wall-front": { minX: -7.0, maxX: 7.0, minZ: 8.0, maxZ: 8.0, innerPlane: 8.0 },
+            },
+            registryReady: !!roomInterior,
+            dynamicRoomBounds: roomInterior ?? { minX: -7.0, maxX: 7.0, minZ: -3.2, maxZ: 8.0 },
+            cameraXZ: playerPosState,
+            playerXZ: playerPosState,
+            playerRadius: SANDBOX_CONFIG.playerRadius,
+            skinWidth: SANDBOX_CONFIG.skinWidth,
+          }}
+        />
         <Canvas camera={{ position: [playerPosState[0], SANDBOX_CONFIG.eyeHeight, playerPosState[1]], fov: SANDBOX_CONFIG.defaultFov }}>
           <ambientLight intensity={0.5} />
           <directionalLight position={[5, 8, 5]} intensity={1.2} castShadow />

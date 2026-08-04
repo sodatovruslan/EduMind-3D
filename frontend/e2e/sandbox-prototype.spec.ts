@@ -133,11 +133,11 @@ test.describe("Stage S-7 v2 — CheckPoint S7-V2.6 Prototype Object PickUp & Hel
     const posXLeft = parseFloat((await container.getAttribute("data-player-x")) ?? "0");
     const posZLeft = parseFloat((await container.getAttribute("data-player-z")) ?? "0");
 
-    // Room interior bounds: X in [-3.83 .. 3.83], Z in [-2.83 .. 2.83]
-    expect(posXLeft).toBeGreaterThanOrEqual(-3.83);
-    expect(posXLeft).toBeLessThanOrEqual(3.83);
-    expect(posZLeft).toBeGreaterThanOrEqual(-2.83);
-    expect(posZLeft).toBeLessThanOrEqual(2.83);
+    // Room interior bounds (playerRadius=0.20, skinWidth=0.01): X in [-3.99 .. 3.99], Z in [-2.99 .. 2.99]
+    expect(posXLeft).toBeGreaterThanOrEqual(-3.99);
+    expect(posXLeft).toBeLessThanOrEqual(3.99);
+    expect(posZLeft).toBeGreaterThanOrEqual(-2.99);
+    expect(posZLeft).toBeLessThanOrEqual(2.99);
 
     // Walk back (+Z) for 3 seconds continuously
     await page.keyboard.down("KeyS");
@@ -148,9 +148,9 @@ test.describe("Stage S-7 v2 — CheckPoint S7-V2.6 Prototype Object PickUp & Hel
     const posXBack = parseFloat((await container.getAttribute("data-player-x")) ?? "0");
     const posZBack = parseFloat((await container.getAttribute("data-player-z")) ?? "0");
 
-    expect(posXBack).toBeGreaterThanOrEqual(-3.83);
-    expect(posXBack).toBeLessThanOrEqual(3.83);
-    expect(posZBack).toBeGreaterThanOrEqual(-2.83);
-    expect(posZBack).toBeLessThanOrEqual(2.83);
+    expect(posXBack).toBeGreaterThanOrEqual(-3.99);
+    expect(posXBack).toBeLessThanOrEqual(3.99);
+    expect(posZBack).toBeGreaterThanOrEqual(-2.99);
+    expect(posZBack).toBeLessThanOrEqual(2.99);
   });
 });

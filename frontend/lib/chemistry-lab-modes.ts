@@ -7,6 +7,9 @@
  */
 export type LearningMode = "guided" | "practice" | "exam";
 
+/** Режимы управления камерой (Stage S-7 v2): "orbit" (S-6) ↔ "sandbox" (S-7 FPS) */
+export type CameraMode = "orbit" | "sandbox";
+
 export interface LabModeConfig {
   mode: LearningMode;
   label: string;

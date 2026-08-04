@@ -1,12 +1,15 @@
 "use client";
 
-import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { ContactShadows, Html, useGLTF } from "@react-three/drei";
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertOctagon, Flame, Lock, RotateCcw, RotateCw, Unlock, Volume2, VolumeX } from "lucide-react";
 import CanvasShell from "@/components/scenes/CanvasShell";
+import { CameraMode } from "@/lib/chemistry-lab-modes";
+import { SandboxModeOverlay } from "@/components/chemistry/sandbox/SandboxModeOverlay";
+import { RoomInteriorBounds } from "@/lib/sandbox-locomotion";
 import {
   ChemistryWorkspaceProvider,
   useChemistryWorkspace,
@@ -640,7 +643,50 @@ function CabinetMesh({ config, woodTexture }: { config: CabinetConfig; woodTextu
   );
 }
 
-function Room() {
+function RegisteredWallMesh({
+  wallId,
+  position,
+  rotation,
+  args,
+  materialRef,
+  wallTex,
+  onRegisterWall,
+}: {
+  wallId: "wall-left" | "wall-right" | "wall-back" | "wall-front";
+  position: [number, number, number];
+  rotation?: [number, number, number];
+  args: [number, number];
+  materialRef?: React.RefObject<THREE.MeshStandardMaterial>;
+  wallTex?: THREE.Texture;
+  onRegisterWall?: (id: string, box: THREE.Box3) => void;
+}) {
+  const meshRef = useRef<THREE.Mesh>(null);
+
+  useLayoutEffect(() => {
+    if (meshRef.current && onRegisterWall) {
+      meshRef.current.updateWorldMatrix(true, true);
+      const box = new THREE.Box3().setFromObject(meshRef.current);
+      onRegisterWall(wallId, box);
+    }
+  }, [wallId, onRegisterWall]);
+
+  if (!wallTex) {
+    return (
+      <mesh ref={meshRef} position={position} rotation={rotation} visible={false}>
+        <planeGeometry args={args} />
+      </mesh>
+    );
+  }
+
+  return (
+    <mesh ref={meshRef} position={position} rotation={rotation} receiveShadow>
+      <planeGeometry args={args} />
+      <meshStandardMaterial ref={materialRef} map={wallTex} roughness={0.85} metalness={0} side={THREE.DoubleSide} transparent />
+    </mesh>
+  );
+}
+
+function Room({ onRegisterWall }: { onRegisterWall?: (id: string, box: THREE.Box3) => void }) {
   const floorTex = useLabFloorTexture();
   const wallTex = useLabWallTexture();
   const woodTex = useCabinetWoodTexture();
@@ -648,15 +694,7 @@ function Room() {
 
   return (
     <group>
-      {/* пол — сплошная кафельная плитка вместо grid-оверлея CanvasShell
-          (showFloor={false} передан из ChemistryCanvas специально для этой сцены).
-          Пол/стены тянутся вперед (к зрителю) на ROOM_FRONT_REACH, а не только
-          на половину глубины комнаты — иначе на максимальной дистанции камеры
-          под ней открывался бы черный "провал" (там, где раньше стояла камера,
-          пол físически не доходил). DoubleSide — на случай, если камера все
-          же окажется у самого края допустимой дистанции/угла и почти коснется
-          стены: односторонний материал в этот момент показал бы черную дыру
-          вместо самой стены. */}
+      {/* пол — сплошная кафельная плитка вместо grid-оверлея CanvasShell */}
       <mesh position={[0, ROOM_FLOOR_Y, ROOM_Z_CENTER]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[ROOM_HALF_WIDTH * 2, ROOM_Z_LENGTH]} />
         <meshStandardMaterial map={floorTex} roughness={0.5} metalness={0.05} side={THREE.DoubleSide} />
@@ -664,19 +702,40 @@ function Room() {
       <ContactShadows position={[0, ROOM_FLOOR_Y + 0.001, 0]} opacity={0.55} scale={16} blur={2.4} far={3} resolution={256} />
 
       {/* задняя стена */}
-      <mesh position={[0, ROOM_FLOOR_Y + ROOM_HEIGHT / 2, -ROOM_HALF_DEPTH]} receiveShadow>
-        <planeGeometry args={[ROOM_HALF_WIDTH * 2, ROOM_HEIGHT]} />
-        <meshStandardMaterial ref={backRef} map={wallTex} roughness={0.85} metalness={0} side={THREE.DoubleSide} transparent />
-      </mesh>
+      <RegisteredWallMesh
+        wallId="wall-back"
+        position={[0, ROOM_FLOOR_Y + ROOM_HEIGHT / 2, -ROOM_HALF_DEPTH]}
+        args={[ROOM_HALF_WIDTH * 2, ROOM_HEIGHT]}
+        materialRef={backRef}
+        wallTex={wallTex}
+        onRegisterWall={onRegisterWall}
+      />
       {/* боковые стены — та же Z-протяженность, что и у пола */}
-      <mesh position={[-ROOM_HALF_WIDTH, ROOM_FLOOR_Y + ROOM_HEIGHT / 2, ROOM_Z_CENTER]} rotation={[0, Math.PI / 2, 0]} receiveShadow>
-        <planeGeometry args={[ROOM_Z_LENGTH, ROOM_HEIGHT]} />
-        <meshStandardMaterial ref={leftRef} map={wallTex} roughness={0.85} metalness={0} side={THREE.DoubleSide} transparent />
-      </mesh>
-      <mesh position={[ROOM_HALF_WIDTH, ROOM_FLOOR_Y + ROOM_HEIGHT / 2, ROOM_Z_CENTER]} rotation={[0, -Math.PI / 2, 0]} receiveShadow>
-        <planeGeometry args={[ROOM_Z_LENGTH, ROOM_HEIGHT]} />
-        <meshStandardMaterial ref={rightRef} map={wallTex} roughness={0.85} metalness={0} side={THREE.DoubleSide} transparent />
-      </mesh>
+      <RegisteredWallMesh
+        wallId="wall-left"
+        position={[-ROOM_HALF_WIDTH, ROOM_FLOOR_Y + ROOM_HEIGHT / 2, ROOM_Z_CENTER]}
+        rotation={[0, Math.PI / 2, 0]}
+        args={[ROOM_Z_LENGTH, ROOM_HEIGHT]}
+        materialRef={leftRef}
+        wallTex={wallTex}
+        onRegisterWall={onRegisterWall}
+      />
+      <RegisteredWallMesh
+        wallId="wall-right"
+        position={[ROOM_HALF_WIDTH, ROOM_FLOOR_Y + ROOM_HEIGHT / 2, ROOM_Z_CENTER]}
+        rotation={[0, -Math.PI / 2, 0]}
+        args={[ROOM_Z_LENGTH, ROOM_HEIGHT]}
+        materialRef={rightRef}
+        wallTex={wallTex}
+        onRegisterWall={onRegisterWall}
+      />
+      {/* передняя граница (открытая комната для камеры) */}
+      <RegisteredWallMesh
+        wallId="wall-front"
+        position={[0, ROOM_FLOOR_Y + ROOM_HEIGHT / 2, ROOM_Z_CENTER + ROOM_Z_LENGTH / 2]}
+        args={[ROOM_HALF_WIDTH * 2, ROOM_HEIGHT]}
+        onRegisterWall={onRegisterWall}
+      />
 
       {/* потолочные светильники — без сплошного потолка (сознательно): при
           щедрых maxDistance/minPolarAngle камера может подняться выше
@@ -2280,6 +2339,7 @@ interface ChemistrySceneProps {
   addAnimation: AddAnimationState | null;
   safetyByContainer: Record<string, SafetyWarning[]>;
   debugMode: boolean;
+  onRegisterWall?: (id: string, box: THREE.Box3) => void;
 }
 
 // Interaction Debug Mode + Hazard Debug Mode (расширение того же
@@ -2369,7 +2429,7 @@ function InteractableVisualRig({
   );
 }
 
-function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer, debugMode }: ChemistrySceneProps) {
+function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer, debugMode, onRegisterWall }: ChemistrySceneProps) {
   const { state, heatTick, hazardTick } = useChemistryWorkspace();
   const { draggingId } = useChemistryDrag();
   const {
@@ -2508,7 +2568,7 @@ function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer
           <pointLight key={x} position={[x, ROOM_FLOOR_Y + ROOM_HEIGHT - 0.3, 0]} intensity={0.55} color="#fffaf0" distance={7} decay={2} />
         ))}
 
-        <Room />
+        <Room onRegisterWall={onRegisterWall} />
         <SinkCounter />
         <Workbench />
         <PlacementDiagnosticMarkers />
@@ -2608,9 +2668,79 @@ function ChemistryCanvas({
     return () => cancelAnimationFrame(frameId);
   }, [shakeCounter, reducedMotion]);
 
+  const [wallBoxes, setWallBoxes] = useState<Record<string, { minX: number; maxX: number; minZ: number; maxZ: number; innerPlane: number }>>({});
+  const [playerXZ, setPlayerXZ] = useState<[number, number]>([0, 2.5]);
+  const [cameraXZ, setCameraXZ] = useState<[number, number]>([0, 2.5]);
+
+  const handleRegisterWall = useCallback((id: string, box: THREE.Box3) => {
+    let innerPlane = 0;
+    if (id === "wall-left") innerPlane = box.min.x;
+    else if (id === "wall-right") innerPlane = box.max.x;
+    else if (id === "wall-back") innerPlane = box.min.z;
+    else if (id === "wall-front") innerPlane = box.max.z;
+
+    setWallBoxes((prev) => {
+      const existing = prev[id];
+      if (existing && existing.innerPlane === innerPlane) return prev;
+      return {
+        ...prev,
+        [id]: {
+          minX: box.min.x,
+          maxX: box.max.x,
+          minZ: box.min.z,
+          maxZ: box.max.z,
+          innerPlane,
+        },
+      };
+    });
+  }, []);
+
+  const registeredWallCount = Object.keys(wallBoxes).length;
+  const registryReady = registeredWallCount === 4;
+
+  const dynamicRoomBounds: RoomInteriorBounds | undefined = useMemo(() => {
+    if (!registryReady) return undefined;
+    return {
+      minX: wallBoxes["wall-left"].innerPlane,
+      maxX: wallBoxes["wall-right"].innerPlane,
+      minZ: wallBoxes["wall-back"].innerPlane,
+      maxZ: wallBoxes["wall-front"].innerPlane,
+    };
+  }, [registryReady, wallBoxes]);
+
+  const handlePosUpdate = useCallback((plr: [number, number], cam: [number, number]) => {
+    setPlayerXZ(plr);
+    setCameraXZ(cam);
+  }, []);
+
+  const [cameraMode, setCameraMode] = useState<CameraMode>("orbit");
+  const isInteractionActive = !!draggingId || !!heldId;
+
   return (
-    <div ref={wrapperRef}>
+    <div ref={wrapperRef} className="relative">
+      <SandboxModeOverlay
+        cameraMode={cameraMode}
+        onToggleMode={() => setCameraMode((m) => (m === "orbit" ? "sandbox" : "orbit"))}
+        disabled={isInteractionActive || !registryReady}
+        disabledReason={
+          isInteractionActive
+            ? "Переключение режимов недоступно во время активного взаимодействия с предметом"
+            : `Переключение недоступно: коллизионный реестр стен сцены инициализируется (${registeredWallCount}/4 стен)`
+        }
+        diagnostics={{
+          wallBoxes,
+          registryReady,
+          dynamicRoomBounds,
+          cameraXZ,
+          playerXZ,
+          playerRadius: 0.20,
+          skinWidth: 0.01,
+        }}
+      />
       <CanvasShell
+        cameraMode={cameraMode}
+        roomBounds={dynamicRoomBounds}
+        onPosUpdate={handlePosUpdate}
         cameraPosition={[0.4, 3.6, 6.4]}
         target={[0, 0.1, 0]}
         floorY={-0.1}
@@ -2636,6 +2766,7 @@ function ChemistryCanvas({
           addAnimation={addAnimation}
           safetyByContainer={safetyByContainer}
           debugMode={debugMode}
+          onRegisterWall={handleRegisterWall}
         />
       </CanvasShell>
     </div>

@@ -1,11 +1,14 @@
 "use client";
 
-import { Suspense, useEffect, useMemo } from "react";
+import { Suspense, useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { Canvas, useThree } from "@react-three/fiber";
 import { ContactShadows, Environment, Grid, Lightformer, OrbitControls } from "@react-three/drei";
 import { Bloom, EffectComposer } from "@react-three/postprocessing";
 import { QUALITY_PRESETS, type QualityLevel } from "@/lib/quality-context";
+import { CameraMode } from "@/lib/chemistry-lab-modes";
+import { SandboxLocomotionController } from "@/components/chemistry/sandbox/SandboxLocomotionController";
+import { RoomInteriorBounds, RegisteredCollider } from "@/lib/sandbox-locomotion";
 
 interface CanvasShellProps {
   children: React.ReactNode;
@@ -34,6 +37,36 @@ interface CanvasShellProps {
   // дугой, чтобы камера не могла обогнуть комнату и посмотреть на нее снаружи
   minAzimuthAngle?: number;
   maxAzimuthAngle?: number;
+  // Режим управления камерой (Stage S-7 v2): "orbit" (S-6) | "sandbox" (S-7 FPS)
+  cameraMode?: CameraMode;
+  roomBounds?: RoomInteriorBounds;
+  colliders?: RegisteredCollider[];
+  onPosUpdate?: (playerPos: [number, number], cameraXZ: [number, number]) => void;
+}
+
+function CameraModeController({ cameraMode, orbitTarget }: { cameraMode: CameraMode; orbitTarget: [number, number, number] }) {
+  const { camera } = useThree();
+  const orbitSnapshotRef = useRef<{ position: THREE.Vector3; target: THREE.Vector3 } | null>(null);
+  const prevModeRef = useRef<CameraMode>(cameraMode);
+
+  useEffect(() => {
+    const prevMode = prevModeRef.current;
+    if (prevMode === "orbit" && cameraMode === "sandbox") {
+      // Сохраняем Orbit snapshot перед переходом в Sandbox
+      orbitSnapshotRef.current = {
+        position: camera.position.clone(),
+        target: new THREE.Vector3(...orbitTarget),
+      };
+    } else if (prevMode === "sandbox" && cameraMode === "orbit" && orbitSnapshotRef.current) {
+      // Точно восстанавливаем Orbit snapshot при возврате в Orbit Mode
+      camera.position.copy(orbitSnapshotRef.current.position);
+      camera.lookAt(orbitSnapshotRef.current.target);
+      camera.updateMatrixWorld();
+    }
+    prevModeRef.current = cameraMode;
+  }, [cameraMode, camera, orbitTarget]);
+
+  return null;
 }
 
 // вертикальный градиент вместо плоской заливки — рисуем на canvas и
@@ -96,6 +129,10 @@ export default function CanvasShell({
   maxDistance = 14,
   minAzimuthAngle,
   maxAzimuthAngle,
+  cameraMode = "orbit",
+  roomBounds,
+  colliders,
+  onPosUpdate,
 }: CanvasShellProps) {
   const preset = QUALITY_PRESETS[quality];
 
@@ -155,8 +192,16 @@ export default function CanvasShell({
           </>
         )}
 
+        <CameraModeController cameraMode={cameraMode} orbitTarget={target} />
+        <SandboxLocomotionController
+          active={cameraMode === "sandbox"}
+          roomBounds={roomBounds}
+          colliders={colliders}
+          onPosUpdate={onPosUpdate}
+        />
+
         <OrbitControls
-          enabled={orbitEnabled}
+          enabled={cameraMode === "sandbox" ? false : orbitEnabled}
           enableDamping
           dampingFactor={0.08}
           minDistance={minDistance}

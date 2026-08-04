@@ -75,8 +75,8 @@ export function isValidSpawnPosition(
   pos: [number, number],
   room: RoomInteriorBounds,
   obstacles: RegisteredCollider[] = [],
-  playerRadius: number = 0.35,
-  skinWidth: number = 0.02
+  playerRadius: number = 0.20,
+  skinWidth: number = 0.01
 ): boolean {
   const minAllowedX = room.minX + playerRadius + skinWidth;
   const maxAllowedX = room.maxX - playerRadius - skinWidth;
@@ -270,8 +270,8 @@ export function calculateKinematicStep(
   deltaSec: number,
   room?: RoomInteriorBounds,
   obstacles: RegisteredCollider[] = [],
-  playerRadius: number = 0.35,
-  skinWidth: number = 0.02
+  playerRadius: number = 0.20,
+  skinWidth: number = 0.01
 ): {
   nextPos: [number, number];
   requestedDelta: Vector2D;
