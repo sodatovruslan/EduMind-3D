@@ -2,6 +2,7 @@
 
 import { AlertTriangle, ArrowRight, CheckCircle2, Target, X } from "lucide-react";
 import { useChemistryLabExperience } from "@/components/core/ChemistryLabExperienceProvider";
+import AutosaveBadge from "@/components/lab/AutosaveBadge";
 
 /**
  * Chemistry World — Guided Laboratory Mode UI (Stage 5.6). Показывает
@@ -43,16 +44,19 @@ export default function GuidedLabPanel() {
             Шаг {currentStepIndex + 1} / {totalSteps}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={exitExperiment}
-          data-testid="guided-lab-exit"
-          title="Выйти из эксперимента"
-          aria-label="Выйти из эксперимента"
-          className="text-slate-400 hover:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-neon-violet"
-        >
-          <X size={18} />
-        </button>
+        <div className="flex items-center gap-2">
+          <AutosaveBadge />
+          <button
+            type="button"
+            onClick={exitExperiment}
+            data-testid="guided-lab-exit"
+            title="Выйти из эксперимента"
+            aria-label="Выйти из эксперимента"
+            className="text-slate-400 hover:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-neon-violet"
+          >
+            <X size={18} />
+          </button>
+        </div>
       </div>
 
       <div
