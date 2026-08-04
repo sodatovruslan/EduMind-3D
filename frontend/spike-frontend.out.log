@@ -1,0 +1,301 @@
+
+> edumind-3d-frontend@0.1.0 dev
+> next dev
+
+  ▲ Next.js 14.2.35
+  - Local:        http://localhost:3000
+  - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 4.4s
+ ○ Compiling /dashboard ...
+ ✓ Compiled /login in 36.2s (596 modules)
+ GET /dashboard 200 in 36876ms
+ GET /login 200 in 66ms
+ GET /login 200 in 109ms
+ ○ Compiling /chemistry_world/[id] ...
+ ✓ Compiled /chemistry_world/[id] in 17.6s (2706 modules)
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 20074ms
+ ○ Compiling /geo3d/[id] ...
+ ✓ Compiled /geo3d/[id] in 63.3s (2722 modules)
+ GET /login 200 in 129ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 636ms
+ GET /login 200 in 56ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 54ms
+ ✓ Compiled in 2.1s (2736 modules)
+ ✓ Compiled in 396ms (1372 modules)
+ GET /login 200 in 158ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 321ms
+ GET /login 200 in 77ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 69ms
+ GET /login 200 in 61ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 66ms
+ GET /login 200 in 26ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 51ms
+ GET /login 200 in 52ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 62ms
+ GET /login 200 in 410ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 791ms
+ ○ Compiling /electricity_lab/[id] ...
+ ✓ Compiled /electricity_lab/[id] in 24.3s (2796 modules)
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 8137ms
+ ✓ Compiled in 15.6s (2796 modules)
+ ✓ Compiled in 1429ms (2810 modules)
+ ✓ Compiled in 1532ms (2810 modules)
+ ✓ Compiled in 651ms (1408 modules)
+ ✓ Compiled in 1154ms (1408 modules)
+ ✓ Compiled in 1839ms (2810 modules)
+ ✓ Compiled in 1316ms (2810 modules)
+ GET /login 200 in 145ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 493ms
+ GET /login 200 in 70ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 78ms
+ GET /login 200 in 63ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 95ms
+ GET /login 200 in 114ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 139ms
+ GET /login 200 in 58ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 109ms
+ ✓ Compiled in 2.4s (2810 modules)
+ ✓ Compiled in 2.1s (2810 modules)
+ ✓ Compiled in 1211ms (2810 modules)
+ ✓ Compiled in 3.8s (2810 modules)
+ ✓ Compiled in 1514ms (2810 modules)
+ ✓ Compiled in 2.9s (2810 modules)
+ ✓ Compiled in 1434ms (2810 modules)
+ ✓ Compiled in 1269ms (2810 modules)
+ ✓ Compiled in 1626ms (2810 modules)
+ ✓ Compiled in 2.4s (2810 modules)
+ ✓ Compiled in 1438ms (2810 modules)
+ ✓ Compiled in 2s (2810 modules)
+ ✓ Compiled in 1582ms (2810 modules)
+ ✓ Compiled in 1512ms (2810 modules)
+ ✓ Compiled in 1530ms (2810 modules)
+ ✓ Compiled in 2.3s (2810 modules)
+ ✓ Compiled in 2.4s (2810 modules)
+ ✓ Compiled in 1066ms (2796 modules)
+ ✓ Compiled in 764ms (1408 modules)
+ ✓ Compiled in 1417ms (1408 modules)
+ ✓ Compiled in 718ms (1408 modules)
+ ✓ Compiled in 982ms (1408 modules)
+ GET /login 200 in 234ms
+ ✓ Compiled in 4s (2810 modules)
+ ✓ Compiled in 1907ms (2810 modules)
+ GET /login 200 in 214ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 896ms
+ GET /login 200 in 161ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 190ms
+ GET /login 200 in 111ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 145ms
+ GET /login 200 in 83ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 109ms
+ GET /login 200 in 99ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 162ms
+ GET /login 200 in 469ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 185ms
+ GET /login 200 in 154ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 174ms
+ GET /login 200 in 220ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 268ms
+ GET /login 200 in 198ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 131ms
+ GET /login 200 in 174ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 139ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 607ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 235ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 565ms
+ ✓ Compiled in 4.7s (2810 modules)
+ GET /login 200 in 285ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 1978ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 642ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 1183ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 639ms
+ ✓ Compiled in 9.5s (2810 modules)
+ GET /login 200 in 1024ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 1949ms
+ GET /login 200 in 117ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 150ms
+ GET /login 200 in 147ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 126ms
+ GET /login 200 in 153ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 157ms
+ GET /login 200 in 97ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 214ms
+ GET /login 200 in 86ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 300ms
+ GET /login 200 in 151ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 173ms
+ GET /login 200 in 158ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 167ms
+ GET /login 200 in 109ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 149ms
+ GET /login 200 in 135ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 268ms
+ ✓ Compiled in 8.1s (2810 modules)
+ GET /login 200 in 452ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 964ms
+ ✓ Compiled in 3.5s (2810 modules)
+ GET /login 200 in 289ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 889ms
+ GET /login 200 in 146ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 181ms
+ ✓ Compiled in 2.9s (2810 modules)
+ ✓ Compiled in 3s (2810 modules)
+ GET /login 200 in 346ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 1540ms
+ ✓ Compiled in 3.7s (2810 modules)
+ GET /login 200 in 351ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 799ms
+ ✓ Compiled in 7.2s (2810 modules)
+ GET /login 200 in 617ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 1991ms
+ ✓ Compiled in 4.8s (2810 modules)
+ GET /login 200 in 286ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 549ms
+ ✓ Compiled in 2.9s (2810 modules)
+ ✓ Compiled in 1906ms (2812 modules)
+ ✓ Compiled in 2.3s (2812 modules)
+ ✓ Compiled in 1796ms (2812 modules)
+ ✓ Compiled in 1803ms (2812 modules)
+ ✓ Compiled in 3s (2812 modules)
+ ✓ Compiled in 1813ms (2812 modules)
+ GET /login 200 in 274ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 1248ms
+ ✓ Compiled in 2.7s (2812 modules)
+ GET /login 200 in 266ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 589ms
+ GET /login 200 in 134ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 131ms
+ ✓ Compiled in 5s (2812 modules)
+ GET /login 200 in 193ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 347ms
+ GET /login 200 in 102ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 174ms
+ GET /login 200 in 127ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 137ms
+ GET /login 200 in 63ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 123ms
+ GET /login 200 in 74ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 135ms
+ GET /login 200 in 73ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 130ms
+ GET /login 200 in 70ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 133ms
+ GET /login 200 in 75ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 135ms
+ GET /login 200 in 121ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 119ms
+ GET /login 200 in 62ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 268ms
+ GET /login 200 in 62ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 141ms
+ GET /login 200 in 74ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 98ms
+ GET /login 200 in 76ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 75ms
+ GET /login 200 in 72ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 99ms
+ GET /login 200 in 75ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 109ms
+ GET /login 200 in 75ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 90ms
+ GET /login 200 in 78ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 179ms
+ GET /login 200 in 85ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 135ms
+ GET /login 200 in 67ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 113ms
+ ✓ Compiled in 1428ms (1409 modules)
+ ✓ Compiled in 338ms (1409 modules)
+ GET /login 200 in 79ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 190ms
+ ✓ Compiled in 2.6s (2812 modules)
+ GET /login 200 in 211ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 726ms
+ ✓ Compiled in 3s (2812 modules)
+ GET /login 200 in 159ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 612ms
+ GET /login 200 in 69ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 123ms
+ GET /login 200 in 69ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 125ms
+ GET /login 200 in 75ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 125ms
+ GET /login 200 in 68ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 185ms
+ ✓ Compiled in 2.5s (2812 modules)
+ GET /login 200 in 213ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 459ms
+ GET /login 200 in 58ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 85ms
+ GET /login 200 in 70ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 265ms
+ GET /login 200 in 291ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 200 in 233ms
+ ✓ Compiled in 10.2s (2812 modules)
+ ✓ Compiled in 405ms (1409 modules)
+ ✓ Compiled in 518ms (1409 modules)
+ ✓ Compiled in 1291ms (2812 modules)
+ ✓ Compiled in 1867ms (2812 modules)
+ ✓ Compiled in 1279ms (2812 modules)
+ ✓ Compiled in 919ms (2812 modules)
+ ✓ Compiled in 3.1s (2812 modules)
+ ✓ Compiled in 1481ms (2812 modules)
+ ✓ Compiled in 388ms (1409 modules)
+ ✓ Compiled in 1410ms (2812 modules)
+ ✓ Compiled in 4.4s (2812 modules)
+ ✓ Compiled in 967ms (2812 modules)
+ ✓ Compiled in 2s (2812 modules)
+ ✓ Compiled in 8.9s (2812 modules)
+ ✓ Compiled in 460ms (1409 modules)
+ ✓ Compiled in 8.9s (2816 modules)
+ ✓ Compiled in 8.9s (2816 modules)
+ ✓ Compiled in 6.3s (2816 modules)
+ ✓ Compiled in 2.2s (2802 modules)
+ ✓ Compiled in 6.7s (2816 modules)
+ ✓ Compiled in 2.7s (2816 modules)
+ ✓ Compiled in 14.1s (2816 modules)
+ ✓ Compiled in 2.8s (2816 modules)
+ ✓ Compiled in 2.5s (2816 modules)
+ ✓ Compiled in 1936ms (2816 modules)
+ ✓ Compiled in 2.8s (2816 modules)
+ ✓ Compiled in 1571ms (2816 modules)
+ ✓ Compiled in 2s (2816 modules)
+ ✓ Compiled in 2.6s (2816 modules)
+ ✓ Compiled in 2.7s (2816 modules)
+ ✓ Compiled in 51.5s (2816 modules)
+ ✓ Compiled in 1856ms (1411 modules)
+ ✓ Compiled in 1301ms (1411 modules)
+ ✓ Compiled in 10.4s (2816 modules)
+ ✓ Compiled in 5.8s (2816 modules)
+ ○ Compiling / ...
+ ✓ Compiled / in 8.1s (2822 modules)
+ HEAD / 200 in 9077ms
+ ✓ Compiled in 1105ms (1413 modules)
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 1419ms (2811 modules)
+ GET /login 404 in 2196ms
+ GET /_next/static/css/app/layout.css?v=1785745215090 404 in 107ms
+ GET /_next/static/chunks/app-pages-internals.js 404 in 214ms
+ GET /_next/static/chunks/main-app.js?v=1785745215090 404 in 227ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 404 in 224ms
+ GET /_next/static/css/app/layout.css?v=1785745215917 404 in 107ms
+ GET /_next/static/chunks/main-app.js?v=1785745215917 404 in 205ms
+ GET /_next/static/chunks/app-pages-internals.js 404 in 190ms
+ GET /login 404 in 138ms
+ GET /_next/static/css/app/layout.css?v=1785745266126 404 in 132ms
+ GET /_next/static/chunks/main-app.js?v=1785745266126 404 in 153ms
+ GET /_next/static/chunks/app-pages-internals.js 404 in 151ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 404 in 149ms
+ GET /_next/static/css/app/layout.css?v=1785745266464 404 in 105ms
+ GET /_next/static/chunks/main-app.js?v=1785745266464 404 in 118ms
+ GET /_next/static/chunks/app-pages-internals.js 404 in 117ms
+ GET /login 404 in 189ms
+ GET /_next/static/css/app/layout.css?v=1785745315850 404 in 173ms
+ GET /_next/static/chunks/app-pages-internals.js 404 in 252ms
+ GET /_next/static/chunks/main-app.js?v=1785745315850 404 in 244ms
+ GET /chemistry_world/54626292-a086-4611-87f2-351c91a72c7e 404 in 191ms
+ GET /_next/static/css/app/layout.css?v=1785745316302 404 in 100ms
+ GET /_next/static/chunks/main-app.js?v=1785745316302 404 in 118ms
+ GET /_next/static/chunks/app-pages-internals.js 404 in 117ms
+[?25h

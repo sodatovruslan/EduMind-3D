@@ -26,7 +26,10 @@ export function ChemistryDragProvider({ children }: { children: React.ReactNode 
       setDraggingId(null);
     }
     function handleEscape(e: KeyboardEvent) {
-      if (e.key === "Escape") setDraggingId(null);
+      if (e.key === "Escape") {
+        if (typeof document !== "undefined" && document.fullscreenElement) return;
+        setDraggingId(null);
+      }
     }
     window.addEventListener("pointerup", handleGlobalPointerUp);
     window.addEventListener("keydown", handleEscape);

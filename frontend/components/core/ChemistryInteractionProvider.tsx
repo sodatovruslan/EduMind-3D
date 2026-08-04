@@ -48,6 +48,8 @@ export interface PlacementCandidate {
   position: [number, number];
   rotationY: number;
   surface: PlacementSurfaceKind;
+  isValid?: boolean;
+  reason?: string;
 }
 
 interface ChemistryInteractionContextValue {
@@ -370,6 +372,7 @@ export function ChemistryInteractionProvider({
           setHeldTiltRad((t) => (t > 0 ? 0 : Math.PI / 3));
         }
       } else if (e.key === "Escape") {
+        if (typeof document !== "undefined" && document.fullscreenElement) return;
         if (heldIdRef.current) release();
       } else if (e.key === "ArrowLeft") {
         rotateHeld(-ROTATE_STEP);
