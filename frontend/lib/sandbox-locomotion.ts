@@ -5,7 +5,7 @@
  * and "interaction-only" reach/LOS detection for wall cabinets.
  */
 
-import type { CameraMode, InteractionCheckResult } from "./chemistry-lab-modes";
+import type { CameraMode, InteractionCheckResult, InteractionReason } from "./chemistry-lab-modes";
 
 export interface Vector2D {
   x: number;
@@ -985,5 +985,78 @@ export function validateItemPlacementOnSurface(
     reason: "ok",
     position: candidatePos,
     surfaceY: surface.surfaceY,
+  };
+}
+
+export interface PouringValidationParams {
+  bottlePos: [number, number];
+  targetContainerPos: [number, number];
+  capState: "closed" | "open";
+  tiltRad: number;
+  maxPourDistance?: number;
+  minPourTiltRad?: number;
+}
+
+export interface PouringValidationResult {
+  canPour: boolean;
+  reason: InteractionReason;
+  message?: string;
+  distance: number;
+}
+
+/**
+ * Stage S7-V2.11: Валидация пространственных условий для переливания жидкости (Stage S-5 spatial model)
+ * Проверяет: крышка открыта ("open"), 3D-расстояние носика к горлышку <= 0.35м, угол наклона >= 45° (0.785 рад).
+ */
+export function validatePouringConditions(
+  params: PouringValidationParams
+): PouringValidationResult {
+  const {
+    bottlePos,
+    targetContainerPos,
+    capState,
+    tiltRad,
+    maxPourDistance = 0.35,
+    minPourTiltRad = 0.785, // 45 градусов
+  } = params;
+
+  // 1. Проверка крышки
+  if (capState === "closed") {
+    return {
+      canPour: false,
+      reason: "closed_cap",
+      message: "Снимите крышку с бутылки перед переливанием (R)",
+      distance: 0,
+    };
+  }
+
+  // 2. Проверка 3D-расстояния между носиком бутылки и горлышком целевого стакана
+  const dx = targetContainerPos[0] - bottlePos[0];
+  const dz = targetContainerPos[1] - bottlePos[1];
+  const distance = Math.hypot(dx, dz);
+
+  if (distance > maxPourDistance) {
+    return {
+      canPour: false,
+      reason: "too_far",
+      message: `Носик бутылки находится слишком далеко от горлышка стакана (${distance.toFixed(2)}м > ${maxPourDistance}м)`,
+      distance: Number(distance.toFixed(2)),
+    };
+  }
+
+  // 3. Проверка угла наклона бутылки (клавиша Q)
+  if (Math.abs(tiltRad) < minPourTiltRad) {
+    return {
+      canPour: false,
+      reason: "invalid_angle",
+      message: "Наклоните бутылку над стаканом (Q) для наливания жидкости",
+      distance: Number(distance.toFixed(2)),
+    };
+  }
+
+  return {
+    canPour: true,
+    reason: "ok",
+    distance: Number(distance.toFixed(2)),
   };
 }

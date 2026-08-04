@@ -18,7 +18,9 @@ export type InteractionReason =
   | "occluded"
   | "invalid_state"
   | "target_unavailable"
-  | "registry_not_ready";
+  | "registry_not_ready"
+  | "closed_cap"
+  | "invalid_angle";
 
 export interface InteractionCheckResult {
   allowed: boolean;

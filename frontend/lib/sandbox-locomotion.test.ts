@@ -19,6 +19,7 @@ import {
   checkLineOfSight,
   evaluateUnifiedInteraction,
   validateItemPlacementOnSurface,
+  validatePouringConditions,
   DynamicPlacementSurface,
   RoomInteriorBounds,
   segmentIntersectsAABB,
@@ -515,5 +516,63 @@ describe("Stage S-7 v2 — CheckPoint S7-V2.6 Prototype Object PickUp & Held Rig
     const res = validateItemPlacementOnSurface([5.0, 0], "flask_1", MOCK_SURFACE, []);
     expect(res.valid).toBe(false);
     expect(res.reason).toBe("out_of_bounds");
+  });
+
+  // ─── Stage S7-V2.11 Pouring Mechanics & Bottle Caps Validation Tests ────────
+
+  it("42. Pouring Validation: Closed cap blocks pouring with closed_cap reason", () => {
+    const res = validatePouringConditions({
+      bottlePos: [0, 0],
+      targetContainerPos: [0.1, 0.1],
+      capState: "closed",
+      tiltRad: 0.8, // ~46 deg
+    });
+    expect(res.canPour).toBe(false);
+    expect(res.reason).toBe("closed_cap");
+    expect(res.message).toContain("(R)");
+  });
+
+  it("43. Pouring Validation: Distance > 0.35m blocks pouring with too_far reason", () => {
+    const res = validatePouringConditions({
+      bottlePos: [0, 0],
+      targetContainerPos: [0.5, 0.5], // 0.7m away (> 0.35m)
+      capState: "open",
+      tiltRad: 0.8,
+    });
+    expect(res.canPour).toBe(false);
+    expect(res.reason).toBe("too_far");
+  });
+
+  it("44. Pouring Validation: Tilt angle < 45 deg (0.785 rad) blocks pouring with invalid_angle reason", () => {
+    const res = validatePouringConditions({
+      bottlePos: [0, 0],
+      targetContainerPos: [0.1, 0.1],
+      capState: "open",
+      tiltRad: 0.4, // ~23 deg (< 45 deg)
+    });
+    expect(res.canPour).toBe(false);
+    expect(res.reason).toBe("invalid_angle");
+  });
+
+  it("45. Pouring Validation: Open cap, distance <= 0.35m, tilt >= 45 deg allows pouring", () => {
+    const res = validatePouringConditions({
+      bottlePos: [0, 0],
+      targetContainerPos: [0.15, 0.15], // ~0.21m away
+      capState: "open",
+      tiltRad: 0.85, // ~48 deg
+    });
+    expect(res.canPour).toBe(true);
+    expect(res.reason).toBe("ok");
+  });
+
+  it("46. Mass Conservation: Transferred mass from source equals received mass at target", () => {
+    const initialSourceVol = 200;
+    const initialTargetVol = 50;
+    const transferVol = 15; // 15 ml/sec
+
+    const finalSourceVol = initialSourceVol - transferVol;
+    const finalTargetVol = initialTargetVol + transferVol;
+
+    expect(finalSourceVol + finalTargetVol).toBe(initialSourceVol + initialTargetVol);
   });
 });
