@@ -25,11 +25,11 @@ export interface SerializeOptions {
   };
 
   experiment: {
-    mode: "learning" | "practice" | "exam";
+    mode: "guided" | "learning" | "practice" | "exam";
     currentStepIndex: number;
     completedStepIds: string[];
     taskStatus: "in_progress" | "completed" | "failed";
-    startedAt: string;
+    startedAt: string | number;
     elapsedMs: number;
     hintsUsed: number;
     conclusionDraft: string;
@@ -86,7 +86,7 @@ export function validateSnapshot(raw: any): ValidationResult {
 
         if (Array.isArray(c.contents)) {
           for (const s of c.contents) {
-            if (typeof s.massGrams === "number" && s.massGrams < 0) {
+            if (typeof s.grams === "number" && s.grams < 0) {
               errors.push(`Negative substance mass in container ${c.id}`);
             }
           }
@@ -151,8 +151,7 @@ export function serializeChemistrySave(options: SerializeOptions): ChemistrySave
       contents: Array.isArray(c.data?.contents || c.contents)
         ? (c.data?.contents || c.contents).map((s: any) => ({
             substanceId: s.substanceId,
-            massGrams: s.massGrams,
-            volumeMl: s.volumeMl,
+            grams: s.grams ?? s.massGrams ?? 0,
           }))
         : [],
       temperatureC: c.data?.temperatureC ?? c.temperatureC ?? 20.0,
@@ -160,7 +159,7 @@ export function serializeChemistrySave(options: SerializeOptions): ChemistrySave
       precipitate: Array.isArray(c.data?.precipitate || c.precipitate)
         ? (c.data?.precipitate || c.precipitate).map((p: any) => ({
             substanceId: p.substanceId,
-            massGrams: p.massGrams,
+            grams: p.grams ?? p.massGrams ?? 0,
           }))
         : [],
       hazardLevel: c.hazard?.level || c.hazardLevel || "none",
@@ -201,6 +200,7 @@ export function serializeChemistrySave(options: SerializeOptions): ChemistrySave
       id: c.id,
       position: (c.position ? [Number(c.position[0]), Number(c.position[1])] : [0, 0]) as [number, number],
       rotationY: c.rotationY || 0,
+      isOpen: Boolean(c.isOpen),
     }))
     .sort((a, b) => a.id.localeCompare(b.id));
 
@@ -241,7 +241,9 @@ export function serializeChemistrySave(options: SerializeOptions): ChemistrySave
       currentStepIndex: options.experiment.currentStepIndex,
       completedStepIds,
       taskStatus: options.experiment.taskStatus,
-      startedAt: options.experiment.startedAt,
+      startedAt: typeof options.experiment.startedAt === "number"
+        ? new Date(options.experiment.startedAt).toISOString()
+        : options.experiment.startedAt,
       elapsedMs: options.experiment.elapsedMs,
       hintsUsed: options.experiment.hintsUsed,
       conclusionDraft: options.experiment.conclusionDraft || "",
@@ -271,7 +273,7 @@ export interface HydratedState {
     itemTransforms: any[];
   };
   experiment: {
-    mode: "learning" | "practice" | "exam";
+    mode: "guided" | "learning" | "practice" | "exam";
     currentStepIndex: number;
     completedStepIds: string[];
     taskStatus: "in_progress" | "completed" | "failed";

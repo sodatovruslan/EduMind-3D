@@ -30,7 +30,7 @@ describe("Stage S-8 — Chemistry Save Serializer, Hydrator & Schema Tests", () 
           isSealed: false,
           pressureKPa: 101.3,
           data: {
-            contents: [{ substanceId: "water", massGrams: 100, volumeMl: 100 }],
+            contents: [{ substanceId: "water", grams: 100 }],
             temperatureC: 85.5,
             aggregateState: "liquid",
             precipitate: [],
@@ -49,10 +49,10 @@ describe("Stage S-8 — Chemistry Save Serializer, Hydrator & Schema Tests", () 
           isSealed: true,
           pressureKPa: 120.0,
           data: {
-            contents: [{ substanceId: "hydrochloric_acid", massGrams: 50, volumeMl: 45 }],
+            contents: [{ substanceId: "hydrochloric_acid", grams: 50 }],
             temperatureC: 22.0,
             aggregateState: "liquid",
-            precipitate: [{ substanceId: "salt_ppt", massGrams: 2.5 }],
+            precipitate: [{ substanceId: "salt_ppt", grams: 2.5 }],
           },
           hazard: { level: "caution" },
           capState: "closed",
@@ -136,7 +136,7 @@ describe("Stage S-8 — Chemistry Save Serializer, Hydrator & Schema Tests", () 
     const beaker = hydrated.workspace.containers.find((c) => c.id === "beaker-1");
     expect(beaker).toBeDefined();
     expect(beaker.data.temperatureC).toBe(85.5);
-    expect(beaker.data.contents[0].massGrams).toBe(100);
+    expect(beaker.data.contents[0].grams).toBe(100);
     expect(beaker.heatingSourceId).toBe("burner-1");
     expect(beaker.capState).toBe("open");
 
@@ -144,7 +144,7 @@ describe("Stage S-8 — Chemistry Save Serializer, Hydrator & Schema Tests", () 
     const flask = hydrated.workspace.containers.find((c) => c.id === "flask-1");
     expect(flask.pressureKPa).toBe(120.0);
     expect(flask.isSealed).toBe(true);
-    expect(flask.data.precipitate[0].massGrams).toBe(2.5);
+    expect(flask.data.precipitate[0].grams).toBe(2.5);
 
     // Experiment progress
     expect(hydrated.experiment.currentStepIndex).toBe(4);
@@ -218,7 +218,7 @@ describe("Stage S-8 — Chemistry Save Serializer, Hydrator & Schema Tests", () 
 
   it("6. validateSnapshot rejects negative substance mass", () => {
     const snap = serializeChemistrySave(sampleOptions);
-    snap.workspace.containers[0].contents[0].massGrams = -50;
+    snap.workspace.containers[0].contents[0].grams = -50;
 
     const res = validateSnapshot(snap);
     expect(res.isValid).toBe(false);
@@ -273,5 +273,16 @@ describe("Stage S-8 — Chemistry Save Serializer, Hydrator & Schema Tests", () 
     expect(serializeTimeMs).toBeLessThan(50); // < 50 ms
     expect(hydrateTimeMs).toBeLessThan(50); // < 50 ms
     expect(hydrated).toBeDefined();
+  });
+
+  it("11. burner.isOn is correctly serialized and hydrated with isOn = true", () => {
+    const snap = serializeChemistrySave(sampleOptions);
+    expect(snap.workspace.burners).toHaveLength(1);
+    expect(snap.workspace.burners[0].id).toBe("burner-1");
+    expect(snap.workspace.burners[0].isOn).toBe(true);
+
+    const hydrated = hydrateChemistrySave(snap);
+    expect(hydrated.workspace.burners).toHaveLength(1);
+    expect(hydrated.workspace.burners[0].isOn).toBe(true);
   });
 });

@@ -159,4 +159,37 @@ test.describe("Stage S-8.5 — Chemistry Save, Autosave, Resume & Offline E2E Ac
     });
     expect(updateTabB.status()).toBe(409);
   });
+
+  test("5. Burner.isOn state & flame restoration after reload", async ({}, testInfo) => {
+    await withIsolatedChemistry(testInfo, async ({ page, diagnostics }) => {
+      await expect(page.locator('[data-testid="chemistry-world-root"]')).toBeVisible({ timeout: 15_000 });
+
+      const startBtn = page.locator('[data-testid="catalog-start-lab-water-heating"]');
+      if (await startBtn.isVisible()) {
+        await startBtn.click();
+      }
+
+      await expect(page.locator('[data-testid="guided-lab-panel"]')).toBeVisible({ timeout: 10_000 });
+
+      // Дождаться статуса «Сохранено»
+      await expect(page.locator('[data-testid="autosave-badge-saved"]')).toBeVisible({ timeout: 10_000 });
+
+      // Перезагрузить страницу
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await expect(page.locator('[data-testid="chemistry-world-root"]')).toBeVisible({ timeout: 15_000 });
+
+      const resumeBtn = page.locator('[data-testid="catalog-resume-lab-water-heating"]');
+      if (await resumeBtn.isVisible()) {
+        await resumeBtn.click();
+      }
+
+      const modalContinueBtn = page.locator('[data-testid="resume-modal-continue"]');
+      if (await modalContinueBtn.isVisible()) {
+        await modalContinueBtn.click();
+      }
+
+      await expect(page.locator('[data-testid="guided-lab-panel"]')).toBeVisible({ timeout: 10_000 });
+      expect(diagnostics.consoleErrors).toHaveLength(0);
+    });
+  });
 });

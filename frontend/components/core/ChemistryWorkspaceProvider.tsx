@@ -1,5 +1,8 @@
 "use client";
 
+import { autosaveEngine } from "@/lib/autosave-engine";
+import type { ChemistrySaveSnapshotV1 } from "@/lib/chemistry-save-schema";
+
 import { createContext, useCallback, useContext, useReducer } from "react";
 import {
   addSubstance,
@@ -208,6 +211,7 @@ type Action =
   | { type: "SET_ACTIVE_CONTAINER"; id: string }
   | { type: "TOGGLE_SEAL"; id: string }
   | { type: "HAZARD_TICK"; dtSeconds: number }
+  | { type: "HYDRATE_FROM_SAVE"; snapshot: ChemistrySaveSnapshotV1 }
   | { type: "RESET_EXPERIMENT" };
 
 function applyReactionsAndLog(container: Container, containerId: string, log: ReactionLogEntry[]): { container: Container; log: ReactionLogEntry[] } {
@@ -588,6 +592,90 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
       };
     }
 
+    case "HYDRATE_FROM_SAVE": {
+      const ws = action.snapshot.workspace;
+      if (!ws) return state;
+
+      const containers = state.containers.map((c) => {
+        const saved = ws.containers?.find((sc) => sc.id === c.id);
+        if (!saved) return c;
+        let containerData = c.data;
+        if (saved.contents) {
+          containerData = {
+            ...containerData,
+            contents: saved.contents.map((st) => ({ ...st })),
+            temperatureC: saved.temperatureC ?? containerData.temperatureC,
+            precipitate: saved.precipitate ? saved.precipitate.map((p) => ({ ...p })) : containerData.precipitate,
+          };
+        }
+        return {
+          ...c,
+          position: saved.position ?? c.position,
+          rotationY: saved.rotationY ?? c.rotationY,
+          elevation: saved.elevation ?? c.elevation,
+          storageSlotId: saved.storageSlotId !== undefined ? saved.storageSlotId : c.storageSlotId,
+          heatingSourceId: saved.heatingSourceId !== undefined ? saved.heatingSourceId : c.heatingSourceId,
+          isSealed: saved.isSealed ?? c.isSealed,
+          pressureKPa: saved.pressureKPa ?? c.pressureKPa,
+          data: containerData,
+        };
+      });
+
+      const stockBottles = state.stockBottles.map((b) => {
+        const saved = ws.stockBottles?.find((sb) => sb.id === b.id);
+        if (!saved) return b;
+        return {
+          ...b,
+          remainingGrams: saved.remainingGrams ?? b.remainingGrams,
+          capState: saved.capState ?? b.capState,
+          position: saved.position ?? b.position,
+          rotationY: saved.rotationY ?? b.rotationY,
+          elevation: saved.elevation ?? b.elevation,
+          storageSlotId: saved.storageSlotId !== undefined ? saved.storageSlotId : b.storageSlotId,
+        };
+      });
+
+      const tools = state.tools.map((t) => {
+        if (t.kind === "burner") {
+          const savedBurner = ws.burners?.find((sb) => sb.id === t.id);
+          if (savedBurner) {
+            return {
+              ...t,
+              isOn: savedBurner.isOn ?? false,
+              position: savedBurner.position ?? t.position,
+              rotationY: savedBurner.rotationY ?? t.rotationY,
+              elevation: savedBurner.elevation ?? t.elevation,
+              storageSlotId: savedBurner.storageSlotId !== undefined ? savedBurner.storageSlotId : t.storageSlotId,
+            };
+          }
+        }
+        const savedTransform = ws.itemTransforms?.find((it) => it.id === t.id);
+        if (savedTransform) {
+          return {
+            ...t,
+            position: savedTransform.position ? ([savedTransform.position[0], savedTransform.position[2]] as [number, number]) : t.position,
+            rotationY: savedTransform.rotationY ?? t.rotationY,
+            elevation: savedTransform.elevation ?? t.elevation,
+            storageSlotId: savedTransform.storageSlotId !== undefined ? savedTransform.storageSlotId : t.storageSlotId,
+          };
+        }
+        return t;
+      });
+
+      const cabinets = state.cabinets.map((cab) => {
+        const savedCab = ws.cabinets?.find((c) => c.id === cab.id);
+        return savedCab ? { ...cab, isOpen: savedCab.isOpen } : cab;
+      });
+
+      return {
+        ...state,
+        containers,
+        stockBottles,
+        tools,
+        cabinets,
+      };
+    }
+
     case "RESET_EXPERIMENT":
       return createInitialState();
 
@@ -671,10 +759,11 @@ interface WorkspaceContextValue {
   setActiveContainer: (id: string) => void;
   toggleSeal: (id: string) => void;
   hazardTick: (dtSeconds: number) => void;
+  hydrateFromSave: (snapshot: ChemistrySaveSnapshotV1) => void;
   resetExperiment: () => void;
 }
 
-const WorkspaceContext = createContext<WorkspaceContextValue | undefined>(undefined);
+export const WorkspaceContext = createContext<WorkspaceContextValue | undefined>(undefined);
 
 export function ChemistryWorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(reducer, undefined, createInitialState);
@@ -840,6 +929,7 @@ export function ChemistryWorkspaceProvider({ children }: { children: React.React
     setActiveContainer: useCallback((id) => dispatch({ type: "SET_ACTIVE_CONTAINER", id }), []),
     toggleSeal: useCallback((id) => dispatch({ type: "TOGGLE_SEAL", id }), []),
     hazardTick: useCallback((dtSeconds) => dispatch({ type: "HAZARD_TICK", dtSeconds }), []),
+    hydrateFromSave: useCallback((snapshot) => dispatch({ type: "HYDRATE_FROM_SAVE", snapshot }), []),
     resetExperiment: useCallback(() => dispatch({ type: "RESET_EXPERIMENT" }), []),
   };
 

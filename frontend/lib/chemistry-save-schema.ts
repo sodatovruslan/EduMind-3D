@@ -17,14 +17,13 @@ export interface ContainerSnapshotV1 {
   pressureKPa: number;
   contents: {
     substanceId: string;
-    massGrams: number;
-    volumeMl: number;
+    grams: number;
   }[];
   temperatureC: number;
-  aggregateState: "solid" | "liquid" | "gas";
+  aggregateState?: "solid" | "liquid" | "gas";
   precipitate: {
     substanceId: string;
-    massGrams: number;
+    grams: number;
   }[];
   hazardLevel: "none" | "caution" | "warning" | "danger" | "critical";
   capState?: "closed" | "open" | "missing";
@@ -35,7 +34,7 @@ export interface StockBottleSnapshotV1 {
   substanceId: string;
   substanceName: string;
   remainingGrams: number;
-  capState: "closed" | "open" | "missing";
+  capState: "closed" | "open";
   position: [number, number];
   rotationY: number;
   elevation: number;
@@ -55,6 +54,7 @@ export interface CabinetSnapshotV1 {
   id: string;
   position: [number, number];
   rotationY: number;
+  isOpen: boolean;
 }
 
 export interface ItemTransformSnapshotV1 {
@@ -75,7 +75,7 @@ export interface ChemistryWorkspaceSnapshotV1 {
 }
 
 export interface ChemistryExperimentSnapshotV1 {
-  mode: "learning" | "practice" | "exam";
+  mode: "guided" | "learning" | "practice" | "exam";
   currentStepIndex: number;
   completedStepIds: string[];
   taskStatus: "in_progress" | "completed" | "failed";
@@ -117,7 +117,7 @@ export interface ChemistrySaveSnapshotV1 {
   experiment: ChemistryExperimentSnapshotV1;
   progress: ChemistryProgressSnapshotV1;
   observation: ChemistryObservationSnapshotV1;
-  teacherReport: ChemistryTeacherReportSnapshotV1;
+  teacherReport?: ChemistryTeacherReportSnapshotV1;
 }
 
 export interface ValidationResult {

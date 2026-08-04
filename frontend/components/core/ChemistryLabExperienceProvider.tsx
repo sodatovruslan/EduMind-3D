@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { HazardLevel } from "@/lib/hazard-engine";
 import {
   getLabExperiment,
@@ -14,6 +14,11 @@ import { getModeConfig, type LabModeConfig, type LearningMode } from "@/lib/chem
 import { assessExperiment, type AssessmentReport } from "@/lib/chemistry-assessment";
 import { buildNotebookEntry, sortNotebookEntriesByDateDesc, type NotebookEntry } from "@/lib/chemistry-notebook";
 import { submitTaskEvent, type LearningProfile } from "@/lib/progress-client";
+import { autosaveEngine } from "@/lib/autosave-engine";
+import { hydrateChemistrySave, type SerializeOptions } from "@/lib/chemistry-save-serializer";
+import { observationLogger } from "@/lib/observation-logger";
+import { WorkspaceContext } from "@/components/core/ChemistryWorkspaceProvider";
+import type { ChemistrySaveSnapshotV1 } from "@/lib/chemistry-save-schema";
 
 /**
  * Chemistry World — Guided Laboratory System (Stage 5.6). Владеет учебным
@@ -73,6 +78,7 @@ interface ChemistryLabExperienceContextValue {
   lastAssessment: AssessmentReport | null;
   lastNotebookEntry: NotebookEntry | null;
   learningProfile: LearningProfile | null;
+  resumeSave: (snapshot: ChemistrySaveSnapshotV1) => void;
   isExperimentUnlockedFor: (experiment: LabExperiment) => boolean;
 }
 
@@ -87,6 +93,7 @@ export function ChemistryLabExperienceProvider({
   stepContext: LabStepContext;
   children: React.ReactNode;
 }) {
+  const workspaceContext = useContext(WorkspaceContext);
   const [mode, setMode] = useState<LearningMode>("guided");
   const [selectedExperimentId, setSelectedExperimentId] = useState<string | null>(null);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
@@ -102,10 +109,6 @@ export function ChemistryLabExperienceProvider({
 
   const selectedExperiment = selectedExperimentId ? getLabExperiment(selectedExperimentId) ?? null : null;
 
-  // реальные счетчики сессии текущего эксперимента — накапливаются через
-  // refs (без лишних ре-рендеров на каждый физический тик), сбрасываются
-  // при выборе нового эксперимента. Идемпотентны при повторном срабатывании
-  // эффекта с теми же значениями (безопасно для React StrictMode).
   const hintsRef = useRef(0);
   const attemptsRef = useRef(0);
   const safetyCodesRef = useRef<Set<string>>(new Set());
@@ -120,6 +123,102 @@ export function ChemistryLabExperienceProvider({
   const prevBurnerRef = useRef(stepContext.burnerOn);
   const prevSealedRef = useRef(stepContext.isSealed);
   const prevPourCountRef = useRef(stepContext.pourLog.length);
+
+  const isLastStep = selectedExperiment ? currentStepIndex === selectedExperiment.steps.length - 1 : false;
+
+  const completedExperimentIds = useMemo(() => {
+    const ids = new Set<string>();
+    notebookEntries.forEach((e) => {
+      if (e.assessment.completion.score === 100) ids.add(e.experimentId);
+    });
+    return Array.from(ids);
+  }, [notebookEntries]);
+
+  const getSerializeOptions = useCallback((): SerializeOptions | null => {
+    if (!selectedExperimentId) return null;
+
+    const burners = (workspaceContext?.state.tools || [])
+      .filter((t) => t.kind === "burner")
+      .map((b) => ({
+        id: b.id,
+        isOn: (b as any).isOn || false,
+        position: b.position,
+        rotationY: b.rotationY,
+        elevation: b.elevation,
+        storageSlotId: b.storageSlotId,
+      }));
+
+    return {
+      saveId: `save-${selectedExperimentId}`,
+      userId: "user-student",
+      simulationId,
+      experimentId: selectedExperimentId,
+      revision: 1,
+      workspace: {
+        containers: (workspaceContext?.state.containers || []).map((c) => ({
+          id: c.id,
+          kind: c.kind,
+          position: c.position,
+          rotationY: c.rotationY,
+          elevation: c.elevation,
+          storageSlotId: c.storageSlotId,
+          heatingSourceId: c.heatingSourceId,
+          isSealed: c.isSealed,
+          pressureKPa: c.pressureKPa,
+          contents: c.data.contents.map((st) => ({ substanceId: st.substanceId, grams: st.grams })),
+          temperatureC: c.data.temperatureC,
+          aggregateState: c.data.temperatureC > 100 ? "gas" as const : "liquid" as const,
+          precipitate: c.data.precipitate ? c.data.precipitate.map((p) => ({ substanceId: p.substanceId, grams: p.grams })) : [],
+          hazardLevel: c.hazard.level,
+        })),
+        stockBottles: (workspaceContext?.state.stockBottles || []).map((b) => ({
+          id: b.id,
+          substanceId: b.substanceId,
+          substanceName: b.substanceId,
+          remainingGrams: b.remainingGrams,
+          capState: b.capState,
+          position: b.position,
+          rotationY: b.rotationY,
+          elevation: b.elevation,
+          storageSlotId: b.storageSlotId,
+        })),
+        burners,
+        cabinets: workspaceContext?.state.cabinets || [],
+        itemTransforms: [],
+      },
+      experiment: {
+        mode,
+        currentStepIndex,
+        completedStepIds: [],
+        taskStatus: isLastStep ? "completed" : "in_progress",
+        startedAt: Date.now(),
+        elapsedMs: 0,
+        hintsUsed: hintsRef.current,
+        conclusionDraft,
+      },
+      progress: {
+        xp: 0,
+        achievements: [],
+        completedExperimentIds,
+      },
+      observation: {
+        sessionId: observationLogger.getSessionId(),
+        lastSequence: observationLogger.getEvents().length > 0
+          ? observationLogger.getEvents()[observationLogger.getEvents().length - 1].sequence
+          : 0,
+        events: [...observationLogger.getEvents()],
+      },
+    };
+  }, [
+    selectedExperimentId,
+    workspaceContext?.state,
+    simulationId,
+    mode,
+    currentStepIndex,
+    isLastStep,
+    conclusionDraft,
+    completedExperimentIds,
+  ]);
 
   useEffect(() => {
     if (!selectedExperiment) return;
@@ -151,9 +250,6 @@ export function ChemistryLabExperienceProvider({
     });
   }, [selectedExperiment, stepContext.occurredReactionIds]);
 
-  // реальные дискретные действия ученика (не физические тики) — сигнал
-  // "что-то изменилось намеренно": состав сосуда, горелка, герметичность,
-  // факт переливания. Именно это считается как "попытка" для Assessment.
   const contentsSig = stepContext.activeContainer.contents.length + stepContext.activeContainer.precipitate.length;
   useEffect(() => {
     if (!selectedExperiment) return;
@@ -178,16 +274,39 @@ export function ChemistryLabExperienceProvider({
       actionsLogRef.current.push("Переливание между сосудами");
       prevPourCountRef.current = stepContext.pourLog.length;
     }
-    if (changed) attemptsRef.current += 1;
+    if (changed) {
+      attemptsRef.current += 1;
+      autosaveEngine.markDirty();
+    }
   }, [selectedExperiment, contentsSig, stepContext.burnerOn, stepContext.isSealed, stepContext.pourLog.length]);
 
-  const completedExperimentIds = useMemo(() => {
-    const ids = new Set<string>();
-    notebookEntries.forEach((e) => {
-      if (e.assessment.completion.score === 100) ids.add(e.experimentId);
-    });
-    return Array.from(ids);
-  }, [notebookEntries]);
+  function resumeSave(snapshot: ChemistrySaveSnapshotV1) {
+    if (!snapshot || !snapshot.experimentId) return;
+    const hydrated = hydrateChemistrySave(snapshot);
+
+    setSelectedExperimentId(snapshot.experimentId);
+    setCurrentStepIndex(hydrated.experiment.currentStepIndex ?? 0);
+    setConclusionDraft(hydrated.experiment.conclusionDraft || "");
+
+    observationLogger.restoreSession(
+      hydrated.observation.sessionId,
+      hydrated.observation.lastSequence,
+      hydrated.observation.events
+    );
+
+    if (workspaceContext) {
+      workspaceContext.hydrateFromSave(snapshot);
+    }
+
+    autosaveEngine.init(
+      snapshot.saveId,
+      snapshot.userId,
+      snapshot.simulationId,
+      snapshot.experimentId,
+      snapshot.revision,
+      getSerializeOptions
+    );
+  }
 
   function selectExperiment(id: string) {
     const experiment = getLabExperiment(id);
@@ -211,30 +330,27 @@ export function ChemistryLabExperienceProvider({
     prevBurnerRef.current = stepContext.burnerOn;
     prevSealedRef.current = stepContext.isSealed;
     prevPourCountRef.current = stepContext.pourLog.length;
+
+    autosaveEngine.init(
+      `save-${id}`,
+      "user-student",
+      simulationId,
+      id,
+      1,
+      getSerializeOptions
+    );
   }
 
   function exitExperiment() {
     setSelectedExperimentId(null);
   }
 
-  // Stage 5.7 audit — реальный сценарий: аварийная остановка сбрасывает
-  // состояние лаборатории (ChemistryWorkspaceProvider.resetExperiment), но
-  // сама по себе не знает про этот провайдер. Без явного вызова этой
-  // функции студент оставался бы на устаревшем шаге/экране завершения
-  // против уже сброшенного, пустого сосуда — реального краша это не
-  // вызывает, но UI вводит в заблуждение. Вызывается ровно в паре с
-  // resetExperiment() из кнопки "Сбросить эксперимент".
   function resetLabSession() {
     setSelectedExperimentId(null);
     setLastAssessment(null);
     setLastNotebookEntry(null);
   }
 
-  // "Максимально наблюдаемые" температура/давление за сессию текущего
-  // эксперимента отслеживает ТОЛЬКО этот провайдер (через refs выше) —
-  // родитель не может знать эту накопленную историю заранее, поэтому здесь
-  // подставляем реально отслеженные значения поверх сырого stepContext
-  // перед любой проверкой isUnlocked/isComplete
   const effectiveStepContext: LabStepContext = {
     ...stepContext,
     maxTemperatureCObserved: Math.max(maxTempRef.current, stepContext.activeContainer.temperatureC),
@@ -243,12 +359,12 @@ export function ChemistryLabExperienceProvider({
 
   const currentStep = selectedExperiment ? selectedExperiment.steps[currentStepIndex] ?? null : null;
   const isCurrentStepUnlocked = currentStep ? currentStep.isUnlocked(effectiveStepContext) : false;
-  const isLastStep = selectedExperiment ? currentStepIndex === selectedExperiment.steps.length - 1 : false;
 
   function advanceStep() {
     if (!selectedExperiment || !currentStep) return;
-    if (!currentStep.isUnlocked(effectiveStepContext)) return; // реальная проверка — не просто нажатие кнопки
+    if (!currentStep.isUnlocked(effectiveStepContext)) return;
     setCurrentStepIndex((i) => Math.min(i + 1, selectedExperiment.steps.length - 1));
+    autosaveEngine.markDirty();
   }
 
   function recordHintUsed() {
@@ -348,6 +464,7 @@ export function ChemistryLabExperienceProvider({
     lastAssessment,
     lastNotebookEntry,
     learningProfile,
+    resumeSave,
     isExperimentUnlockedFor,
   };
 
