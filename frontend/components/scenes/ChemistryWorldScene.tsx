@@ -9,7 +9,7 @@ import { AlertOctagon, Flame, Lock, RotateCcw, RotateCw, Unlock, Volume2, Volume
 import CanvasShell from "@/components/scenes/CanvasShell";
 import { CameraMode } from "@/lib/chemistry-lab-modes";
 import { SandboxModeOverlay } from "@/components/chemistry/sandbox/SandboxModeOverlay";
-import { RoomInteriorBounds } from "@/lib/sandbox-locomotion";
+import { RoomInteriorBounds, RegisteredCollider } from "@/lib/sandbox-locomotion";
 import {
   ChemistryWorkspaceProvider,
   useChemistryWorkspace,
@@ -338,10 +338,32 @@ function useLabBenchTexture() {
 // в X:[-3.2,2.6], Z:[-1.6,1.4] (см. createInitialState в
 // ChemistryWorkspaceProvider) — эти координаты НЕ трогаем (интерактив/физика),
 // столешница просто щедро больше их разброса со всех сторон.
-function Workbench() {
+function Workbench({ onRegisterCollider }: { onRegisterCollider?: (collider: RegisteredCollider) => void }) {
   const texture = useLabBenchTexture();
+  const meshRef = useRef<THREE.Mesh>(null);
+
+  useLayoutEffect(() => {
+    if (meshRef.current && onRegisterCollider) {
+      meshRef.current.updateWorldMatrix(true, true);
+      const box = new THREE.Box3().setFromObject(meshRef.current);
+      onRegisterCollider({
+        id: "main_table",
+        name: "Рабочий стол",
+        role: "floor-obstacle",
+        bounds: {
+          minX: Number(box.min.x.toFixed(2)),
+          maxX: Number(box.max.x.toFixed(2)),
+          minZ: Number(box.min.z.toFixed(2)),
+          maxZ: Number(box.max.z.toFixed(2)),
+        },
+        minY: Number(box.min.y.toFixed(2)),
+        maxY: Number(box.max.y.toFixed(2)),
+      });
+    }
+  }, [onRegisterCollider]);
+
   return (
-    <mesh position={[0, -0.05, 0]} receiveShadow>
+    <mesh ref={meshRef} position={[0, -0.05, 0]} receiveShadow>
       <boxGeometry args={[9, 0.1, 4.2]} />
       <meshStandardMaterial map={texture} roughness={0.65} metalness={0.05} />
     </mesh>
@@ -498,27 +520,41 @@ function useWallProximityFade() {
   const leftRef = useRef<THREE.MeshStandardMaterial>(null);
   const rightRef = useRef<THREE.MeshStandardMaterial>(null);
 
-  useFrame(({ camera }) => {
-    const fade = (distanceToWall: number) => {
-      const t = (distanceToWall - WALL_FADE_END) / (WALL_FADE_START - WALL_FADE_END);
-      return Math.max(0.08, Math.min(1, t));
-    };
-    const backDist = camera.position.z - -ROOM_HALF_DEPTH;
-    const leftDist = camera.position.x - -ROOM_HALF_WIDTH;
-    const rightDist = ROOM_HALF_WIDTH - camera.position.x;
-    if (backRef.current) backRef.current.opacity = fade(backDist);
-    if (leftRef.current) leftRef.current.opacity = fade(leftDist);
-    if (rightRef.current) rightRef.current.opacity = fade(rightDist);
+  useFrame(() => {
+    if (backRef.current) backRef.current.opacity = 1;
+    if (leftRef.current) leftRef.current.opacity = 1;
+    if (rightRef.current) rightRef.current.opacity = 1;
   });
 
   return { backRef, leftRef, rightRef };
 }
 
-function CabinetMesh({ config, woodTexture }: { config: CabinetConfig; woodTexture: THREE.Texture }) {
+function CabinetMesh({ config, woodTexture, onRegisterCollider }: { config: CabinetConfig; woodTexture: THREE.Texture; onRegisterCollider?: (collider: RegisteredCollider) => void }) {
   const interaction = useCabinetInteractable(config.id);
   const { state: workspace } = useChemistryWorkspace();
+  const groupRef = useRef<THREE.Group>(null);
   const doorRef = useRef<THREE.Group>(null);
   const isOpen = interaction.state?.isOpen ?? false;
+
+  useLayoutEffect(() => {
+    if (groupRef.current && onRegisterCollider) {
+      groupRef.current.updateWorldMatrix(true, true);
+      const box = new THREE.Box3().setFromObject(groupRef.current);
+      onRegisterCollider({
+        id: config.id,
+        name: config.id,
+        role: "interaction-only",
+        bounds: {
+          minX: Number(box.min.x.toFixed(2)),
+          maxX: Number(box.max.x.toFixed(2)),
+          minZ: Number(box.min.z.toFixed(2)),
+          maxZ: Number(box.max.z.toFixed(2)),
+        },
+        minY: Number(box.min.y.toFixed(2)),
+        maxY: Number(box.max.y.toFixed(2)),
+      });
+    }
+  }, [config.id, onRegisterCollider]);
 
   useFrame((_, delta) => {
     if (!doorRef.current) return;
@@ -543,7 +579,7 @@ function CabinetMesh({ config, woodTexture }: { config: CabinetConfig; woodTextu
   );
 
   return (
-    <group position={config.worldPosition}>
+    <group ref={groupRef} position={config.worldPosition}>
       <mesh position={[-0.52, 0, 0.015]} castShadow receiveShadow onPointerOver={focus} onPointerOut={blur} onPointerDown={select}>
         <boxGeometry args={[0.06, config.size[1], 0.52]} />
         <meshStandardMaterial map={woodTexture} color={materialColor} roughness={0.55} metalness={0.1} />
@@ -681,12 +717,18 @@ function RegisteredWallMesh({
   return (
     <mesh ref={meshRef} position={position} rotation={rotation} receiveShadow>
       <planeGeometry args={args} />
-      <meshStandardMaterial ref={materialRef} map={wallTex} roughness={0.85} metalness={0} side={THREE.DoubleSide} transparent />
+      <meshStandardMaterial ref={materialRef} map={wallTex} roughness={0.85} metalness={0} side={THREE.DoubleSide} />
     </mesh>
   );
 }
 
-function Room({ onRegisterWall }: { onRegisterWall?: (id: string, box: THREE.Box3) => void }) {
+function Room({
+  onRegisterWall,
+  onRegisterCollider,
+}: {
+  onRegisterWall?: (id: string, box: THREE.Box3) => void;
+  onRegisterCollider?: (collider: RegisteredCollider) => void;
+}) {
   const floorTex = useLabFloorTexture();
   const wallTex = useLabWallTexture();
   const woodTex = useCabinetWoodTexture();
@@ -753,7 +795,7 @@ function Room({ onRegisterWall }: { onRegisterWall?: (id: string, box: THREE.Box
       {/* настенные шкафы вдоль задней стены — по бокам от рабочей зоны,
           не пересекаются с предметами стола (те не выходят за X:[-3.2,2.6]) */}
       {Object.values(CABINET_REGISTRY).map((cabinet) => (
-        <CabinetMesh key={cabinet.id} config={cabinet} woodTexture={woodTex} />
+        <CabinetMesh key={cabinet.id} config={cabinet} woodTexture={woodTex} onRegisterCollider={onRegisterCollider} />
       ))}
     </group>
   );
@@ -819,13 +861,35 @@ function useSinkCounterModel(targetWidth: number) {
 }
 useGLTF.preload("/models/chemistry/lab-table.glb");
 
-function SinkCounter() {
+function SinkCounter({ onRegisterCollider }: { onRegisterCollider?: (collider: RegisteredCollider) => void }) {
   // Мойка на боковой (правой) стене, за пределами рабочего стола
   // (тот заканчивается на X=4.5) — полный реалистичный масштаб оригинала,
   // комната теперь достаточно просторная, чтобы не пришлось его ужимать
   const model = useSinkCounterModel(2.6);
+  const groupRef = useRef<THREE.Group>(null);
+
+  useLayoutEffect(() => {
+    if (groupRef.current && onRegisterCollider) {
+      groupRef.current.updateWorldMatrix(true, true);
+      const box = new THREE.Box3().setFromObject(groupRef.current);
+      onRegisterCollider({
+        id: "sink_counter",
+        name: "Тумба с раковиной",
+        role: "floor-obstacle",
+        bounds: {
+          minX: Number(box.min.x.toFixed(2)),
+          maxX: Number(box.max.x.toFixed(2)),
+          minZ: Number(box.min.z.toFixed(2)),
+          maxZ: Number(box.max.z.toFixed(2)),
+        },
+        minY: Number(box.min.y.toFixed(2)),
+        maxY: Number(box.max.y.toFixed(2)),
+      });
+    }
+  }, [onRegisterCollider]);
+
   return (
-    <group position={[ROOM_HALF_WIDTH - 0.45, 0, -0.6]} rotation={[0, Math.PI / 2, 0]}>
+    <group ref={groupRef} position={[ROOM_HALF_WIDTH - 0.45, 0, -0.6]} rotation={[0, Math.PI / 2, 0]}>
       <primitive object={model} />
     </group>
   );
@@ -2340,6 +2404,7 @@ interface ChemistrySceneProps {
   safetyByContainer: Record<string, SafetyWarning[]>;
   debugMode: boolean;
   onRegisterWall?: (id: string, box: THREE.Box3) => void;
+  onRegisterCollider?: (collider: RegisteredCollider) => void;
 }
 
 // Interaction Debug Mode + Hazard Debug Mode (расширение того же
@@ -2429,7 +2494,15 @@ function InteractableVisualRig({
   );
 }
 
-function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer, debugMode, onRegisterWall }: ChemistrySceneProps) {
+function ChemistryScene({
+  onDrop,
+  pourAnimation,
+  addAnimation,
+  safetyByContainer,
+  debugMode,
+  onRegisterWall,
+  onRegisterCollider,
+}: ChemistrySceneProps) {
   const { state, heatTick, hazardTick } = useChemistryWorkspace();
   const { draggingId } = useChemistryDrag();
   const {
@@ -2568,9 +2641,9 @@ function ChemistryScene({ onDrop, pourAnimation, addAnimation, safetyByContainer
           <pointLight key={x} position={[x, ROOM_FLOOR_Y + ROOM_HEIGHT - 0.3, 0]} intensity={0.55} color="#fffaf0" distance={7} decay={2} />
         ))}
 
-        <Room onRegisterWall={onRegisterWall} />
-        <SinkCounter />
-        <Workbench />
+        <Room onRegisterWall={onRegisterWall} onRegisterCollider={onRegisterCollider} />
+        <SinkCounter onRegisterCollider={onRegisterCollider} />
+        <Workbench onRegisterCollider={onRegisterCollider} />
         <PlacementDiagnosticMarkers />
 
         {state.containers.map((c) => (
@@ -2713,6 +2786,26 @@ function ChemistryCanvas({
     setCameraXZ(cam);
   }, []);
 
+  const [collidersMap, setCollidersMap] = useState<Record<string, RegisteredCollider>>({});
+
+  const handleRegisterCollider = useCallback((collider: RegisteredCollider) => {
+    setCollidersMap((prev) => {
+      const existing = prev[collider.id];
+      if (
+        existing &&
+        existing.bounds.minX === collider.bounds.minX &&
+        existing.bounds.maxX === collider.bounds.maxX &&
+        existing.bounds.minZ === collider.bounds.minZ &&
+        existing.bounds.maxZ === collider.bounds.maxZ
+      ) {
+        return prev;
+      }
+      return { ...prev, [collider.id]: collider };
+    });
+  }, []);
+
+  const colliders = useMemo(() => Object.values(collidersMap), [collidersMap]);
+
   const [cameraMode, setCameraMode] = useState<CameraMode>("orbit");
   const isInteractionActive = !!draggingId || !!heldId;
 
@@ -2740,6 +2833,7 @@ function ChemistryCanvas({
       <CanvasShell
         cameraMode={cameraMode}
         roomBounds={dynamicRoomBounds}
+        colliders={colliders}
         onPosUpdate={handlePosUpdate}
         cameraPosition={[0.4, 3.6, 6.4]}
         target={[0, 0.1, 0]}
@@ -2767,6 +2861,7 @@ function ChemistryCanvas({
           safetyByContainer={safetyByContainer}
           debugMode={debugMode}
           onRegisterWall={handleRegisterWall}
+          onRegisterCollider={handleRegisterCollider}
         />
       </CanvasShell>
     </div>
