@@ -287,7 +287,7 @@ export interface HydratedState {
   };
   observation: {
     sessionId: string;
-    nextSequence: number;
+    lastSequence: number;
     events: any[];
   };
   runtimeDefaults: {
