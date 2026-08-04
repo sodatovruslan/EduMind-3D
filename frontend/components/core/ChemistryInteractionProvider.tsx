@@ -38,6 +38,7 @@ export interface PickupOrigin {
   elevation: number;
   rotationY: number;
   storageSlotId: string | null;
+  heatingSourceId?: string | null;
 }
 
 export interface CabinetRuntimeState {
@@ -50,6 +51,8 @@ export interface PlacementCandidate {
   surface: PlacementSurfaceKind;
   isValid?: boolean;
   reason?: string;
+  elevation?: number;
+  burnerId?: string;
 }
 
 interface ChemistryInteractionContextValue {
@@ -219,6 +222,7 @@ export function ChemistryInteractionProvider({
             elevation: runtimeState.elevation,
             rotationY: runtimeState.rotationY ?? 0,
             storageSlotId: runtimeState.storageSlotId ?? null,
+            heatingSourceId: runtimeState.heatingSourceId ?? null,
           }
         : null;
     onBeginPickupRef.current?.(id);

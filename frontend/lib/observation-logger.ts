@@ -220,6 +220,30 @@ export interface HintRequestedEvent extends BaseObservationEvent {
   };
 }
 
+export interface BurnerToggledEvent extends BaseObservationEvent {
+  eventType: "burner_toggled";
+  payload: {
+    burnerId: string;
+    isOn: boolean;
+  };
+}
+
+export interface HeatingAttachedEvent extends BaseObservationEvent {
+  eventType: "heating_attached";
+  payload: {
+    containerId: string;
+    burnerId: string;
+  };
+}
+
+export interface HeatingDetachedEvent extends BaseObservationEvent {
+  eventType: "heating_detached";
+  payload: {
+    containerId: string;
+    burnerId: string | null;
+  };
+}
+
 export type ChemistryObservationEvent =
   | ItemPickedUpEvent
   | ItemPlacedEvent
@@ -231,6 +255,9 @@ export type ChemistryObservationEvent =
   | CapClosedEvent
   | BottleTiltedEvent
   | BottleUprightedEvent
+  | BurnerToggledEvent
+  | HeatingAttachedEvent
+  | HeatingDetachedEvent
   | PourStartedEvent
   | PourCompletedEvent
   | PourBlockedEvent

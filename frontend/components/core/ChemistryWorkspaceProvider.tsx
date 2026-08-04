@@ -24,6 +24,7 @@ import { CABINET_IDS, getCabinet } from "@/lib/cabinets";
 import { getInteractable } from "@/lib/interactables";
 import { canStoreItemNow, findAvailableSlot, findSlotsForCabinet, getSlot, type StorageSlot } from "@/lib/storage-slots";
 import { observationLogger } from "@/lib/observation-logger";
+import { getHeatingSocketByBurnerId, getRegisteredHeatingSockets } from "@/lib/placement-surfaces";
 
 /**
  * Chemistry World — Laboratory Workspace state (Stage 5). Тот же принцип,
@@ -47,6 +48,7 @@ export interface ContainerItem extends PortableItemSpatialState {
   id: string;
   kind: ContainerVisualKind;
   data: Container;
+  heatingSourceId: string | null;
   // Stage 5.5 v2 — Hazard Simulation: герметично закрыт (можно накапливать
   // давление) или открыт (пар свободно выходит)
   isSealed: boolean;
@@ -66,7 +68,8 @@ function createContainerItem(
   position: [number, number],
   rotationY = 0,
   elevation = 0.05,
-  storageSlotId: string | null = null
+  storageSlotId: string | null = null,
+  heatingSourceId: string | null = null
 ): ContainerItem {
   const data = createEmptyContainer(id, kind);
   const profile = CONTAINER_PHYSICS[kind];
@@ -77,6 +80,7 @@ function createContainerItem(
     rotationY,
     elevation,
     storageSlotId,
+    heatingSourceId,
     data,
     isSealed: false,
     integrity: createDefaultIntegrity(profile),
@@ -104,15 +108,12 @@ const BURNER_HEATING_RATE_C_PER_SEC = 80;
 const BURNER_COOLING_RATE_C_PER_SEC = 18;
 const BURNER_MAX_TEMPERATURE_C = 350;
 
-// "стоит на штативе" — не отдельное поле состояния, а производное от
-// текущей позиции (совпадает со штативом в пределах небольшого радиуса).
-// Так это никогда не рассинхронизируется с реальным положением сосуда.
 export function isContainerOnStand(container: ContainerItem, tools: ToolItem[]): boolean {
-  const stand = tools.find((t) => t.kind === "stand");
+  const stand = tools.find((t) => t.kind === "stand") ?? tools.find((t) => t.kind === "burner");
   if (!stand) return false;
   const dx = container.position[0] - stand.position[0];
   const dz = container.position[1] - stand.position[1];
-  return Math.sqrt(dx * dx + dz * dz) <= STAND_PROXIMITY_RADIUS;
+  return Math.sqrt(dx * dx + dz * dz) <= 0.25;
 }
 
 export interface ToolItem extends PortableItemSpatialState {
@@ -197,11 +198,13 @@ type Action =
   | { type: "TOGGLE_CABINET"; id: string }
   | { type: "TOGGLE_BOTTLE_CAP"; id: string }
   | { type: "SET_BOTTLE_CAP_STATE"; id: string; capState: CapState }
+  | { type: "ATTACH_TO_HEATING_SLOT"; containerId: string; burnerId: string; position: [number, number]; elevation: number }
+  | { type: "DETACH_FROM_HEATING_SLOT"; containerId: string }
   | { type: "TOGGLE_BURNER"; id: string }
   | { type: "ADD_SUBSTANCE"; containerId: string; substanceId: string; grams: number }
   | { type: "POUR_FROM_STOCK"; bottleId: string; targetId: string; grams: number }
   | { type: "POUR"; sourceId: string; targetId: string }
-  | { type: "HEAT_TICK"; deltaC: number }
+  | { type: "HEAT_TICK"; deltaC: number; heldId?: string | null }
   | { type: "SET_ACTIVE_CONTAINER"; id: string }
   | { type: "TOGGLE_SEAL"; id: string }
   | { type: "HAZARD_TICK"; dtSeconds: number }
@@ -225,12 +228,18 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
       return { ...state, selectedItemId: action.id };
 
     case "MOVE_ITEM": {
-      const containers = state.containers.map((c) => (c.id === action.id ? { ...c, position: action.position } : c));
       const tools = state.tools.map((t) => (t.id === action.id ? { ...t, position: action.position } : t));
-      // Stage S-2: раньше stockBottles здесь не обновлялись вовсе — бутылку
-      // нельзя было реально передвинуть старым drag&drop (только визуально
-      // "поднималась" при захвате). Аддитивный фикс, поведение containers/
-      // tools выше не меняется ни на строку.
+      const heatTool = tools.find((t) => t.kind === "stand") ?? tools.find((t) => t.kind === "burner");
+      const burner = tools.find((t) => t.kind === "burner");
+      const containers = state.containers.map((c) => {
+        const cPos = c.id === action.id ? action.position : c.position;
+        const isNear = heatTool && Math.hypot(cPos[0] - heatTool.position[0], cPos[1] - heatTool.position[1]) < 0.25;
+        return {
+          ...c,
+          position: cPos,
+          heatingSourceId: isNear ? (burner?.id ?? "burner-1") : null,
+        };
+      });
       const stockBottles = state.stockBottles.map((b) => (b.id === action.id ? { ...b, position: action.position } : b));
       return { ...state, containers, tools, stockBottles };
     }
@@ -242,22 +251,7 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
       return { ...state, containers, tools };
     }
 
-    // Stage S-2 — Free Placement: единственная точка, где Interaction Core
-    // пишет в домен (см. ChemistryInteractionProvider.confirmPlacement) —
-    // атомарно задаёт позицию и произвольный поворот, ничего не трогая в
-    // data (химия) удерживаемого предмета
     case "SET_ITEM_TRANSFORM": {
-      const containers = state.containers.map((c) =>
-        c.id === action.id
-          ? {
-              ...c,
-              position: action.position,
-              rotationY: action.rotationY,
-              elevation: action.elevation ?? c.elevation,
-              storageSlotId: action.storageSlotId === undefined ? c.storageSlotId : action.storageSlotId,
-            }
-          : c
-      );
       const tools = state.tools.map((t) =>
         t.id === action.id
           ? {
@@ -269,6 +263,23 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
             }
           : t
       );
+      const heatTool = tools.find((t) => t.kind === "stand") ?? tools.find((t) => t.kind === "burner");
+      const burner = tools.find((t) => t.kind === "burner");
+      const containers = state.containers.map((c) => {
+        const cPos = c.id === action.id ? action.position : c.position;
+        const targetSlotId = c.id === action.id
+          ? (action.storageSlotId === undefined ? c.storageSlotId : action.storageSlotId)
+          : c.storageSlotId;
+        const isNear = heatTool && Math.hypot(cPos[0] - heatTool.position[0], cPos[1] - heatTool.position[1]) < 0.25;
+        return {
+          ...c,
+          position: cPos,
+          rotationY: c.id === action.id ? action.rotationY : c.rotationY,
+          elevation: c.id === action.id ? (action.elevation ?? c.elevation) : c.elevation,
+          storageSlotId: targetSlotId,
+          heatingSourceId: targetSlotId != null ? null : (isNear ? (burner?.id ?? "burner-1") : null),
+        };
+      });
       const stockBottles = state.stockBottles.map((b) =>
         b.id === action.id
           ? {
@@ -329,6 +340,43 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
         ),
       };
 
+    case "ATTACH_TO_HEATING_SLOT": {
+      const containers = state.containers.map((c) =>
+        c.id === action.containerId
+          ? {
+              ...c,
+              position: action.position,
+              elevation: action.elevation,
+              heatingSourceId: action.burnerId,
+              storageSlotId: null,
+            }
+          : c
+      );
+      observationLogger.appendEvent("heating_attached", "workspace", {
+        containerId: action.containerId,
+        burnerId: action.burnerId,
+      });
+      return { ...state, containers };
+    }
+
+    case "DETACH_FROM_HEATING_SLOT": {
+      let prevBurnerId: string | null = null;
+      const containers = state.containers.map((c) => {
+        if (c.id === action.containerId) {
+          prevBurnerId = c.heatingSourceId;
+          return { ...c, heatingSourceId: null };
+        }
+        return c;
+      });
+      if (prevBurnerId) {
+        observationLogger.appendEvent("heating_detached", "workspace", {
+          containerId: action.containerId,
+          burnerId: prevBurnerId,
+        });
+      }
+      return { ...state, containers };
+    }
+
     case "TOGGLE_BURNER": {
       // Emergency Stop блокирует новый нагрев, но не блокирует его выключение —
       // выключить горелку разрешено всегда
@@ -336,7 +384,19 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
         const tool = state.tools.find((t) => t.id === action.id);
         if (tool && !tool.isOn) return state; // нельзя ВКЛЮЧИТЬ горелку во время аварии
       }
-      return { ...state, tools: state.tools.map((t) => (t.id === action.id ? { ...t, isOn: !t.isOn } : t)) };
+      let nextIsOn = false;
+      const tools = state.tools.map((t) => {
+        if (t.id === action.id) {
+          nextIsOn = !t.isOn;
+          return { ...t, isOn: nextIsOn };
+        }
+        return t;
+      });
+      observationLogger.appendEvent("burner_toggled", "workspace", {
+        burnerId: action.id,
+        isOn: nextIsOn,
+      });
+      return { ...state, tools };
     }
 
     case "ADD_SUBSTANCE": {
@@ -408,11 +468,21 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
     }
 
     case "HEAT_TICK": {
-      const burnerOn = state.tools.some((t) => t.kind === "burner" && t.isOn);
-      if (!burnerOn) return state;
+      const burnerMap = new Map(state.tools.filter((t) => t.kind === "burner").map((t) => [t.id, t]));
       let log = state.reactionLog;
       const containers = state.containers.map((c) => {
-        if (!isContainerOnStand(c, state.tools)) return c;
+        if (!c.heatingSourceId) return c;
+        if (action.heldId === c.id) return c; // container is held in hand — NO HEATING!
+        const burner = burnerMap.get(c.heatingSourceId);
+        if (!burner || !burner.isOn) return c; // burner is off or missing — NO HEATING!
+
+        const socket = getHeatingSocketByBurnerId(burner.id);
+        const stand = state.tools.find((t) => t.kind === "stand");
+        const socketPos = socket ? socket.position : (stand ? stand.position : burner.position);
+        const dx = c.position[0] - socketPos[0];
+        const dz = c.position[1] - socketPos[1];
+        if (Math.sqrt(dx * dx + dz * dz) > 0.25) return c; // detached spatially — NO HEATING!
+
         const heated = heatContainer(c.data, action.deltaC);
         const result = applyReactionsAndLog(heated, c.id, log);
         log = result.log;
@@ -591,11 +661,13 @@ interface WorkspaceContextValue {
   setBottleCapState: (id: string, capState: CapState) => void;
   findAvailableStorageSlot: (id: string, cabinetId: string) => StorageSlot | null;
   storeItemInCabinet: (id: string, cabinetId: string) => boolean;
+  attachToHeatingSlot: (containerId: string, burnerId: string, position: [number, number], elevation: number) => void;
+  detachFromHeatingSlot: (containerId: string) => void;
   toggleBurner: (id: string) => void;
   addSubstanceToContainer: (containerId: string, substanceId: string, grams: number) => void;
   pourFromStockBottle: (bottleId: string, targetId: string, grams: number) => void;
   pourInto: (sourceId: string, targetId: string) => void;
-  heatTick: (deltaC: number) => void;
+  heatTick: (deltaC: number, heldId?: string | null) => void;
   setActiveContainer: (id: string) => void;
   toggleSeal: (id: string) => void;
   hazardTick: (dtSeconds: number) => void;
@@ -745,6 +817,15 @@ export function ChemistryWorkspaceProvider({ children }: { children: React.React
     setBottleCapState: useCallback((id, capState) => dispatch({ type: "SET_BOTTLE_CAP_STATE", id, capState }), []),
     findAvailableStorageSlot,
     storeItemInCabinet,
+    attachToHeatingSlot: useCallback(
+      (containerId, burnerId, position, elevation) =>
+        dispatch({ type: "ATTACH_TO_HEATING_SLOT", containerId, burnerId, position, elevation }),
+      []
+    ),
+    detachFromHeatingSlot: useCallback(
+      (containerId) => dispatch({ type: "DETACH_FROM_HEATING_SLOT", containerId }),
+      []
+    ),
     toggleBurner: useCallback((id) => dispatch({ type: "TOGGLE_BURNER", id }), []),
     addSubstanceToContainer: useCallback(
       (containerId, substanceId, grams) => dispatch({ type: "ADD_SUBSTANCE", containerId, substanceId, grams }),
@@ -755,7 +836,7 @@ export function ChemistryWorkspaceProvider({ children }: { children: React.React
       []
     ),
     pourInto: useCallback((sourceId, targetId) => dispatch({ type: "POUR", sourceId, targetId }), []),
-    heatTick: useCallback((deltaC) => dispatch({ type: "HEAT_TICK", deltaC }), []),
+    heatTick: useCallback((deltaC, heldId) => dispatch({ type: "HEAT_TICK", deltaC, heldId }), []),
     setActiveContainer: useCallback((id) => dispatch({ type: "SET_ACTIVE_CONTAINER", id }), []),
     toggleSeal: useCallback((id) => dispatch({ type: "TOGGLE_SEAL", id }), []),
     hazardTick: useCallback((dtSeconds) => dispatch({ type: "HAZARD_TICK", dtSeconds }), []),

@@ -5,30 +5,26 @@
 
 Обновляется по ходу работы.
 
-**Последнее обновление: 2026-08-04** (Stage S-7 v2 S7-V2.1..V2.12 полностью ЗАВЕРШЕНЫ и ЗАКОММИЧЕНЫ. В работе: Stage S7-V2.13 — Final Polish, Performance, Full Regression & Delivery).
+**Последнее обновление: 2026-08-04** (Stage S-7 v2 S7-V2.1..V2.13 & Chemistry World Critical Heating Bug Fixes полностью ЗАВЕРШЕНЫ).
 
 ---
 
 ## Актуальное состояние на 2026-08-04
 
 - **Ветка разработки**: `feature/stage-s7-v2-locomotion`
-- **HEAD**: `0485e29` (`feat(chemistry): isolate sandbox locomotion from observation pipeline`)
-- **Закоммиченные этапы S7 v2**:
-  - `e49d33c` `feat(sandbox): add isolated WASD locomotion prototype` (S7-V2.1..V2.2)
-  - `f083a07` `feat(sandbox): add dynamic room bounds and wall collisions` (S7-V2.3..V2.4)
-  - `ab815c3` `feat(sandbox): add furniture collision and kinematic sliding` (S7-V2.5)
-  - `d6a5773` `feat(sandbox): add cabinet interaction bounds and reach gating` (S7-V2.6)
-  - `ac5e220` `feat(sandbox): add prototype pickup and held rig` (S7-V2.7)
-  - `5efcda8` `feat(chemistry): add toggleable sandbox camera mode` (S7-V2.8)
-  - `184bd54` `feat(chemistry): register real scene sandbox locomotion` (S7-V2.8 registration)
-  - `8c26acc` `feat(chemistry): add unified sandbox interaction pipeline` (S7-V2.9)
-  - `df8bd84` `feat(chemistry): add sandbox placement and cabinet storage` (S7-V2.10)
-  - `27a3ebc` `feat(chemistry): integrate sandbox pouring with chemistry pipeline` (S7-V2.11)
-  - `0485e29` `feat(chemistry): isolate sandbox locomotion from observation pipeline` (S7-V2.12)
+- **Выполненные работы**:
+  - **Stage S7-V2.13 Final Polish**: Dev overlay gated (`showDiag = false`), Fullscreen API integration, Escape priority stack, input element exclusion, distance thresholding (0.01m frame loop).
+  - **Chemistry World Critical Heating Bug Fixes (Burner Placement, Heating State & Task Completion)**:
+    - **BUG A — Task Completion for Burner Toggle**: Complete domain event tracking (`burner_toggled`), domain state sync (`burnerOn`), and task condition verification without UI fake-checking.
+    - **Dynamic Heating Socket Registry**: Removed all static hardcoded coordinates (`[2.6, 1.4]`, `elevation 0.65`). Added dynamic 3D `HeatingSocket` ref/mesh in `BurnerMesh` updating world matrix via `updateWorldMatrix(true, true)` & `getWorldPosition()`.
+    - **Registry API & Fallbacks**: Sockets dynamically registered into `registerHeatingSocket(...)`. If unregistered, placement candidate returns `reason: "registry_not_ready"`. No static fallback numbers.
+    - **Audit Suite**: `ChemistryHeatingBugsFix.test.tsx` (11 scenarios) including burner move & old zone invalidation test + `chemistry-heating-bugs.spec.ts` (4/4 Playwright specs verified).
 - **Проверки**:
   - `npx tsc --noEmit` — **0 ошибок** (PASS)
-  - `pytest -q` — **45/45 PASSED** (PASS)
-  - `npx vitest run` — **368/368 PASSED** (PASS)
+  - `pytest -o asyncio_mode=auto -q` — **45/45 PASSED** (PASS)
+  - `npx vitest run` — **396/396 PASSED (34 test files)** (PASS)
+  - `npx playwright test e2e/chemistry-heating-bugs.spec.ts` — **4/4 PASSED** (PASS)
+  - `npm run lint` — **0 ошибок, 0 предупреждений** (PASS)
 
 ---
 

@@ -6,7 +6,7 @@
  * React или ChemistryWorkspaceProvider и остаётся пригодным для других сцен.
  */
 
-export type PlacementSurfaceKind = "table";
+export type PlacementSurfaceKind = "table" | "stand";
 export type LegacyDragMode = "none" | "move" | "pour";
 
 export interface InteractableRuntimeState {
@@ -14,6 +14,7 @@ export interface InteractableRuntimeState {
   position?: [number, number];
   elevation?: number;
   storageSlotId?: string | null;
+  heatingSourceId?: string | null;
   isOn?: boolean;
   temperatureC?: number;
   hasActiveFlame?: boolean;
@@ -66,6 +67,7 @@ const burnerBlockedReason = (state: InteractableRuntimeState) => {
 };
 
 const TABLE_ONLY = ["table"] as const;
+const TABLE_AND_STAND = ["table", "stand"] as const;
 
 function portableConfig(
   config: Omit<
@@ -73,14 +75,14 @@ function portableConfig(
     "canBeHeld" | "canBePlaced" | "allowedSurfaces" | "canPickUpNow" | "blockedReason"
   > &
     Partial<
-      Pick<InteractableConfig, "canPickUpNow" | "blockedReason">
+      Pick<InteractableConfig, "canPickUpNow" | "blockedReason" | "allowedSurfaces">
     >
 ): InteractableConfig {
   return {
     ...config,
     canBeHeld: true,
     canBePlaced: true,
-    allowedSurfaces: TABLE_ONLY,
+    allowedSurfaces: config.allowedSurfaces ?? TABLE_ONLY,
     canPickUpNow: config.canPickUpNow ?? canAlwaysPickUp,
     blockedReason: config.blockedReason ?? neverBlocked,
   };
@@ -107,6 +109,7 @@ function container(displayName: string, storageKind: string, radius = 0.32): Int
   return portableConfig({
     displayName,
     storageKind,
+    allowedSurfaces: TABLE_AND_STAND,
     ...CONTAINER_HAND,
     interactionRadius: radius,
     interactionHeight: 0.7,

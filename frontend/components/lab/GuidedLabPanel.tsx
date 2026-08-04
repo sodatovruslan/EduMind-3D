@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, ArrowRight, CheckCircle2, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, CheckCircle2, Target, X } from "lucide-react";
 import { useChemistryLabExperience } from "@/components/core/ChemistryLabExperienceProvider";
 
 /**
@@ -30,6 +30,9 @@ export default function GuidedLabPanel() {
 
   const totalSteps = selectedExperiment.steps.length;
   const progressPct = Math.round(((currentStepIndex + 1) / totalSteps) * 100);
+
+  const isIntroStep = currentStep?.kind === "goal" || currentStep?.kind === "safety_briefing" || currentStep?.kind === "explain";
+  const isStepDone = isCurrentStepUnlocked && !isIntroStep;
 
   return (
     <div className="glass-panel rounded-2xl border border-neon-violet/40 p-4" data-testid="guided-lab-panel">
@@ -88,13 +91,19 @@ export default function GuidedLabPanel() {
       {!modeConfig.showObjectivesOnly && currentStep && (
         <div
           className={`mb-3 rounded-xl border p-3 text-sm transition ${
-            modeConfig.showStepHighlighting && isCurrentStepUnlocked
+            isIntroStep
+              ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-200"
+              : isStepDone && modeConfig.showStepHighlighting
               ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200"
-              : "border-glass-border text-slate-300"
+              : "border-glass-border bg-white/5 text-slate-200"
           }`}
           data-testid="guided-lab-current-step"
         >
-          {modeConfig.showStepHighlighting && isCurrentStepUnlocked && <CheckCircle2 size={14} className="mr-1 inline" />}
+          {isIntroStep ? (
+            <Target size={14} className="mr-1.5 inline text-cyan-400" />
+          ) : isStepDone && modeConfig.showStepHighlighting ? (
+            <CheckCircle2 size={14} className="mr-1.5 inline text-emerald-400" />
+          ) : null}
           {currentStep.instruction}
         </div>
       )}
