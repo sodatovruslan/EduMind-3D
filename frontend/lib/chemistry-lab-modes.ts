@@ -10,6 +10,24 @@ export type LearningMode = "guided" | "practice" | "exam";
 /** Режимы управления камерой (Stage S-7 v2): "orbit" (S-6) ↔ "sandbox" (S-7 FPS) */
 export type CameraMode = "orbit" | "sandbox";
 
+export type InteractionSource = "click" | "key_e";
+
+export type InteractionReason =
+  | "ok"
+  | "too_far"
+  | "occluded"
+  | "invalid_state"
+  | "target_unavailable"
+  | "registry_not_ready";
+
+export interface InteractionCheckResult {
+  allowed: boolean;
+  reason: InteractionReason;
+  message?: string;
+  distance: number;
+  maxDistance: number;
+}
+
 export interface LabModeConfig {
   mode: LearningMode;
   label: string;

@@ -14,6 +14,10 @@ import {
   resolveHeldRigTransform,
   resolveObstacleCollisions,
   resolveWallCollisions,
+  checkPlayerReach,
+  distanceToAABB,
+  checkLineOfSight,
+  evaluateUnifiedInteraction,
   RoomInteriorBounds,
   segmentIntersectsAABB,
 } from "./sandbox-locomotion";
@@ -390,5 +394,97 @@ describe("Stage S-7 v2 — CheckPoint S7-V2.6 Prototype Object PickUp & Held Rig
     const res = calculateKinematicStep(start, { x: -1, z: 0 }, Math.PI / 2, 5.0, 1.0, undefined, [MOCK_TABLE], R, SKIN);
     // Must be clamped to DEFAULT_ROOM_INTERIOR.minX + R + SKIN = -4.2 + 0.37 = -3.83
     expect(res.nextPos[0]).toBeGreaterThanOrEqual(-4.2 + R + SKIN);
+  });
+
+  // ─── Stage S7-V2.9 Unified Interaction Pipeline Tests ─────────────────────
+
+  it("31. Reach Validator: Orbit Mode always allows interaction regardless of distance", () => {
+    const playerPos: [number, number] = [0, 2.5];
+    const targetPos: [number, number] = [5.0, -2.0]; // 7m away
+    const res = checkPlayerReach(playerPos, targetPos, "orbit", 1.8);
+    expect(res.allowed).toBe(true);
+  });
+
+  it("32. Reach Validator: Sandbox Mode allows interaction when within 1.8m", () => {
+    const playerPos: [number, number] = [0, 2.5];
+    const targetPos: [number, number] = [0.5, 2.0]; // ~0.7m away
+    const res = checkPlayerReach(playerPos, targetPos, "sandbox", 1.8);
+    expect(res.allowed).toBe(true);
+    expect(res.distance).toBeLessThanOrEqual(1.8);
+  });
+
+  it("33. Reach Validator: Sandbox Mode blocks interaction when beyond 1.8m", () => {
+    const playerPos: [number, number] = [0, 2.5];
+    const targetPos: [number, number] = [-3.0, 0.0]; // ~3.9m away across table
+    const res = checkPlayerReach(playerPos, targetPos, "sandbox", 1.8);
+    expect(res.allowed).toBe(false);
+    expect(res.reason).toBe("too_far");
+  });
+
+  it("34. Nearest point on AABB distance math", () => {
+    const playerPos: [number, number] = [0, 2.5];
+    const tableBounds = { minX: -1.5, maxX: 1.5, minZ: -0.7, maxZ: 0.7 };
+    // Nearest point on AABB to [0, 2.5] is [0, 0.7]. Distance = 2.5 - 0.7 = 1.8m
+    const dist = distanceToAABB(playerPos, tableBounds);
+    expect(dist).toBeCloseTo(1.8, 5);
+  });
+
+  it("35. Line of Sight: Table between player and target blocks interaction", () => {
+    const playerPos: [number, number] = [0, 2.5];
+    const targetPos: [number, number] = [0, -1.5]; // Item on far side of table
+    const obstacles = [MOCK_TABLE]; // Table at Z[-0.3..1.1]
+    const hasLOS = checkLineOfSight(playerPos, targetPos, obstacles);
+    expect(hasLOS).toBe(false);
+  });
+
+  it("36. Closed cabinet door blocks picking up items inside cabinet", () => {
+    const res = evaluateUnifiedInteraction({
+      playerPos: [0, 2.5],
+      targetPos: [0, 2.0],
+      targetId: "flask_inside",
+      targetKind: "container",
+      action: "pickup",
+      source: "key_e",
+      cameraMode: "sandbox",
+      isInsideCabinet: true,
+      isCabinetOpen: false, // Closed cabinet door
+    });
+    expect(res.allowed).toBe(false);
+    expect(res.reason).toBe("occluded");
+    expect(res.message).toContain("закрытого шкафа");
+  });
+
+  it("37. Holding an item blocks second pickup (invalid_state)", () => {
+    const res = evaluateUnifiedInteraction({
+      playerPos: [0, 2.5],
+      targetPos: [0.2, 2.3],
+      targetId: "flask_2",
+      targetKind: "container",
+      action: "pickup",
+      source: "click",
+      cameraMode: "sandbox",
+      isHoldingItem: true, // Already holding an item
+    });
+    expect(res.allowed).toBe(false);
+    expect(res.reason).toBe("invalid_state");
+    expect(res.message).toContain("удерживает предмет");
+  });
+
+  it("38. Single action execution: Orbit mode bypasses all gates cleanly", () => {
+    let executionCount = 0;
+    const res = evaluateUnifiedInteraction({
+      playerPos: [0, 2.5],
+      targetPos: [10, 10], // Far away
+      targetId: "flask_far",
+      targetKind: "container",
+      action: "pickup",
+      source: "click",
+      cameraMode: "orbit",
+    });
+    if (res.allowed) {
+      executionCount += 1;
+    }
+    expect(executionCount).toBe(1); // Single invocation
+    expect(res.reason).toBe("ok");
   });
 });

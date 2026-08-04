@@ -9,7 +9,7 @@ import { AlertOctagon, Flame, Lock, RotateCcw, RotateCw, Unlock, Volume2, Volume
 import CanvasShell from "@/components/scenes/CanvasShell";
 import { CameraMode } from "@/lib/chemistry-lab-modes";
 import { SandboxModeOverlay } from "@/components/chemistry/sandbox/SandboxModeOverlay";
-import { RoomInteriorBounds, RegisteredCollider } from "@/lib/sandbox-locomotion";
+import { RoomInteriorBounds, RegisteredCollider, checkPlayerReach, evaluateUnifiedInteraction } from "@/lib/sandbox-locomotion";
 import {
   ChemistryWorkspaceProvider,
   useChemistryWorkspace,
@@ -69,6 +69,20 @@ import {
   startFireCrackle,
   startPressureHum,
 } from "@/lib/chemistry-sound";
+
+interface SandboxReachContextValue {
+  cameraMode: CameraMode;
+  playerXZ: [number, number];
+  obstacles: RegisteredCollider[];
+  heldId: string | null;
+}
+const SandboxReachContext = createContext<SandboxReachContextValue>({
+  cameraMode: "orbit",
+  playerXZ: [0, 2.5],
+  obstacles: [],
+  heldId: null,
+});
+
 import { buildChemistryAIContext } from "@/lib/chemistry-context-builder";
 import { useQuality, type QualityLevel } from "@/lib/quality-context";
 import type { Simulation } from "@/lib/types";
@@ -532,6 +546,7 @@ function useWallProximityFade() {
 function CabinetMesh({ config, woodTexture, onRegisterCollider }: { config: CabinetConfig; woodTexture: THREE.Texture; onRegisterCollider?: (collider: RegisteredCollider) => void }) {
   const interaction = useCabinetInteractable(config.id);
   const { state: workspace } = useChemistryWorkspace();
+  const { cameraMode, playerXZ } = useContext(SandboxReachContext);
   const groupRef = useRef<THREE.Group>(null);
   const doorRef = useRef<THREE.Group>(null);
   const isOpen = interaction.state?.isOpen ?? false;
@@ -567,8 +582,16 @@ function CabinetMesh({ config, woodTexture, onRegisterCollider }: { config: Cabi
     interaction.pointerHandlers?.onPointerOver();
   };
   const blur = () => interaction.pointerHandlers?.onPointerOut();
-  const select = (event: ThreeEvent<PointerEvent>) => {
+  const handleSelect = (event: ThreeEvent<PointerEvent>) => {
     event.stopPropagation();
+    if (cameraMode === "sandbox") {
+      const cabinetXZ: [number, number] = [config.worldPosition[0], config.worldPosition[2]];
+      const reach = checkPlayerReach(playerXZ, cabinetXZ, cameraMode);
+      if (!reach.allowed) {
+        console.warn(`[SandboxMode] Cabinet interaction blocked for '${config.id}': ${reach.reason}`);
+        return;
+      }
+    }
     interaction.pointerHandlers?.onPointerOver();
   };
   const materialColor = interaction.isFocused ? "#b9783f" : "#8a5a34";
@@ -580,19 +603,19 @@ function CabinetMesh({ config, woodTexture, onRegisterCollider }: { config: Cabi
 
   return (
     <group ref={groupRef} position={config.worldPosition}>
-      <mesh position={[-0.52, 0, 0.015]} castShadow receiveShadow onPointerOver={focus} onPointerOut={blur} onPointerDown={select}>
+      <mesh position={[-0.52, 0, 0.015]} castShadow receiveShadow onPointerOver={focus} onPointerOut={blur} onPointerDown={handleSelect}>
         <boxGeometry args={[0.06, config.size[1], 0.52]} />
         <meshStandardMaterial map={woodTexture} color={materialColor} roughness={0.55} metalness={0.1} />
       </mesh>
-      <mesh position={[0.52, 0, 0.015]} castShadow receiveShadow onPointerOver={focus} onPointerOut={blur} onPointerDown={select}>
+      <mesh position={[0.52, 0, 0.015]} castShadow receiveShadow onPointerOver={focus} onPointerOut={blur} onPointerDown={handleSelect}>
         <boxGeometry args={[0.06, config.size[1], 0.52]} />
         <meshStandardMaterial map={woodTexture} color={materialColor} roughness={0.55} metalness={0.1} />
       </mesh>
-      <mesh position={[0, 0.32, 0.015]} castShadow receiveShadow onPointerOver={focus} onPointerOut={blur} onPointerDown={select}>
+      <mesh position={[0, 0.32, 0.015]} castShadow receiveShadow onPointerOver={focus} onPointerOut={blur} onPointerDown={handleSelect}>
         <boxGeometry args={[0.98, 0.06, 0.52]} />
         <meshStandardMaterial map={woodTexture} color={materialColor} roughness={0.55} metalness={0.1} />
       </mesh>
-      <mesh position={[0, -0.32, 0.015]} castShadow receiveShadow onPointerOver={focus} onPointerOut={blur} onPointerDown={select}>
+      <mesh position={[0, -0.32, 0.015]} castShadow receiveShadow onPointerOver={focus} onPointerOut={blur} onPointerDown={handleSelect}>
         <boxGeometry args={[0.98, 0.06, 0.52]} />
         <meshStandardMaterial map={woodTexture} color={materialColor} roughness={0.55} metalness={0.1} />
       </mesh>
@@ -606,14 +629,14 @@ function CabinetMesh({ config, woodTexture, onRegisterCollider }: { config: Cabi
         receiveShadow
         onPointerOver={focus}
         onPointerOut={blur}
-        onPointerDown={select}
+        onPointerDown={handleSelect}
       >
         <boxGeometry args={[0.98, 0.04, 0.52]} />
         <meshStandardMaterial map={woodTexture} color={materialColor} roughness={0.58} metalness={0.05} />
       </mesh>
 
       <group ref={doorRef} position={[-0.51, 0, 0.28]}>
-        <mesh position={[0.51, 0, 0]} onPointerOver={focus} onPointerOut={blur} onPointerDown={select} castShadow>
+        <mesh position={[0.51, 0, 0]} onPointerOver={focus} onPointerOut={blur} onPointerDown={handleSelect} castShadow>
           <boxGeometry args={config.doorHitboxSize} />
           <meshStandardMaterial
             color="#5c3a20"
@@ -925,22 +948,40 @@ function DragSurface({ onDrop }: { onDrop: (id: string, x: number, z: number) =>
   );
 }
 
-function useDragHandlers(id: string) {
+function useDragHandlers(
+  id: string,
+  targetPos?: [number, number],
+  targetKind: "container" | "bottle" | "tool" | "cabinet" = "container"
+) {
   const { startDrag, draggingId } = useChemistryDrag();
   const { select } = useChemistryWorkspace();
+  const { cameraMode, playerXZ, obstacles, heldId } = useContext(SandboxReachContext);
+
   return {
     isDragging: draggingId === id,
     onPointerDown: (e: ThreeEvent<PointerEvent>) => {
       e.stopPropagation();
-      // R3F и OrbitControls слушают pointerdown на одном и том же DOM-элементе
-      // канваса — обычный stopPropagation() гасит только всплытие между
-      // Three.js объектами, а не соседние нативные листенеры на том же узле.
-      // stopImmediatePropagation() не дает OrbitControls стартовать вращение
-      // по этому же событию, пока orbitEnabled={!draggingId} еще не применился
-      // на следующем рендере — устраняет гонку камеры и захвата целиком.
       e.nativeEvent.stopImmediatePropagation();
-      // звук должен разблокироваться по первому же пользовательскому
-      // жесту в сцене — захват предмета для этого не хуже клика
+
+      if (cameraMode === "sandbox" && targetPos) {
+        const evalRes = evaluateUnifiedInteraction({
+          playerPos: playerXZ,
+          targetPos,
+          targetId: id,
+          targetKind,
+          action: "pickup",
+          source: "click",
+          cameraMode,
+          isHoldingItem: heldId !== null,
+          obstacles,
+        });
+
+        if (!evalRes.allowed) {
+          console.warn(`[SandboxMode] Click interaction blocked for '${id}' [${evalRes.reason}]: ${evalRes.message}`);
+          return;
+        }
+      }
+
       resumeAudioOnGesture();
       playGlassClink();
       select(id);
@@ -1745,7 +1786,7 @@ function ContainerMesh({
   isPouring: boolean;
 }) {
   const { state } = useChemistryWorkspace();
-  const { onPointerDown, isDragging } = useDragHandlers(item.id);
+  const { onPointerDown, isDragging } = useDragHandlers(item.id, [item.position[0], item.position[1]]);
   const interaction = useInteractable(item.id);
   const { capability, isAccessible, isHeld, pointerHandlers, canUseLegacyDrag } = interaction;
   const [hovered, setHovered] = useState(false);
@@ -1936,7 +1977,7 @@ function BottleCapMesh({ capState }: { capState: "closed" | "open" }) {
 
 function StockBottleMesh({ bottle, isPouring }: { bottle: StockBottle; isPouring: boolean }) {
   const [hovered, setHovered] = useState(false);
-  const { onPointerDown, isDragging } = useDragHandlers(bottle.id);
+  const { onPointerDown, isDragging } = useDragHandlers(bottle.id, [bottle.position[0], bottle.position[1]]);
   const interaction = useInteractable(bottle.id);
   const { capability, isAccessible, isHeld, pointerHandlers, canUseLegacyDrag } = interaction;
   const substance = SUBSTANCES[bottle.substanceId];
@@ -2029,7 +2070,7 @@ useGLTF.preload("/models/chemistry/bunsen-burner.glb");
 
 function BurnerMesh({ tool }: { tool: ToolItem }) {
   const { toggleBurner } = useChemistryWorkspace();
-  const { onPointerDown, isDragging } = useDragHandlers(tool.id);
+  const { onPointerDown, isDragging } = useDragHandlers(tool.id, [tool.position[0], tool.position[1]]);
   const interaction = useInteractable(tool.id);
   const { capability, isAccessible, isHeld, pointerHandlers, canUseLegacyDrag } = interaction;
   const [hovered, setHovered] = useState(false);
@@ -2810,8 +2851,9 @@ function ChemistryCanvas({
   const isInteractionActive = !!draggingId || !!heldId;
 
   return (
-    <div ref={wrapperRef} className="relative">
-      <SandboxModeOverlay
+    <SandboxReachContext.Provider value={{ cameraMode, playerXZ, obstacles: colliders, heldId }}>
+      <div ref={wrapperRef} className="relative">
+        <SandboxModeOverlay
         cameraMode={cameraMode}
         onToggleMode={() => setCameraMode((m) => (m === "orbit" ? "sandbox" : "orbit"))}
         disabled={isInteractionActive || !registryReady}
@@ -2865,6 +2907,7 @@ function ChemistryCanvas({
         />
       </CanvasShell>
     </div>
+    </SandboxReachContext.Provider>
   );
 }
 

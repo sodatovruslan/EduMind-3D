@@ -5,6 +5,8 @@
  * and "interaction-only" reach/LOS detection for wall cabinets.
  */
 
+import type { CameraMode, InteractionCheckResult } from "./chemistry-lab-modes";
+
 export interface Vector2D {
   x: number;
   z: number;
@@ -15,6 +17,14 @@ export type CollisionRole =
   | "floor-obstacle"    // Напольные коллизионные объекты (столы, тумбы)
   | "interaction-only"  // Настенные шкафы (для reach-дистанции <= 1.8m, но без напольной коллизии)
   | "non-collidable";   // Декоративные визуальные меши
+
+export const SANDBOX_CONFIG = {
+  interactionDistance: 1.8,
+  eyeHeight: 1.5,
+  defaultFov: 65,
+  playerRadius: 0.20,
+  skinWidth: 0.01,
+};
 
 export interface RegisteredCollider {
   id: string;
@@ -713,5 +723,185 @@ export function resolveHeldRigTransform(
     hitObstacleId: hitId,
     hitDistance: closestHit,
     objectRadius,
+  };
+}
+
+/**
+ * Stage S7-V2.9: Валидатор единого пайплайна взаимодействия (requestInteraction)
+ * В режиме Orbit Mode всегда возвращает { allowed: true } (S-1..S-6 поведение).
+ * В режиме Sandbox Mode проверяет евклидово XZ-расстояние до предмета и ограничение в maxDistance (по умолчанию 1.8м).
+ */
+export function checkPlayerReach(
+  playerPos: [number, number],
+  targetPos: [number, number],
+  cameraMode: CameraMode,
+  maxDistance: number = SANDBOX_CONFIG.interactionDistance
+): InteractionCheckResult {
+  if (cameraMode === "orbit") {
+    return {
+      allowed: true,
+      reason: "ok",
+      distance: 0,
+      maxDistance,
+    };
+  }
+
+  const dx = targetPos[0] - playerPos[0];
+  const dz = targetPos[1] - playerPos[1];
+  const distance = Math.hypot(dx, dz);
+
+  if (distance <= maxDistance) {
+    return {
+      allowed: true,
+      reason: "ok",
+      distance: Number(distance.toFixed(2)),
+      maxDistance,
+    };
+  }
+
+  return {
+    allowed: false,
+    reason: "too_far",
+    message: `Предмет находится вне зоны доступа игрока (${distance.toFixed(2)}м > ${maxDistance}м)`,
+    distance: Number(distance.toFixed(2)),
+    maxDistance,
+  };
+}
+
+/**
+ * Кратчайшее XZ-расстояние от точки pos до nearest point на AABB-границе объекта
+ */
+export function distanceToAABB(
+  pos: [number, number],
+  bounds: { minX: number; maxX: number; minZ: number; maxZ: number }
+): number {
+  const clampedX = Math.max(bounds.minX, Math.min(pos[0], bounds.maxX));
+  const clampedZ = Math.max(bounds.minZ, Math.min(pos[1], bounds.maxZ));
+  const dx = pos[0] - clampedX;
+  const dz = pos[1] - clampedZ;
+  return Math.hypot(dx, dz);
+}
+
+/**
+ * Проверяет прямую видимость (Line of Sight) от игрока до предмета.
+ * Если отрезок пересекает напольные препятствия (стол), не относящиеся к самому предмету — возвращает false.
+ */
+export function checkLineOfSight(
+  playerPos: [number, number],
+  targetPos: [number, number],
+  obstacles: RegisteredCollider[] = [],
+  ignoreObstacleId?: string | null
+): boolean {
+  for (const obs of obstacles) {
+    if (obs.role !== "floor-obstacle") continue;
+    if (ignoreObstacleId && obs.id === ignoreObstacleId) continue;
+
+    if (segmentIntersectsAABB(playerPos, targetPos, obs.bounds)) {
+      return false; // Заблокировано препятствием
+    }
+  }
+  return true;
+}
+
+export interface UnifiedInteractionParams {
+  playerPos: [number, number];
+  targetPos: [number, number];
+  targetBounds?: { minX: number; maxX: number; minZ: number; maxZ: number };
+  targetId: string;
+  targetKind: "container" | "bottle" | "tool" | "cabinet";
+  action: "pickup" | "select" | "toggle_cabinet";
+  source: "click" | "key_e";
+  cameraMode: CameraMode;
+  isHoldingItem?: boolean;
+  isCabinetOpen?: boolean;
+  isInsideCabinet?: boolean;
+  obstacles?: RegisteredCollider[];
+  maxDistance?: number;
+}
+
+/**
+ * Единая математическая функция валидации взаимодействия (requestInteraction Pipeline) для KeyE и кликов мыши.
+ */
+export function evaluateUnifiedInteraction(
+  params: UnifiedInteractionParams
+): InteractionCheckResult {
+  const {
+    playerPos,
+    targetPos,
+    targetBounds,
+    targetId,
+    action,
+    cameraMode,
+    isHoldingItem = false,
+    isCabinetOpen = true,
+    isInsideCabinet = false,
+    obstacles = [],
+    maxDistance = SANDBOX_CONFIG.interactionDistance,
+  } = params;
+
+  // 1. В Orbit Mode предикат моментально пропускает все взаимодействия (Stage S-6 parity)
+  if (cameraMode === "orbit") {
+    return {
+      allowed: true,
+      reason: "ok",
+      distance: 0,
+      maxDistance,
+    };
+  }
+
+  // 2. Блокировка вторичного подбора: при удержании предмета нельзя взять второй
+  if (action === "pickup" && isHoldingItem) {
+    return {
+      allowed: false,
+      reason: "invalid_state",
+      message: "Игрок уже удерживает предмет в руке",
+      distance: 0,
+      maxDistance,
+    };
+  }
+
+  // 3. Блокировка шкафа: если предмет находится внутри закрытого шкафа
+  if (isInsideCabinet && !isCabinetOpen) {
+    return {
+      allowed: false,
+      reason: "occluded",
+      message: "Предмет находится внутри закрытого шкафа",
+      distance: 0,
+      maxDistance,
+    };
+  }
+
+  // 4. Расстояние до ближайшей точки AABB (или до центра)
+  const distance = targetBounds
+    ? distanceToAABB(playerPos, targetBounds)
+    : Math.hypot(targetPos[0] - playerPos[0], targetPos[1] - playerPos[1]);
+
+  if (distance > maxDistance) {
+    return {
+      allowed: false,
+      reason: "too_far",
+      message: `Предмет находится слишком далеко (${distance.toFixed(2)}м > ${maxDistance}м)`,
+      distance: Number(distance.toFixed(2)),
+      maxDistance,
+    };
+  }
+
+  // 5. Проверка прямой видимости (Line of Sight)
+  const hasLOS = checkLineOfSight(playerPos, targetPos, obstacles, targetId);
+  if (!hasLOS) {
+    return {
+      allowed: false,
+      reason: "occluded",
+      message: "Прямая видимость предмета перекрыта препятствием",
+      distance: Number(distance.toFixed(2)),
+      maxDistance,
+    };
+  }
+
+  return {
+    allowed: true,
+    reason: "ok",
+    distance: Number(distance.toFixed(2)),
+    maxDistance,
   };
 }
