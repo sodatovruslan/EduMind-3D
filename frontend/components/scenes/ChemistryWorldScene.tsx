@@ -9,7 +9,7 @@ import { AlertOctagon, Flame, Lock, RotateCcw, RotateCw, Unlock, Volume2, Volume
 import CanvasShell from "@/components/scenes/CanvasShell";
 import { CameraMode } from "@/lib/chemistry-lab-modes";
 import { SandboxModeOverlay } from "@/components/chemistry/sandbox/SandboxModeOverlay";
-import { RoomInteriorBounds, RegisteredCollider, checkPlayerReach, evaluateUnifiedInteraction } from "@/lib/sandbox-locomotion";
+import { RoomInteriorBounds, RegisteredCollider, checkPlayerReach, evaluateUnifiedInteraction, DynamicPlacementSurface } from "@/lib/sandbox-locomotion";
 import {
   ChemistryWorkspaceProvider,
   useChemistryWorkspace,
@@ -352,7 +352,13 @@ function useLabBenchTexture() {
 // в X:[-3.2,2.6], Z:[-1.6,1.4] (см. createInitialState в
 // ChemistryWorkspaceProvider) — эти координаты НЕ трогаем (интерактив/физика),
 // столешница просто щедро больше их разброса со всех сторон.
-function Workbench({ onRegisterCollider }: { onRegisterCollider?: (collider: RegisteredCollider) => void }) {
+function Workbench({
+  onRegisterCollider,
+  onRegisterSurface,
+}: {
+  onRegisterCollider?: (collider: RegisteredCollider) => void;
+  onRegisterSurface?: (surface: DynamicPlacementSurface) => void;
+}) {
   const texture = useLabBenchTexture();
   const meshRef = useRef<THREE.Mesh>(null);
 
@@ -373,8 +379,21 @@ function Workbench({ onRegisterCollider }: { onRegisterCollider?: (collider: Reg
         minY: Number(box.min.y.toFixed(2)),
         maxY: Number(box.max.y.toFixed(2)),
       });
+      if (onRegisterSurface) {
+        onRegisterSurface({
+          id: "main_table_surface",
+          kind: "tabletop",
+          bounds: {
+            minX: Number((box.min.x + 0.15).toFixed(2)),
+            maxX: Number((box.max.x - 0.15).toFixed(2)),
+            minZ: Number((box.min.z + 0.15).toFixed(2)),
+            maxZ: Number((box.max.z - 0.15).toFixed(2)),
+          },
+          surfaceY: Number(box.max.y.toFixed(2)),
+        });
+      }
     }
-  }, [onRegisterCollider]);
+  }, [onRegisterCollider, onRegisterSurface]);
 
   return (
     <mesh ref={meshRef} position={[0, -0.05, 0]} receiveShadow>
@@ -1116,6 +1135,21 @@ function Hitbox({ radius, height = 0.5 }: { radius: number; height?: number }) {
 // частью того же визуального языка, не резким скачком
 const HELD_RIG_LERP_SPEED = 12;
 
+function PlacementPreviewRing({
+  position,
+  isValid = true,
+}: {
+  position: [number, number];
+  isValid?: boolean;
+}) {
+  return (
+    <mesh position={[position[0], 0.01, position[1]]} rotation={[-Math.PI / 2, 0, 0]}>
+      <ringGeometry args={[0.22, 0.28, 32]} />
+      <meshBasicMaterial color={isValid ? "#22c55e" : "#ef4444"} transparent opacity={0.8} />
+    </mesh>
+  );
+}
+
 function HeldObjectRig({
   active,
   handOffset,
@@ -1132,7 +1166,7 @@ function HeldObjectRig({
   // "садится" на стол в эту позицию/поворот вместо руки. Сам домен
   // (ChemistryWorkspaceProvider) при этом НЕ меняется — это чистое превью,
   // запись происходит только по подтверждению (см. ChemistryInteractionProvider.confirmPlacement)
-  placementTarget?: { position: [number, number]; rotationY: number } | null;
+  placementTarget?: { position: [number, number]; rotationY: number; isValid?: boolean } | null;
   children: React.ReactNode;
 }) {
   const groupRef = useRef<THREE.Group>(null);
@@ -1160,7 +1194,14 @@ function HeldObjectRig({
   });
 
   if (!active) return <>{children}</>;
-  return <group ref={groupRef}>{children}</group>;
+  return (
+    <>
+      <group ref={groupRef}>{children}</group>
+      {placementTarget && (
+        <PlacementPreviewRing position={placementTarget.position} isValid={placementTarget.isValid ?? true} />
+      )}
+    </>
+  );
 }
 
 function HeldRaycastGate({ disabled, children }: { disabled: boolean; children: React.ReactNode }) {

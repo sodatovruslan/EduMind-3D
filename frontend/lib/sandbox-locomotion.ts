@@ -905,3 +905,85 @@ export function evaluateUnifiedInteraction(
     maxDistance,
   };
 }
+
+export interface DynamicPlacementSurface {
+  id: string;
+  kind: "tabletop" | "shelf";
+  bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
+  surfaceY: number;
+}
+
+export interface PlacementValidationResult {
+  valid: boolean;
+  reason?: "ok" | "out_of_bounds" | "overlap" | "incompatible_surface" | "occupied_slot" | "registry_not_ready";
+  message?: string;
+  position: [number, number];
+  surfaceY: number;
+}
+
+/**
+ * Stage S7-V2.10: Динамический валидатор размещения предметов на поверхности (Workbench tabletop / cabinet shelf).
+ * Рассчитывается строго от реального Three.js Box3 конкретного меша столешницы/полки.
+ */
+export function validateItemPlacementOnSurface(
+  candidatePos: [number, number],
+  heldItemId: string,
+  surface: DynamicPlacementSurface | null,
+  existingItems: Array<{ id: string; position: [number, number]; radius?: number }>,
+  itemRadius: number = 0.25
+): PlacementValidationResult {
+  if (!surface) {
+    return {
+      valid: false,
+      reason: "registry_not_ready",
+      message: "Регистр поверхностей размещения еще не готов",
+      position: candidatePos,
+      surfaceY: 0,
+    };
+  }
+
+  const [x, z] = candidatePos;
+
+  // 1. Динамическая проверка границ рабочей поверхности (Box3 столешницы/полки)
+  if (
+    x - itemRadius < surface.bounds.minX ||
+    x + itemRadius > surface.bounds.maxX ||
+    z - itemRadius < surface.bounds.minZ ||
+    z + itemRadius > surface.bounds.maxZ
+  ) {
+    return {
+      valid: false,
+      reason: "out_of_bounds",
+      message: "Позиция находится за пределами рабочей поверхности",
+      position: candidatePos,
+      surfaceY: surface.surfaceY,
+    };
+  }
+
+  // 2. Проверка футпринта и перекрытия с другими предметами
+  for (const existing of existingItems) {
+    if (existing.id === heldItemId) continue;
+    const rOther = existing.radius ?? 0.25;
+    const minSafeDist = itemRadius + rOther;
+    const dx = existing.position[0] - x;
+    const dz = existing.position[1] - z;
+    const dist = Math.hypot(dx, dz);
+
+    if (dist < minSafeDist) {
+      return {
+        valid: false,
+        reason: "overlap",
+        message: "Позиция перекрывается другим предметом",
+        position: candidatePos,
+        surfaceY: surface.surfaceY,
+      };
+    }
+  }
+
+  return {
+    valid: true,
+    reason: "ok",
+    position: candidatePos,
+    surfaceY: surface.surfaceY,
+  };
+}

@@ -48,6 +48,8 @@ export interface PlacementCandidate {
   position: [number, number];
   rotationY: number;
   surface: PlacementSurfaceKind;
+  isValid?: boolean;
+  reason?: string;
 }
 
 interface ChemistryInteractionContextValue {

@@ -18,6 +18,8 @@ import {
   distanceToAABB,
   checkLineOfSight,
   evaluateUnifiedInteraction,
+  validateItemPlacementOnSurface,
+  DynamicPlacementSurface,
   RoomInteriorBounds,
   segmentIntersectsAABB,
 } from "./sandbox-locomotion";
@@ -486,5 +488,32 @@ describe("Stage S-7 v2 — CheckPoint S7-V2.6 Prototype Object PickUp & Held Rig
     }
     expect(executionCount).toBe(1); // Single invocation
     expect(res.reason).toBe("ok");
+  });
+
+  const MOCK_SURFACE: DynamicPlacementSurface = {
+    id: "tabletop_mesh",
+    kind: "tabletop",
+    bounds: { minX: -1.5, maxX: 1.5, minZ: -0.7, maxZ: 0.7 },
+    surfaceY: 0.85,
+  };
+
+  it("39. Placement Validation: Valid empty spot on tabletop returns valid=true", () => {
+    const res = validateItemPlacementOnSurface([0, 0], "flask_1", MOCK_SURFACE, []);
+    expect(res.valid).toBe(true);
+    expect(res.reason).toBe("ok");
+    expect(res.position).toEqual([0, 0]);
+  });
+
+  it("40. Placement Validation: Footprint overlap with existing container returns valid=false", () => {
+    const existing = [{ id: "container_2", position: [0.1, 0.1] as [number, number], radius: 0.25 }];
+    const res = validateItemPlacementOnSurface([0, 0], "flask_1", MOCK_SURFACE, existing);
+    expect(res.valid).toBe(false);
+    expect(res.reason).toBe("overlap");
+  });
+
+  it("41. Placement Validation: Position outside tabletop Box3 bounds returns valid=false", () => {
+    const res = validateItemPlacementOnSurface([5.0, 0], "flask_1", MOCK_SURFACE, []);
+    expect(res.valid).toBe(false);
+    expect(res.reason).toBe("out_of_bounds");
   });
 });
