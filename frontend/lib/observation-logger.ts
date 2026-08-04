@@ -435,6 +435,13 @@ class ObservationLoggerStore {
     this.events = [];
     this.activePourSession = null;
   }
+
+  public restoreSession(sessionId: string, lastSequence: number, events: ChemistryObservationEvent[] = []) {
+    this.sessionId = sessionId;
+    this.sequence = lastSequence;
+    this.events = [...events];
+    this.activePourSession = null;
+  }
 }
 
 export const observationLogger = new ObservationLoggerStore();
