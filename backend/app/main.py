@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import ai, auth, progress, results, simulations, users
+from app.routers import ai, auth, chemistry_saves, progress, results, simulations, users
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
@@ -20,6 +20,8 @@ app.include_router(simulations.router)
 app.include_router(results.router)
 app.include_router(ai.router)
 app.include_router(progress.router)
+app.include_router(chemistry_saves.router)
+
 
 
 # простая проверка что сервер жив, для докера/аптайм-мониторинга

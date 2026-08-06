@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, CheckCircle2, Gauge, X } from "lucide-react";
+import { ArrowRight, CheckCircle2, Gauge, Target, X } from "lucide-react";
 import { useElectricityLabExperience } from "@/components/core/ElectricityLabExperienceProvider";
 import type { ElectricityLabStepKind } from "@/lib/electricity-lab-catalog";
 
@@ -88,15 +88,29 @@ export default function ElectricityGuidedLabPanel() {
         <p className="text-sm text-slate-300">{selectedExperiment.goal}</p>
       </div>
 
-      <div
-        className={`mb-3 rounded-xl border p-3 text-sm transition ${
-          isCurrentStepUnlocked ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200" : "border-glass-border text-slate-300"
-        }`}
-        data-testid="electricity-guided-lab-current-step"
-      >
-        {isCurrentStepUnlocked && <CheckCircle2 size={14} className="mr-1 inline" aria-hidden="true" />}
-        {currentStep.instruction}
-      </div>
+      {(() => {
+        const isIntroStep = currentStep.kind === "introduction" || currentStep.kind === "theory" || currentStep.kind === "equipment";
+        const isStepDone = isCurrentStepUnlocked && !isIntroStep;
+        return (
+          <div
+            className={`mb-3 rounded-xl border p-3 text-sm transition ${
+              isIntroStep
+                ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-200"
+                : isStepDone
+                ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200"
+                : "border-glass-border bg-white/5 text-slate-200"
+            }`}
+            data-testid="electricity-guided-lab-current-step"
+          >
+            {isIntroStep ? (
+              <Target size={14} className="mr-1.5 inline text-cyan-400" aria-hidden="true" />
+            ) : isStepDone ? (
+              <CheckCircle2 size={14} className="mr-1.5 inline text-emerald-400" aria-hidden="true" />
+            ) : null}
+            {currentStep.instruction}
+          </div>
+        );
+      })()}
 
       {currentStep.kind === "equipment" && (
         <ul className="mb-3 space-y-0.5 text-sm text-slate-300" data-testid="electricity-guided-lab-equipment">

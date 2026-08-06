@@ -220,6 +220,30 @@ export interface HintRequestedEvent extends BaseObservationEvent {
   };
 }
 
+export interface BurnerToggledEvent extends BaseObservationEvent {
+  eventType: "burner_toggled";
+  payload: {
+    burnerId: string;
+    isOn: boolean;
+  };
+}
+
+export interface HeatingAttachedEvent extends BaseObservationEvent {
+  eventType: "heating_attached";
+  payload: {
+    containerId: string;
+    burnerId: string;
+  };
+}
+
+export interface HeatingDetachedEvent extends BaseObservationEvent {
+  eventType: "heating_detached";
+  payload: {
+    containerId: string;
+    burnerId: string | null;
+  };
+}
+
 export type ChemistryObservationEvent =
   | ItemPickedUpEvent
   | ItemPlacedEvent
@@ -231,6 +255,9 @@ export type ChemistryObservationEvent =
   | CapClosedEvent
   | BottleTiltedEvent
   | BottleUprightedEvent
+  | BurnerToggledEvent
+  | HeatingAttachedEvent
+  | HeatingDetachedEvent
   | PourStartedEvent
   | PourCompletedEvent
   | PourBlockedEvent
@@ -406,6 +433,13 @@ class ObservationLoggerStore {
   public resetSession() {
     this.sequence = 0;
     this.events = [];
+    this.activePourSession = null;
+  }
+
+  public restoreSession(sessionId: string, lastSequence: number, events: ChemistryObservationEvent[] = []) {
+    this.sessionId = sessionId;
+    this.sequence = lastSequence;
+    this.events = [...events];
     this.activePourSession = null;
   }
 }

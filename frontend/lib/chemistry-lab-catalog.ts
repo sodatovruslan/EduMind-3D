@@ -35,6 +35,7 @@ export interface LabStepContext {
   isSealed: boolean;
   isOnStand: boolean;
   burnerOn: boolean;
+  heatingAttached?: boolean;
   hazard: HazardResult;
   occurredReactionIds: string[]; // только для активного сосуда
   allOccurredReactionIds: string[]; // объединение по всем сосудам за сессию
@@ -134,7 +135,7 @@ const heatingWater: LabExperiment = {
       id: "heat",
       kind: "heat",
       instruction: "Включи горелку.",
-      isUnlocked: (ctx) => ctx.burnerOn && ctx.isOnStand,
+      isUnlocked: (ctx) => ctx.burnerOn,
     },
     {
       id: "observe",

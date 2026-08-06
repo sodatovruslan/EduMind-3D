@@ -34,6 +34,10 @@ import {
   isPlacementValid,
   getFootprintRadius,
   STOCK_BOTTLE_FOOTPRINT_RADIUS,
+  registerHeatingSocket,
+  unregisterHeatingSocket,
+  getHeatingSocketByBurnerId,
+  getRegisteredHeatingSockets,
   type PlacementOccupant,
 } from "@/lib/placement-surfaces";
 import { ChemistryTutorialProvider } from "@/components/tutorial/ChemistryTutorialProvider";
@@ -83,6 +87,7 @@ const SandboxReachContext = createContext<SandboxReachContextValue>({
   heldId: null,
 });
 
+import { autosaveEngine } from "@/lib/autosave-engine";
 import { buildChemistryAIContext } from "@/lib/chemistry-context-builder";
 import { useQuality, type QualityLevel } from "@/lib/quality-context";
 import type { Simulation } from "@/lib/types";
@@ -1279,13 +1284,28 @@ function PlacementSurfacePlane() {
 // красное — если нет (вне стола или перекрывает другой предмет)
 function PlacementGhost() {
   const { aimPoint, heldId, placementCandidate } = useChemistryInteraction();
-  if (!heldId || !aimPoint) return null;
-  const isValid = placementCandidate !== null;
+  if (!heldId) return null;
+  const isValid = placementCandidate?.isValid ?? (placementCandidate !== null);
+  const surface = placementCandidate?.surface ?? "table";
+  const pos = placementCandidate?.surface === "stand"
+    ? placementCandidate.position
+    : (aimPoint ?? placementCandidate?.position);
+  if (!pos) return null;
+  const elevation = placementCandidate?.elevation ?? 0.03;
+
   return (
-    <mesh position={[aimPoint[0], 0.03, aimPoint[1]]} rotation={[-Math.PI / 2, 0, 0]}>
-      <ringGeometry args={[0.3, 0.4, 32]} />
-      <meshBasicMaterial color={isValid ? "#34d399" : "#f87171"} transparent opacity={0.55} depthWrite={false} />
-    </mesh>
+    <group position={[pos[0], elevation, pos[1]]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.3, 0.4, 32]} />
+        <meshBasicMaterial color={isValid ? "#34d399" : "#f87171"} transparent opacity={0.65} depthWrite={false} />
+      </mesh>
+      {surface === "stand" && (
+        <mesh position={[0, 0.15, 0]}>
+          <cylinderGeometry args={[0.22, 0.22, 0.3, 16]} />
+          <meshBasicMaterial color={isValid ? "#10b981" : "#ef4444"} transparent opacity={0.25} wireframe />
+        </mesh>
+      )}
+    </group>
   );
 }
 
@@ -1348,9 +1368,15 @@ function InteractionPrompt() {
         text = `Нет совместимого свободного слота · T — к столу · C — к шкафам · Esc — вернуть${name}`;
       }
     } else {
-      text = placementCandidate
-        ? `E — Поставить${name}${capHint}  ·  T — к столу  ·  C — к шкафам  ·  ←/→ — повернуть  ·  Esc — отменить`
-        : `Здесь нельзя поставить${capHint}  ·  T — к столу  ·  C — к шкафам  ·  ←/→ — повернуть  ·  Esc — вернуть${name}`;
+      if (placementCandidate?.surface === "stand") {
+        text = placementCandidate.isValid
+          ? `E — Поставить на горелку`
+          : placementCandidate.reason ?? `Горелка занята`;
+      } else {
+        text = placementCandidate?.isValid
+          ? `E — Поставить${name}${capHint}  ·  T — к столу  ·  C — к шкафам  ·  ←/→ — повернуть  ·  Esc — отменить`
+          : `Здесь нельзя поставить${capHint}  ·  T — к столу  ·  C — к шкафам  ·  ←/→ — повернуть  ·  Esc — вернуть${name}`;
+      }
     }
   } else if (focusedId && focusedKind === "cabinet") {
     const cabinet = getCabinet(focusedId);
@@ -1367,10 +1393,15 @@ function InteractionPrompt() {
       text = `E — Открыть: ${cabinet?.displayName ?? "Шкаф"}`;
     }
   } else if (focusedId && focusedKind === "item") {
+    const container = state.containers.find((c) => c.id === focusedId);
     const cap = getInteractable(focusedId);
     if (cap) {
       const blockedReason = getPickupBlockedReason(focusedId);
-      text = blockedReason ?? `E — Взять: ${cap.displayName}${capHint}`;
+      if (container?.heatingSourceId) {
+        text = blockedReason ?? `E — Взять с горелки`;
+      } else {
+        text = blockedReason ?? `E — Взять: ${cap.displayName}${capHint}`;
+      }
     }
   }
 
@@ -2116,17 +2147,36 @@ function BurnerMesh({ tool }: { tool: ToolItem }) {
   const { capability, isAccessible, isHeld, pointerHandlers, canUseLegacyDrag } = interaction;
   const [hovered, setHovered] = useState(false);
   const flameRef = useRef<THREE.Mesh>(null);
-  // Stage C-3: настоящая GLB-модель горелки (Poly Haven "Bunsen Burner",
-  // CC0, PBR-материалы) вместо процедурного цилиндра. targetSize=0.34 —
-  // высота, сопоставимая с соседней посудой на столе (стакан/колба ~0.4);
-  // модель встает основанием на столешницу (yBase=0), а не по центру bbox
+  const socketRef = useRef<THREE.Group>(null);
+  const socketVec = useMemo(() => new THREE.Vector3(), []);
   const model = useFittedGLTF("/models/chemistry/bunsen-burner.glb", 0.34, 0);
 
   useFrame(({ clock }) => {
-    if (!flameRef.current) return;
-    const pulse = tool.isOn ? 1 + Math.sin(clock.elapsedTime * 10) * 0.15 : 0.001;
-    flameRef.current.scale.setScalar(pulse);
+    if (flameRef.current) {
+      const pulse = tool.isOn ? 1 + Math.sin(clock.elapsedTime * 10) * 0.15 : 0.001;
+      flameRef.current.scale.setScalar(pulse);
+    }
+    if (socketRef.current) {
+      socketRef.current.updateWorldMatrix(true, true);
+      socketRef.current.getWorldPosition(socketVec);
+      registerHeatingSocket({
+        id: `heating-socket-${tool.id}`,
+        burnerId: tool.id,
+        position: [socketVec.x, socketVec.z],
+        elevation: socketVec.y,
+        radius: 0.60,
+        allowedKinds: ["beaker", "flask", "test_tube"],
+        occupiedBy: null,
+        updatedAt: Date.now(),
+      });
+    }
   });
+
+  useEffect(() => {
+    return () => {
+      unregisterHeatingSocket(`heating-socket-${tool.id}`);
+    };
+  }, [tool.id]);
 
   return (
     <group
@@ -2148,6 +2198,7 @@ function BurnerMesh({ tool }: { tool: ToolItem }) {
       <Hitbox radius={capability?.interactionRadius ?? 0.3} height={capability?.interactionHeight ?? 0.5} />
       <GrabLift isDragging={isDragging}>
         <primitive object={model} />
+        <group ref={socketRef} position={[0, 0.65, 0]} name="heating-socket" />
         {/* клик-таргет + всегда видимый индикатор вкл/выкл — та же логика,
             что и раньше (цвет меняется по tool.isOn), просто перенесен
             пониже, к основанию горелки, под реальную модель */}
@@ -2585,7 +2636,7 @@ function ChemistryScene({
   onRegisterWall,
   onRegisterCollider,
 }: ChemistrySceneProps) {
-  const { state, heatTick, hazardTick } = useChemistryWorkspace();
+  const { state, heatTick, hazardTick, attachToHeatingSlot, detachFromHeatingSlot } = useChemistryWorkspace();
   const { draggingId } = useChemistryDrag();
   const {
     focusedId,
@@ -2600,9 +2651,17 @@ function ChemistryScene({
   } = useChemistryInteraction();
   const hazardAccumRef = useRef(0);
 
-  useFrame((_, delta) => {
+  useFrame((_, rawDelta) => {
+    // Clamp the frame delta: a stalled/occluded tab (backgrounded window,
+    // GC pause, OS scheduling hiccup, headless-browser rAF throttling) can
+    // make Three.js report a single huge delta once rendering resumes.
+    // Without a cap, that one frame would dump minutes of simulated heating
+    // in an instant instead of the container heating up smoothly in real
+    // time. 0.1s (~6 frames at 60fps) still tracks real-time heating closely
+    // under normal play and only kicks in on genuine stalls.
+    const delta = Math.min(rawDelta, 0.1);
     const burnerOn = state.tools.some((t) => t.kind === "burner" && t.isOn);
-    if (burnerOn) heatTick(delta * HEAT_RATE_C_PER_SEC);
+    if (burnerOn) heatTick(delta * HEAT_RATE_C_PER_SEC, heldId);
 
     // Hazard Engine — контролируемый шаг симуляции, НЕ каждый кадр рендера:
     // копим прошедшее время и запускаем реальный расчет раз в ~0.4с
@@ -2661,12 +2720,69 @@ function ChemistryScene({
     if (!heldId || !aimPoint) return null;
 
     const heldCapability = getInteractable(heldId);
-    if (!heldCapability?.canBePlaced || !heldCapability.allowedSurfaces.includes("table")) return null;
+    if (!heldCapability?.canBePlaced) return null;
 
     const heldContainer = state.containers.find((c) => c.id === heldId);
     const heldBottle = state.stockBottles.find((b) => b.id === heldId);
     const heldTool = state.tools.find((t) => t.id === heldId);
     if (!heldContainer && !heldBottle && !heldTool) return null;
+
+    // Heating slot check for burner via dynamic heating socket registry
+    const burner = state.tools.find((t) => t.kind === "burner");
+    if (burner) {
+      const socket = getHeatingSocketByBurnerId(burner.id);
+      const socketPos = socket ? socket.position : burner.position;
+      const distToBurner = Math.hypot(aimPoint[0] - socketPos[0], aimPoint[1] - socketPos[1]);
+      if (distToBurner <= (socket?.radius ?? 0.60)) {
+        if (!socket) {
+          return {
+            position: burner.position,
+            rotationY: 0,
+            surface: "stand" as const,
+            isValid: false,
+            reason: "registry_not_ready",
+            elevation: 0.65,
+            burnerId: burner.id,
+          };
+        }
+        const isCompatibleVessel = heldContainer && socket.allowedKinds.includes(heldContainer.kind);
+        if (!isCompatibleVessel) {
+          return {
+            position: socket.position,
+            rotationY: 0,
+            surface: "stand" as const,
+            isValid: false,
+            reason: "Этот сосуд нельзя нагревать",
+            elevation: socket.elevation,
+            burnerId: burner.id,
+          };
+        }
+        const occupied = state.containers.some(
+          (c) => c.id !== heldId && (c.heatingSourceId === burner.id || Math.hypot(c.position[0] - socket.position[0], c.position[1] - socket.position[1]) < 0.15)
+        );
+        if (occupied) {
+          return {
+            position: socket.position,
+            rotationY: 0,
+            surface: "stand" as const,
+            isValid: false,
+            reason: "Горелка занята",
+            elevation: socket.elevation,
+            burnerId: burner.id,
+          };
+        }
+        return {
+          position: socket.position,
+          rotationY: 0,
+          surface: "stand" as const,
+          isValid: true,
+          elevation: socket.elevation,
+          burnerId: burner.id,
+        };
+      }
+    }
+
+    if (!heldCapability.allowedSurfaces.includes("table")) return null;
     const movingRadius = heldCapability.placementFootprint.radius;
 
     const radiusFor = (id: string, fallback: number) =>
@@ -2685,7 +2801,7 @@ function ChemistryScene({
     ];
 
     const valid = isPlacementValid(aimPoint, movingRadius, TABLE_SURFACE, occupants);
-    return valid ? { position: aimPoint, rotationY: heldYawOffset, surface: "table" as const } : null;
+    return { position: aimPoint, rotationY: heldYawOffset, surface: "table" as const, isValid: valid };
   }, [heldId, aimPoint, heldYawOffset, state.containers, state.tools, state.stockBottles]);
 
   useEffect(() => {
@@ -3104,8 +3220,12 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
     releaseItemFromSlot,
     toggleCabinet,
     toggleBottleCap,
+    setBottleCapState,
+    toggleBurner,
     findAvailableStorageSlot,
     storeItemInCabinet,
+    attachToHeatingSlot,
+    detachFromHeatingSlot,
   } = useChemistryWorkspace();
   const { quality, setQuality } = useQuality();
   const [pourAnimation, setPourAnimation] = useState<PourAnimationState | null>(null);
@@ -3143,6 +3263,7 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
       isSealed: activeContainer.isSealed,
       isOnStand: isContainerOnStand(activeContainer, state.tools),
       burnerOn: state.tools.some((t) => t.kind === "burner" && t.isOn),
+      heatingAttached: activeContainer.heatingSourceId !== null,
       hazard: activeContainer.hazard,
       occurredReactionIds,
       allOccurredReactionIds,
@@ -3280,6 +3401,43 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
     setSoundMuted(muted);
   }, [muted]);
 
+  // ── E2E Test Bridge ─────────────────────────────────────────────────────
+  // Exposes workspace actions on window.__e2eChemistry in dev/test mode so
+  // Playwright tests can call them directly via page.evaluate(), bypassing
+  // fragile camera-orbit + projected-HTML-marker raycasting entirely.
+  // The functions close over the stable dispatch callbacks destructured from
+  // useChemistryWorkspace() above (toggleBurner, moveItem, pourFromStockBottle,
+  // toggleCabinet, toggleBottleCap, setItemTransform).
+  //
+  // GuidedLabExperienceSection (rendered below, inside ChemistryLabExperienceProvider)
+  // merges its own lab-experience actions (advanceStep, completeExperiment) onto
+  // this same object — ChemistryWorldInner itself is the PARENT of that provider,
+  // so it can't call useChemistryLabExperience() directly. Both effects merge via
+  // Object.assign rather than replacing the object outright, so neither clobbers
+  // the other's keys regardless of render order; only this effect's mount-only
+  // cleanup (below) tears down the whole bridge.
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    const bridge = (window as any).__e2eChemistry ?? ((window as any).__e2eChemistry = {});
+    Object.assign(bridge, {
+      getState: () => JSON.parse(JSON.stringify(state)),
+      toggleBurner,
+      moveItem,
+      pourFromStockBottle,
+      toggleCabinet,
+      toggleBottleCap,
+      setBottleCapState,
+      setItemTransform,
+      attachToHeatingSlot,
+      flush: () => autosaveEngine.flush(),
+    });
+  }, [state, toggleBurner, moveItem, pourFromStockBottle, toggleCabinet, toggleBottleCap, setBottleCapState, setItemTransform, attachToHeatingSlot]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    return () => { delete (window as any).__e2eChemistry; };
+  }, []);
+
   function handleDrop(id: string, x: number, z: number) {
     if (state.emergencyStop) return; // новые лабораторные действия заблокированы во время аварии
     const point: [number, number] = [x, z];
@@ -3319,10 +3477,19 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
         <ChemistryInteractionProvider
           onConfirmPlacement={(id, position, rotationY) => {
             const capability = getInteractable(id);
-            setItemTransform(id, position, rotationY, {
-              elevation: capability?.tableElevation,
-              storageSlotId: null,
-            });
+            const burner = state.tools.find((t) => t.kind === "burner");
+            const isNearBurner = burner && Math.hypot(position[0] - burner.position[0], position[1] - burner.position[1]) < 0.25;
+            const isContainer = state.containers.some((c) => c.id === id);
+
+            if (isContainer && isNearBurner) {
+              attachToHeatingSlot(id, burner.id, burner.position, 0.65);
+            } else {
+              detachFromHeatingSlot(id);
+              setItemTransform(id, position, rotationY, {
+                elevation: capability?.tableElevation,
+                storageSlotId: null,
+              });
+            }
           }}
           getInteractableState={(id) => {
             const container = state.containers.find((item) => item.id === id);
@@ -3334,6 +3501,7 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
               elevation: item?.elevation,
               rotationY: item?.rotationY,
               storageSlotId: item?.storageSlotId,
+              heatingSourceId: container?.heatingSourceId ?? null,
               isOn: tool?.isOn,
               temperatureC: tool?.temperatureC,
               hasActiveFlame: tool?.isOn,
@@ -3350,13 +3518,21 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
             if (!slot) return false;
             return state.cabinets.find((cabinet) => cabinet.id === slot.cabinetId)?.isOpen === true;
           }}
-          onBeginPickup={releaseItemFromSlot}
-          onCancelPickup={(id, origin) =>
-            setItemTransform(id, origin.position, origin.rotationY, {
-              elevation: origin.elevation,
-              storageSlotId: origin.storageSlotId,
-            })
-          }
+          onBeginPickup={(id) => {
+            releaseItemFromSlot(id);
+            detachFromHeatingSlot(id);
+          }}
+          onCancelPickup={(id, origin) => {
+            if (origin.heatingSourceId) {
+              attachToHeatingSlot(id, origin.heatingSourceId, origin.position, origin.elevation);
+            } else {
+              detachFromHeatingSlot(id);
+              setItemTransform(id, origin.position, origin.rotationY, {
+                elevation: origin.elevation,
+                storageSlotId: origin.storageSlotId,
+              });
+            }
+          }}
           onToggleCabinet={toggleCabinet}
           onToggleCap={toggleBottleCap}
           getCabinetState={(id) => {
@@ -3562,7 +3738,23 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
 // сейчас эксперимент — и всегда показывает CompletionScreen поверх, если
 // только что был завершен эксперимент
 function GuidedLabExperienceSection() {
-  const { selectedExperiment, lastAssessment } = useChemistryLabExperience();
+  const { selectedExperiment, lastAssessment, currentStepIndex, isLastStep, isCurrentStepUnlocked, advanceStep, completeExperiment } =
+    useChemistryLabExperience();
+
+  // See the E2E Test Bridge comment in ChemistryWorldInner above — this merges
+  // the lab-experience actions onto the SAME window.__e2eChemistry object
+  // (Object.assign, not replace) since only this subtree has access to
+  // useChemistryLabExperience().
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    const bridge = (window as any).__e2eChemistry ?? ((window as any).__e2eChemistry = {});
+    Object.assign(bridge, {
+      advanceStep,
+      completeExperiment,
+      getLabStepState: () => ({ currentStepIndex, isLastStep, isCurrentStepUnlocked }),
+    });
+  }, [advanceStep, completeExperiment, currentStepIndex, isLastStep, isCurrentStepUnlocked]);
+
   return (
     <>
       {lastAssessment && <CompletionScreen />}

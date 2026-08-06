@@ -12,6 +12,47 @@ export interface PlacementSurfaceBounds {
   maxZ: number;
 }
 
+export interface PlacementSurfaceBounds {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+}
+
+export interface DynamicHeatingSocket {
+  id: string;
+  burnerId: string;
+  standId?: string;
+  position: [number, number];
+  elevation: number;
+  radius: number;
+  allowedKinds: readonly string[];
+  occupiedBy: string | null;
+  updatedAt: number;
+}
+
+const DYNAMIC_HEATING_SOCKETS = new Map<string, DynamicHeatingSocket>();
+
+export function registerHeatingSocket(socket: DynamicHeatingSocket): void {
+  DYNAMIC_HEATING_SOCKETS.set(socket.id, socket);
+}
+
+export function unregisterHeatingSocket(id: string): void {
+  DYNAMIC_HEATING_SOCKETS.delete(id);
+}
+
+export function clearHeatingSocketRegistry(): void {
+  DYNAMIC_HEATING_SOCKETS.clear();
+}
+
+export function getRegisteredHeatingSockets(): DynamicHeatingSocket[] {
+  return Array.from(DYNAMIC_HEATING_SOCKETS.values());
+}
+
+export function getHeatingSocketByBurnerId(burnerId: string): DynamicHeatingSocket | undefined {
+  return Array.from(DYNAMIC_HEATING_SOCKETS.values()).find((s) => s.burnerId === burnerId);
+}
+
 // реальные границы столешницы: Workbench — boxGeometry [9, 0.1, 4.2] на
 // position [0, -0.05, 0] -> X in [-4.5,4.5], Z in [-2.1,2.1], верх на y≈0.
 // Запас от физического края не нужен отдельной константой — его дает радиус

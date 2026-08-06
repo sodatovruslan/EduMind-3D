@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { HazardLevel } from "@/lib/hazard-engine";
 import {
   getLabExperiment,
@@ -14,6 +14,115 @@ import { getModeConfig, type LabModeConfig, type LearningMode } from "@/lib/chem
 import { assessExperiment, type AssessmentReport } from "@/lib/chemistry-assessment";
 import { buildNotebookEntry, sortNotebookEntriesByDateDesc, type NotebookEntry } from "@/lib/chemistry-notebook";
 import { submitTaskEvent, type LearningProfile } from "@/lib/progress-client";
+import { autosaveEngine } from "@/lib/autosave-engine";
+import { hydrateChemistrySave, type SerializeOptions } from "@/lib/chemistry-save-serializer";
+import { observationLogger } from "@/lib/observation-logger";
+import { WorkspaceContext, createInitialState } from "@/components/core/ChemistryWorkspaceProvider";
+import type { ChemistrySaveSnapshotV1 } from "@/lib/chemistry-save-schema";
+
+function computeStateSig(state: any): string {
+  if (!state) return "";
+  
+  const containers = [...(state.containers || [])]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map(c => {
+      const contentsStr = [...(c.data?.contents || [])]
+        .sort((a, b) => a.substanceId.localeCompare(b.substanceId))
+        .map(x => `${x.substanceId}-${x.grams}`)
+        .join(";");
+      const precipitateStr = [...(c.data?.precipitate || [])]
+        .sort((a, b) => a.substanceId.localeCompare(b.substanceId))
+        .map(x => `${x.substanceId}-${x.grams}`)
+        .join(";");
+      const pos = c.position || [0, 0];
+      return `${c.id}:${pos.map((v: number) => v.toFixed(3)).join(",")}:${(c.elevation || 0).toFixed(3)}:${(c.rotationY || 0).toFixed(3)}:${c.storageSlotId}:${c.heatingSourceId}:${c.isSealed}:${contentsStr}:${precipitateStr}:${(c.data?.temperatureC || 0).toFixed(1)}:${(c.pressureKPa ?? 101.3).toFixed(1)}`;
+    })
+    .join("|");
+
+  const stockBottles = [...(state.stockBottles || [])]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map(b => {
+      const pos = b.position || [0, 0];
+      return `${b.id}:${pos.map((v: number) => v.toFixed(3)).join(",")}:${(b.elevation || 0).toFixed(3)}:${(b.rotationY || 0).toFixed(3)}:${b.remainingGrams.toFixed(1)}:${b.capState}:${b.storageSlotId}`;
+    })
+    .join("|");
+
+  const tools = [...(state.tools || [])]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map(t => {
+      const isOnStr = t.kind === "burner" ? (t.isOn ? "on" : "off") : "none";
+      const pos = t.position || [0, 0];
+      return `${t.id}:${pos.map((v: number) => v.toFixed(3)).join(",")}:${(t.elevation || 0).toFixed(3)}:${(t.rotationY || 0).toFixed(3)}:${t.storageSlotId}:${isOnStr}`;
+    })
+    .join("|");
+
+  const cabinets = [...(state.cabinets || [])]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map(c => `${c.id}:${c.isOpen}`)
+    .join("|");
+
+  return `${containers}#${stockBottles}#${tools}#${cabinets}`;
+}
+
+function computeSnapshotSig(ws: any): string {
+  if (!ws) return "";
+  
+  const containers = [...(ws.containers || [])]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((c: any) => {
+      const contentsStr = [...(c.contents || [])]
+        .sort((a: any, b: any) => a.substanceId.localeCompare(b.substanceId))
+        .map((x: any) => `${x.substanceId}-${x.grams}`)
+        .join(";");
+      const precipitateStr = [...(c.precipitate || [])]
+        .sort((a: any, b: any) => a.substanceId.localeCompare(b.substanceId))
+        .map((x: any) => `${x.substanceId}-${x.grams}`)
+        .join(";");
+      const pos = c.position || [0, 0];
+      return `${c.id}:${pos.map((v: number) => v.toFixed(3)).join(",")}:${(c.elevation || 0).toFixed(3)}:${(c.rotationY || 0).toFixed(3)}:${c.storageSlotId ?? null}:${c.heatingSourceId ?? null}:${c.isSealed ?? false}:${contentsStr}:${precipitateStr}:${(c.temperatureC || 20).toFixed(1)}:${(c.pressureKPa ?? 101.3).toFixed(1)}`;
+    })
+    .join("|");
+
+  const stockBottles = [...(ws.stockBottles || [])]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((b: any) => {
+      const pos = b.position || [0, 0];
+      return `${b.id}:${pos.map((v: number) => v.toFixed(3)).join(",")}:${(b.elevation || 0.16).toFixed(3)}:${(b.rotationY || 0).toFixed(3)}:${(b.remainingGrams ?? 500).toFixed(1)}:${b.capState ?? "closed"}:${b.storageSlotId ?? null}`;
+    })
+    .join("|");
+
+  const burners = [...(ws.burners || [])]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((b: any) => {
+      const pos = b.position || [0, 0];
+      return `${b.id}:${pos.map((v: number) => v.toFixed(3)).join(",")}:${(b.elevation || 0).toFixed(3)}:${(b.rotationY || 0).toFixed(3)}:${b.storageSlotId ?? null}:${b.isOn ? "on" : "off"}`;
+    })
+    .join("|");
+
+  const itemTransforms = [...(ws.itemTransforms || [])]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((t: any) => {
+      const pos2d = t.position ? [t.position[0], t.position[2]] : [0, 0];
+      return `${t.id}:${pos2d.map((v: number) => v.toFixed(3)).join(",")}:${(t.elevation || 0).toFixed(3)}:${(t.rotationY || 0).toFixed(3)}:${t.storageSlotId ?? null}:none`;
+    });
+
+  const allTools = [...burners];
+  itemTransforms.forEach((itStr: string) => {
+    const id = itStr.split(":")[0];
+    if (!allTools.some(bStr => bStr.split(":")[0] === id)) {
+      allTools.push(itStr);
+    }
+  });
+  allTools.sort((a, b) => a.split(":")[0].localeCompare(b.split(":")[0]));
+  const toolsStr = allTools.join("|");
+
+  const cabinets = [...(ws.cabinets || [])]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((c: any) => `${c.id}:${c.isOpen}`)
+    .join("|");
+
+  return `${containers}#${stockBottles}#${toolsStr}#${cabinets}`;
+}
 
 /**
  * Chemistry World — Guided Laboratory System (Stage 5.6). Владеет учебным
@@ -73,7 +182,10 @@ interface ChemistryLabExperienceContextValue {
   lastAssessment: AssessmentReport | null;
   lastNotebookEntry: NotebookEntry | null;
   learningProfile: LearningProfile | null;
+  resumeSave: (snapshot: ChemistrySaveSnapshotV1) => void;
   isExperimentUnlockedFor: (experiment: LabExperiment) => boolean;
+  hydrationStatus: "default" | "hydrated";
+  getSerializeOptions: () => SerializeOptions | null;
 }
 
 const ChemistryLabExperienceContext = createContext<ChemistryLabExperienceContextValue | undefined>(undefined);
@@ -87,6 +199,7 @@ export function ChemistryLabExperienceProvider({
   stepContext: LabStepContext;
   children: React.ReactNode;
 }) {
+  const workspaceContext = useContext(WorkspaceContext);
   const [mode, setMode] = useState<LearningMode>("guided");
   const [selectedExperimentId, setSelectedExperimentId] = useState<string | null>(null);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
@@ -95,6 +208,7 @@ export function ChemistryLabExperienceProvider({
   const [lastAssessment, setLastAssessment] = useState<AssessmentReport | null>(null);
   const [lastNotebookEntry, setLastNotebookEntry] = useState<NotebookEntry | null>(null);
   const [learningProfile, setLearningProfile] = useState<LearningProfile | null>(null);
+  const [hydrationStatus, setHydrationStatus] = useState<"default" | "hydrated">("default");
 
   useEffect(() => {
     setNotebookEntries(sortNotebookEntriesByDateDesc(loadNotebook()));
@@ -102,10 +216,6 @@ export function ChemistryLabExperienceProvider({
 
   const selectedExperiment = selectedExperimentId ? getLabExperiment(selectedExperimentId) ?? null : null;
 
-  // реальные счетчики сессии текущего эксперимента — накапливаются через
-  // refs (без лишних ре-рендеров на каждый физический тик), сбрасываются
-  // при выборе нового эксперимента. Идемпотентны при повторном срабатывании
-  // эффекта с теми же значениями (безопасно для React StrictMode).
   const hintsRef = useRef(0);
   const attemptsRef = useRef(0);
   const safetyCodesRef = useRef<Set<string>>(new Set());
@@ -116,10 +226,126 @@ export function ChemistryLabExperienceProvider({
   const actionsLogRef = useRef<string[]>([]);
   const reactionHistoryRef = useRef<{ reactionId: string; title: string; at: number }[]>([]);
 
+  const lastSavedSigRef = useRef<string | null>(null);
+
   const prevContentsSigRef = useRef(stepContext.activeContainer.contents.length + stepContext.activeContainer.precipitate.length);
   const prevBurnerRef = useRef(stepContext.burnerOn);
   const prevSealedRef = useRef(stepContext.isSealed);
   const prevPourCountRef = useRef(stepContext.pourLog.length);
+
+  const isLastStep = selectedExperiment ? currentStepIndex === selectedExperiment.steps.length - 1 : false;
+
+  const completedExperimentIds = useMemo(() => {
+    const ids = new Set<string>();
+    notebookEntries.forEach((e) => {
+      if (e.assessment.completion.score === 100) ids.add(e.experimentId);
+    });
+    return Array.from(ids);
+  }, [notebookEntries]);
+
+  const getSerializeOptions = useCallback((): SerializeOptions | null => {
+    if (!selectedExperimentId) return null;
+
+    const burners = (workspaceContext?.state.tools || [])
+      .filter((t) => t.kind === "burner")
+      .map((b) => ({
+        id: b.id,
+        isOn: (b as any).isOn || false,
+        position: b.position,
+        rotationY: b.rotationY,
+        elevation: b.elevation,
+        storageSlotId: b.storageSlotId,
+      }));
+
+    return {
+      saveId: `save-${selectedExperimentId}`,
+      userId: "user-student",
+      simulationId,
+      experimentId: selectedExperimentId,
+      revision: 1,
+      workspace: {
+        containers: (workspaceContext?.state.containers || []).map((c) => ({
+          id: c.id,
+          kind: c.kind,
+          position: c.position,
+          rotationY: c.rotationY,
+          elevation: c.elevation,
+          storageSlotId: c.storageSlotId,
+          heatingSourceId: c.heatingSourceId,
+          isSealed: c.isSealed,
+          pressureKPa: c.pressureKPa,
+          contents: c.data.contents.map((st) => ({ substanceId: st.substanceId, grams: st.grams })),
+          temperatureC: c.data.temperatureC,
+          aggregateState: c.data.temperatureC > 100 ? "gas" as const : "liquid" as const,
+          precipitate: c.data.precipitate ? c.data.precipitate.map((p) => ({ substanceId: p.substanceId, grams: p.grams })) : [],
+          hazardLevel: c.hazard.level,
+        })),
+        stockBottles: (workspaceContext?.state.stockBottles || []).map((b) => ({
+          id: b.id,
+          substanceId: b.substanceId,
+          substanceName: b.substanceId,
+          remainingGrams: b.remainingGrams,
+          capState: b.capState,
+          position: b.position,
+          rotationY: b.rotationY,
+          elevation: b.elevation,
+          storageSlotId: b.storageSlotId,
+        })),
+        burners,
+        cabinets: workspaceContext?.state.cabinets || [],
+        itemTransforms: (workspaceContext?.state.tools || [])
+          .filter((t) => t.kind !== "burner")
+          .map((t) => ({
+            id: t.id,
+            position: [t.position[0], t.elevation || 0, t.position[1]] as [number, number, number],
+            rotationY: t.rotationY || 0,
+            elevation: t.elevation || 0,
+            storageSlotId: t.storageSlotId,
+          })),
+      },
+      experiment: {
+        mode,
+        currentStepIndex,
+        completedStepIds: [],
+        taskStatus: isLastStep ? "completed" : "in_progress",
+        startedAt: Date.now(),
+        elapsedMs: 0,
+        hintsUsed: hintsRef.current,
+        conclusionDraft,
+      },
+      progress: {
+        xp: 0,
+        achievements: [],
+        completedExperimentIds,
+      },
+      observation: {
+        sessionId: observationLogger.getSessionId(),
+        lastSequence: observationLogger.getEvents().length > 0
+          ? observationLogger.getEvents()[observationLogger.getEvents().length - 1].sequence
+          : 0,
+        events: [...observationLogger.getEvents()],
+      },
+    };
+  }, [
+    selectedExperimentId,
+    workspaceContext?.state,
+    simulationId,
+    mode,
+    currentStepIndex,
+    isLastStep,
+    conclusionDraft,
+    completedExperimentIds,
+  ]);
+
+  useEffect(() => {
+    autosaveEngine.updateStateGetter(getSerializeOptions);
+  }, [getSerializeOptions]);
+
+  useEffect(() => {
+    return () => {
+      autosaveEngine.destroy();
+    };
+  }, []);
 
   useEffect(() => {
     if (!selectedExperiment) return;
@@ -151,47 +377,65 @@ export function ChemistryLabExperienceProvider({
     });
   }, [selectedExperiment, stepContext.occurredReactionIds]);
 
-  // реальные дискретные действия ученика (не физические тики) — сигнал
-  // "что-то изменилось намеренно": состав сосуда, горелка, герметичность,
-  // факт переливания. Именно это считается как "попытка" для Assessment.
-  const contentsSig = stepContext.activeContainer.contents.length + stepContext.activeContainer.precipitate.length;
+  const workspaceStateSig = useMemo(() => {
+    return computeStateSig(workspaceContext?.state);
+  }, [workspaceContext?.state]);
+
   useEffect(() => {
     if (!selectedExperiment) return;
-    let changed = false;
-    if (contentsSig !== prevContentsSigRef.current) {
-      changed = true;
-      actionsLogRef.current.push("Изменение содержимого сосуда");
-      prevContentsSigRef.current = contentsSig;
-    }
-    if (stepContext.burnerOn !== prevBurnerRef.current) {
-      changed = true;
-      actionsLogRef.current.push(stepContext.burnerOn ? "Горелка включена" : "Горелка выключена");
-      prevBurnerRef.current = stepContext.burnerOn;
-    }
-    if (stepContext.isSealed !== prevSealedRef.current) {
-      changed = true;
-      actionsLogRef.current.push(stepContext.isSealed ? "Сосуд запечатан" : "Сосуд открыт");
-      prevSealedRef.current = stepContext.isSealed;
-    }
-    if (stepContext.pourLog.length !== prevPourCountRef.current) {
-      changed = true;
-      actionsLogRef.current.push("Переливание между сосудами");
-      prevPourCountRef.current = stepContext.pourLog.length;
-    }
-    if (changed) attemptsRef.current += 1;
-  }, [selectedExperiment, contentsSig, stepContext.burnerOn, stepContext.isSealed, stepContext.pourLog.length]);
 
-  const completedExperimentIds = useMemo(() => {
-    const ids = new Set<string>();
-    notebookEntries.forEach((e) => {
-      if (e.assessment.completion.score === 100) ids.add(e.experimentId);
-    });
-    return Array.from(ids);
-  }, [notebookEntries]);
+    if (lastSavedSigRef.current === null) {
+      lastSavedSigRef.current = workspaceStateSig;
+      return;
+    }
+
+    if (workspaceStateSig === lastSavedSigRef.current) {
+      return;
+    }
+
+    lastSavedSigRef.current = workspaceStateSig;
+    attemptsRef.current += 1;
+    autosaveEngine.markDirty();
+  }, [selectedExperiment, workspaceStateSig]);
+
+  function resumeSave(snapshot: ChemistrySaveSnapshotV1) {
+    if (!snapshot || !snapshot.experimentId) return;
+    const hydrated = hydrateChemistrySave(snapshot);
+
+    lastSavedSigRef.current = computeSnapshotSig(snapshot.workspace);
+    setHydrationStatus("hydrated");
+
+    setSelectedExperimentId(snapshot.experimentId);
+    setCurrentStepIndex(hydrated.experiment.currentStepIndex ?? 0);
+    setConclusionDraft(hydrated.experiment.conclusionDraft || "");
+
+    observationLogger.restoreSession(
+      hydrated.observation.sessionId,
+      hydrated.observation.lastSequence,
+      hydrated.observation.events
+    );
+
+    if (workspaceContext) {
+      workspaceContext.hydrateFromSave(snapshot);
+    }
+
+    autosaveEngine.init(
+      snapshot.saveId,
+      snapshot.userId,
+      snapshot.simulationId,
+      snapshot.experimentId,
+      snapshot.revision,
+      getSerializeOptions
+    );
+  }
 
   function selectExperiment(id: string) {
     const experiment = getLabExperiment(id);
     if (!experiment) return;
+
+    lastSavedSigRef.current = computeStateSig(createInitialState());
+    setHydrationStatus("default");
+
     setSelectedExperimentId(id);
     setCurrentStepIndex(0);
     setConclusionDraft("");
@@ -211,30 +455,35 @@ export function ChemistryLabExperienceProvider({
     prevBurnerRef.current = stepContext.burnerOn;
     prevSealedRef.current = stepContext.isSealed;
     prevPourCountRef.current = stepContext.pourLog.length;
+
+    if (workspaceContext) {
+      workspaceContext.resetExperiment();
+    }
+
+    autosaveEngine.init(
+      `save-${id}`,
+      "user-student",
+      simulationId,
+      id,
+      1,
+      getSerializeOptions
+    );
   }
 
   function exitExperiment() {
+    autosaveEngine.uninit();
+    setHydrationStatus("default");
     setSelectedExperimentId(null);
   }
 
-  // Stage 5.7 audit — реальный сценарий: аварийная остановка сбрасывает
-  // состояние лаборатории (ChemistryWorkspaceProvider.resetExperiment), но
-  // сама по себе не знает про этот провайдер. Без явного вызова этой
-  // функции студент оставался бы на устаревшем шаге/экране завершения
-  // против уже сброшенного, пустого сосуда — реального краша это не
-  // вызывает, но UI вводит в заблуждение. Вызывается ровно в паре с
-  // resetExperiment() из кнопки "Сбросить эксперимент".
   function resetLabSession() {
+    autosaveEngine.uninit();
+    setHydrationStatus("default");
     setSelectedExperimentId(null);
     setLastAssessment(null);
     setLastNotebookEntry(null);
   }
 
-  // "Максимально наблюдаемые" температура/давление за сессию текущего
-  // эксперимента отслеживает ТОЛЬКО этот провайдер (через refs выше) —
-  // родитель не может знать эту накопленную историю заранее, поэтому здесь
-  // подставляем реально отслеженные значения поверх сырого stepContext
-  // перед любой проверкой isUnlocked/isComplete
   const effectiveStepContext: LabStepContext = {
     ...stepContext,
     maxTemperatureCObserved: Math.max(maxTempRef.current, stepContext.activeContainer.temperatureC),
@@ -243,12 +492,12 @@ export function ChemistryLabExperienceProvider({
 
   const currentStep = selectedExperiment ? selectedExperiment.steps[currentStepIndex] ?? null : null;
   const isCurrentStepUnlocked = currentStep ? currentStep.isUnlocked(effectiveStepContext) : false;
-  const isLastStep = selectedExperiment ? currentStepIndex === selectedExperiment.steps.length - 1 : false;
 
   function advanceStep() {
     if (!selectedExperiment || !currentStep) return;
-    if (!currentStep.isUnlocked(effectiveStepContext)) return; // реальная проверка — не просто нажатие кнопки
+    if (!currentStep.isUnlocked(effectiveStepContext)) return;
     setCurrentStepIndex((i) => Math.min(i + 1, selectedExperiment.steps.length - 1));
+    autosaveEngine.markDirty();
   }
 
   function recordHintUsed() {
@@ -317,8 +566,29 @@ export function ChemistryLabExperienceProvider({
         // потеряется только серверная синхронизация Learning Profile
       });
 
+    // Финальный autosave: помечаем ChemistrySave как "completed" на бэкенде.
+    // Без этого GET /api/chemistry/saves (фильтр status==="active") продолжает
+    // считать эксперимент резюмируемым, и каталог одновременно показывает
+    // "Пройдено" (из локального Notebook) и "Есть сохранение (шаг N)" (из
+    // всё ещё активного ChemistrySave) для одного и того же эксперимента.
+    // Снапшот захватывается синхронно ЗДЕСЬ (а не через отложенный
+    // this.stateGetter() внутри движка): если этот flush встанет в очередь
+    // позади другой синхронизации, к моменту реального выполнения
+    // selectedExperimentId уже будет сброшен ниже и getSerializeOptions()
+    // станет возвращать null.
+    const finalSnapshot = getSerializeOptions();
+
     setSelectedExperimentId(null);
+    setHydrationStatus("default");
     completingRef.current = false;
+
+    // uninit() вызывается уже ПОСЛЕ попытки финализации (успешной или нет) —
+    // он обнуляет saveId, который flush() ещё читает.
+    if (finalSnapshot) {
+      autosaveEngine.flush("completed", finalSnapshot).finally(() => autosaveEngine.uninit());
+    } else {
+      autosaveEngine.uninit();
+    }
   }
 
   function isExperimentUnlockedFor(experiment: LabExperiment): boolean {
@@ -348,7 +618,10 @@ export function ChemistryLabExperienceProvider({
     lastAssessment,
     lastNotebookEntry,
     learningProfile,
+    resumeSave,
     isExperimentUnlockedFor,
+    hydrationStatus,
+    getSerializeOptions,
   };
 
   return <ChemistryLabExperienceContext.Provider value={value}>{children}</ChemistryLabExperienceContext.Provider>;
