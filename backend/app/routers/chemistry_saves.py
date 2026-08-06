@@ -21,7 +21,7 @@ def _verify_payload_size(data: dict):
     serialized = json.dumps(data)
     if len(serialized.encode("utf-8")) > MAX_PAYLOAD_BYTES:
         raise HTTPException(
-            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="Snapshot payload size exceeds 2 MB limit",
         )
 
@@ -37,12 +37,21 @@ async def create_save(
     # 1. Idempotency check
     if payload.idempotency_key:
         stmt = select(ChemistrySave).where(
-            ChemistrySave.user_id == current_user.id,
             ChemistrySave.idempotency_key == payload.idempotency_key,
         )
         res = await db.execute(stmt)
         existing = res.scalar_one_or_none()
         if existing:
+            if existing.user_id != current_user.id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Not authorized to access this save record",
+                )
+            existing.snapshot = payload.snapshot
+            existing.updated_at = datetime.utcnow()
+            existing.last_autosaved_at = datetime.utcnow()
+            await db.commit()
+            await db.refresh(existing)
             return existing
 
     # 2. Create save

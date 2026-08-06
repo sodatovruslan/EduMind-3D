@@ -86,6 +86,7 @@ describe("Stage S-8 — Chemistry Save Serializer, Hydrator & Schema Tests", () 
           id: "cabinet-1",
           position: [-2.0, 0],
           rotationY: 0,
+          isOpen: true,
         },
       ],
       itemTransforms: [
@@ -284,5 +285,175 @@ describe("Stage S-8 — Chemistry Save Serializer, Hydrator & Schema Tests", () 
     const hydrated = hydrateChemistrySave(snap);
     expect(hydrated.workspace.burners).toHaveLength(1);
     expect(hydrated.workspace.burners[0].isOn).toBe(true);
+  });
+
+  it("12. contents.grams round-trips correctly through serialize → hydrate", () => {
+    const snap = serializeChemistrySave(sampleOptions);
+    const beaker = snap.workspace.containers.find((c) => c.id === "beaker-1");
+    expect(beaker).toBeDefined();
+    expect(beaker!.contents[0].grams).toBe(100);
+    expect((beaker!.contents[0] as any).massGrams).toBeUndefined();
+    expect((beaker!.contents[0] as any).volumeMl).toBeUndefined();
+
+    const hydrated = hydrateChemistrySave(snap);
+    const hBeaker = hydrated.workspace.containers.find((c: any) => c.id === "beaker-1");
+    expect(hBeaker.data.contents[0].grams).toBe(100);
+  });
+
+  it("13. pressureKPa round-trips correctly through serialize → hydrate", () => {
+    const snap = serializeChemistrySave(sampleOptions);
+    const flask = snap.workspace.containers.find((c) => c.id === "flask-1");
+    expect(flask).toBeDefined();
+    expect(flask!.pressureKPa).toBe(120.0);
+
+    const hydrated = hydrateChemistrySave(snap);
+    const hFlask = hydrated.workspace.containers.find((c: any) => c.id === "flask-1");
+    expect(hFlask.pressureKPa).toBe(120.0);
+  });
+
+  it("14. cabinet.isOpen round-trips correctly through serialize → hydrate", () => {
+    const snap = serializeChemistrySave(sampleOptions);
+    const cab = snap.workspace.cabinets.find((c) => c.id === "cabinet-1");
+    expect(cab).toBeDefined();
+    expect(cab!.isOpen).toBe(true);
+
+    const hydrated = hydrateChemistrySave(snap);
+    // cabinets are not in HydratedState workspace but in snapshot itself
+    expect(snap.workspace.cabinets[0].isOpen).toBe(true);
+  });
+
+  it("15. experiment.mode 'guided' round-trips correctly", () => {
+    const guidedOptions: SerializeOptions = {
+      ...sampleOptions,
+      experiment: { ...sampleOptions.experiment, mode: "guided" },
+    };
+    const snap = serializeChemistrySave(guidedOptions);
+    expect(snap.experiment.mode).toBe("guided");
+
+    const hydrated = hydrateChemistrySave(snap);
+    expect(hydrated.experiment.mode).toBe("guided");
+  });
+
+  it("16. experiment.startedAt number is coerced to ISO string", () => {
+    const numericOptions: SerializeOptions = {
+      ...sampleOptions,
+      experiment: { ...sampleOptions.experiment, startedAt: 1722772800000 },
+    };
+    const snap = serializeChemistrySave(numericOptions);
+    expect(typeof snap.experiment.startedAt).toBe("string");
+    expect(snap.experiment.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("17. migrateSnapshot converts old massGrams/volumeMl to grams", () => {
+    const oldSnapshot = {
+      schemaVersion: "1.0",
+      saveId: "old-save",
+      userId: "user-1",
+      simulationId: "sim-1",
+      experimentId: null,
+      createdAt: "2026-08-01T00:00:00Z",
+      updatedAt: "2026-08-01T00:00:00Z",
+      revision: 1,
+      workspace: {
+        containers: [{
+          id: "c-1",
+          kind: "beaker",
+          position: [0, 0],
+          rotationY: 0,
+          elevation: 0,
+          storageSlotId: null,
+          heatingSourceId: null,
+          isSealed: false,
+          pressureKPa: 101.3,
+          contents: [{ substanceId: "water", massGrams: 200, volumeMl: 200 }],
+          temperatureC: 20,
+          precipitate: [{ substanceId: "salt", massGrams: 5 }],
+          hazardLevel: "none",
+        }],
+        stockBottles: [{
+          id: "b-1",
+          substanceId: "water",
+          substanceName: "Water",
+          remainingGrams: 500,
+          capState: "missing",
+          position: [0, 0],
+          rotationY: 0,
+          elevation: 0,
+          storageSlotId: null,
+        }],
+        burners: [],
+        cabinets: [{ id: "cab-1", position: [0, 0], rotationY: 0 }],
+        itemTransforms: [],
+      },
+      experiment: {
+        mode: "guided",
+        currentStepIndex: 0,
+        completedStepIds: [],
+        taskStatus: "in_progress",
+        startedAt: 1722772800000,
+        elapsedMs: 0,
+        hintsUsed: 0,
+        conclusionDraft: "",
+      },
+      progress: { xp: 0, achievements: [], completedExperimentIds: [] },
+      observation: { sessionId: "s-1", lastSequence: 0, events: [] },
+    };
+
+    const migrated = migrateSnapshot(oldSnapshot);
+
+    // massGrams → grams
+    expect(migrated.workspace.containers[0].contents[0].grams).toBe(200);
+    expect((migrated.workspace.containers[0].contents[0] as any).massGrams).toBeUndefined();
+    expect((migrated.workspace.containers[0].contents[0] as any).volumeMl).toBeUndefined();
+
+    // precipitate massGrams → grams
+    expect(migrated.workspace.containers[0].precipitate[0].grams).toBe(5);
+
+    // capState "missing" → "closed"
+    expect(migrated.workspace.stockBottles[0].capState).toBe("closed");
+
+    // cabinet isOpen added
+    expect(migrated.workspace.cabinets[0].isOpen).toBe(false);
+
+    // numeric startedAt → ISO string
+    expect(typeof migrated.experiment.startedAt).toBe("string");
+    expect(migrated.experiment.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("18. migrateSnapshot throws with clear message on unknown schemaVersion", () => {
+    expect(() => migrateSnapshot({ schemaVersion: "2.0" })).toThrow(
+      /unsupported schemaVersion/i
+    );
+  });
+
+  it("19. Full JSON snapshot round-trip: serialize → JSON → hydrate preserves all domain fields", () => {
+    const snapshot = serializeChemistrySave(sampleOptions);
+    const json = JSON.stringify(snapshot);
+    const parsed = JSON.parse(json);
+    const hydrated = hydrateChemistrySave(parsed);
+
+    // Burners
+    expect(snapshot.workspace.burners[0].isOn).toBe(true);
+    expect(hydrated.workspace.burners[0].isOn).toBe(true);
+    expect(snapshot.workspace.burners[0].isOn).toEqual(hydrated.workspace.burners[0].isOn);
+
+    // Contents grams
+    const snapBeaker = snapshot.workspace.containers.find((c) => c.id === "beaker-1")!;
+    const hydrBeaker = hydrated.workspace.containers.find((c: any) => c.id === "beaker-1");
+    expect(snapBeaker.contents[0].grams).toBe(hydrBeaker.data.contents[0].grams);
+
+    // PressureKPa
+    const snapFlask = snapshot.workspace.containers.find((c) => c.id === "flask-1")!;
+    const hydrFlask = hydrated.workspace.containers.find((c: any) => c.id === "flask-1");
+    expect(snapFlask.pressureKPa).toBe(hydrFlask.pressureKPa);
+
+    // Cabinets
+    expect(snapshot.workspace.cabinets[0].isOpen).toBe(true);
+    expect(snapshot.workspace.cabinets).toEqual(parsed.workspace.cabinets);
+
+    // Experiment
+    expect(snapshot.experiment.mode).toBe(hydrated.experiment.mode);
+    expect(snapshot.experiment.currentStepIndex).toBe(hydrated.experiment.currentStepIndex);
+    expect(typeof snapshot.experiment.startedAt).toBe("string");
   });
 });

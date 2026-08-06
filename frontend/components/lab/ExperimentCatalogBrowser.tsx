@@ -27,8 +27,30 @@ const UNLOCK_HINT: Record<LabDifficulty, string | null> = {
   advanced: "Заверши любой эксперимент уровня «Средний», чтобы открыть",
 };
 
+/**
+ * /api/chemistry/saves returns every save row ever created for a user (one
+ * per started attempt, newest-first) — not one per experiment. An experiment
+ * can have older abandoned "active" rows sitting alongside a newer
+ * "completed" one, so only the MOST RECENT row per experiment_id may decide
+ * whether to offer Resume; stale active rows from earlier abandoned attempts
+ * must not resurrect the badge for an experiment that's since been finished.
+ */
+export function computeActiveSaveMap(saves: unknown): Record<string, ChemistrySaveSnapshotV1> {
+  const saveMap: Record<string, ChemistrySaveSnapshotV1> = {};
+  if (!Array.isArray(saves)) return saveMap;
+  const latestSeenExperiments = new Set<string>();
+  for (const s of saves) {
+    if (!s?.experiment_id || latestSeenExperiments.has(s.experiment_id)) continue;
+    latestSeenExperiments.add(s.experiment_id);
+    if (s.status === "active" && s.snapshot) {
+      saveMap[s.experiment_id] = s.snapshot;
+    }
+  }
+  return saveMap;
+}
+
 export default function ExperimentCatalogBrowser() {
-  const { completedExperimentIds, notebookEntries, selectExperiment, isExperimentUnlockedFor } = useChemistryLabExperience();
+  const { completedExperimentIds, notebookEntries, selectExperiment, resumeSave, isExperimentUnlockedFor } = useChemistryLabExperience();
   const [query, setQuery] = useState("");
   const [difficultyFilter, setDifficultyFilter] = useState<"all" | LabDifficulty>("all");
   const [activeSaves, setActiveSaves] = useState<Record<string, ChemistrySaveSnapshotV1>>({});
@@ -39,14 +61,7 @@ export default function ExperimentCatalogBrowser() {
     async function loadActiveSaves() {
       try {
         const saves = await apiFetch<any[]>("/api/chemistry/saves").catch(() => []);
-        const saveMap: Record<string, ChemistrySaveSnapshotV1> = {};
-        if (Array.isArray(saves)) {
-          for (const s of saves) {
-            if (s.status === "active" && s.experiment_id && s.snapshot) {
-              saveMap[s.experiment_id] = s.snapshot;
-            }
-          }
-        }
+        const saveMap = computeActiveSaveMap(saves);
         const pending = await offlineSaveDB.getPending();
         if (pending && pending.snapshot?.experimentId) {
           saveMap[pending.snapshot.experimentId] = pending.snapshot;
@@ -136,7 +151,11 @@ export default function ExperimentCatalogBrowser() {
                   <span>{DIFFICULTY_LABEL[exp.difficulty]}</span>
                   <span>·</span>
                   <span>{exp.estimatedMinutes} мин</span>
-                  {completed && <span className="text-emerald-400">· пройдено</span>}
+                  {completed && (
+                    <span data-testid={`catalog-completed-${exp.id}`} className="text-emerald-400">
+                      · пройдено
+                    </span>
+                  )}
                 </div>
 
                 <p className="text-xs text-slate-400">{exp.description}</p>
@@ -154,7 +173,7 @@ export default function ExperimentCatalogBrowser() {
                 {unlocked && (
                   <div className="mt-2 flex items-center justify-between gap-2 pt-2 border-t border-glass-border/40">
                     {activeSave ? (
-                      <div className="flex items-center gap-1.5 font-mono text-xs text-amber-300">
+                      <div data-testid={`catalog-active-save-${exp.id}`} className="flex items-center gap-1.5 font-mono text-xs text-amber-300">
                         <Clock size={13} />
                         <span>Есть сохранение (шаг {activeSave.experiment.currentStepIndex + 1})</span>
                       </div>
@@ -199,7 +218,7 @@ export default function ExperimentCatalogBrowser() {
         saveSnapshot={modalSnapshot?.snapshot || null}
         onResume={() => {
           if (modalSnapshot) {
-            selectExperiment(modalSnapshot.expId);
+            resumeSave(modalSnapshot.snapshot);
             setModalSnapshot(null);
           }
         }}

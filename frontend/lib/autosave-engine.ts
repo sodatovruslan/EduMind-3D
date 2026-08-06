@@ -3,7 +3,7 @@ import { offlineSaveDB, type PendingSaveRecord } from "./offline-save-db";
 import { serializeChemistrySave, type SerializeOptions } from "./chemistry-save-serializer";
 import type { ChemistrySaveSnapshotV1 } from "./chemistry-save-schema";
 
-export type AutosaveStatus = "saved" | "saving" | "offline_pending" | "error" | "conflict";
+export type AutosaveStatus = "idle" | "pending" | "saved" | "saving" | "offline_pending" | "error" | "conflict";
 
 export interface SaveBackendResponse {
   id: string;
@@ -31,9 +31,11 @@ export class AutosaveEngine {
   private simulationId: string = "sim-chemistry-world";
   private experimentId: string | null = null;
   private currentRevision: number = 1;
+  private clientSessionId: string = "";
+  private createdOnServer: boolean = false;
 
   private isDirty: boolean = false;
-  private status: AutosaveStatus = "saved";
+  private status: AutosaveStatus = "idle";
   private listeners: Set<StatusListener> = new Set();
 
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -41,6 +43,20 @@ export class AutosaveEngine {
   private stateGetter: (() => SerializeOptions | null) | null = null;
 
   private requestCount: number = 0; // для метрики тестов
+  private isSyncing: boolean = false; // мьютекс: flush() и retryPendingSync() не должны бежать параллельно
+  private flushQueued: boolean = false; // flush() запрошен, пока мьютекс уже был занят — догнать текущим состоянием сразу после
+  private pendingFinalStatus: string | null = null; // "completed" и т.п. — сохраняется через busy-очередь, чтобы не потеряться
+  // Снапшот, захваченный ВЫЗЫВАЮЩИМ КОДОМ синхронно (см. finalize()), а не через
+  // this.stateGetter(). Нужен для finalize-вызовов: если этот flush встанет в
+  // очередь позади другой синхронизации, к моменту реального выполнения
+  // stateGetter() уже может отражать состояние ПОСЛЕ выхода из эксперимента
+  // (например selectedExperimentId уже сброшен) и вернуть null.
+  private pendingSnapshotOverride: SerializeOptions | null = null;
+  // Promise of the currently running (or about-to-run queued) sync. Callers that
+  // need to know when a finalStatus has actually reached the server (e.g.
+  // completeExperiment()) must await THIS, not just the flush() call they made —
+  // if that particular call landed while busy, it queues and returns early.
+  private syncChainPromise: Promise<void> = Promise.resolve();
 
   constructor() {
     this.setupWindowListeners();
@@ -85,6 +101,8 @@ export class AutosaveEngine {
     this.stateGetter = stateGetter;
     this.isDirty = false;
     this.setStatus("saved");
+    this.clientSessionId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    this.createdOnServer = false;
 
     // Запуск 30s периодического таймера
     if (this.periodicTimer) clearInterval(this.periodicTimer);
@@ -93,6 +111,19 @@ export class AutosaveEngine {
         this.flush();
       }
     }, 30000);
+  }
+
+  public updateStateGetter(stateGetter: () => SerializeOptions | null) {
+    this.stateGetter = stateGetter;
+  }
+
+  /** Вызывается при выходе из эксперимента — сбрасывает бадж в нейтральный «idle» */
+  public uninit() {
+    if (this.debounceTimer) clearTimeout(this.debounceTimer);
+    this.isDirty = false;
+    this.saveId = null;
+    this.stateGetter = null;
+    this.setStatus("idle");
   }
 
   public destroy() {
@@ -127,6 +158,11 @@ export class AutosaveEngine {
   public markDirty() {
     this.isDirty = true;
 
+    // Переходим в «pending» сразу, чтобы пользователь видел реакцию немедленно
+    if (this.status !== "saving") {
+      this.setStatus("pending");
+    }
+
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
     }
@@ -137,27 +173,59 @@ export class AutosaveEngine {
   }
 
   /**
-   * Сброс всех изменений на сервер
+   * Сброс всех изменений на сервер.
+   *
+   * @param finalStatus Если передан (например "completed"), сервер переведёт
+   * ChemistrySave в этот статус вместе с этим сохранением — используется при
+   * завершении эксперимента, чтобы GET /api/chemistry/saves (status="active")
+   * больше не считал его незавершённым резюмируемым сохранением.
+   * @param snapshotOverride Явно захваченный вызывающим кодом снапшот вместо
+   * ленивого this.stateGetter(). Обязателен для finalStatus-вызовов, которые
+   * могут встать в очередь: к моменту фактического выполнения stateGetter()
+   * может уже отражать состояние после выхода из эксперимента.
    */
-  public async flush(): Promise<void> {
-    if (!this.stateGetter || !this.saveId || !this.userId) return;
+  public flush(finalStatus?: string, snapshotOverride?: SerializeOptions): Promise<void> {
+    if (finalStatus) this.pendingFinalStatus = finalStatus;
+    if (snapshotOverride) this.pendingSnapshotOverride = snapshotOverride;
+    if (this.isSyncing) {
+      // A sync is already in flight (periodic timer, retry, or another flush).
+      // Don't fire a second concurrent request racing on the same revision —
+      // queue a follow-up flush so the state captured *after* this call isn't
+      // silently lost once the in-flight request settles. pendingFinalStatus
+      // (set above) survives the queue and is applied by that follow-up run.
+      // Callers awaiting this promise still get the *actual* completion —
+      // syncChainPromise chains through the queued follow-up too.
+      this.flushQueued = true;
+      return this.syncChainPromise;
+    }
+    this.syncChainPromise = this.runSync();
+    return this.syncChainPromise;
+  }
+
+  private async runSync(): Promise<void> {
+    if (!this.saveId || !this.userId) return;
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
     }
 
-    const stateOpts = this.stateGetter();
+    const override = this.pendingSnapshotOverride;
+    this.pendingSnapshotOverride = null;
+    const stateOpts = override ?? (this.stateGetter ? this.stateGetter() : null);
     if (!stateOpts) return;
 
+    this.isSyncing = true;
     this.setStatus("saving");
     const snapshot = serializeChemistrySave(stateOpts);
-    const idempotencyKey = `${this.saveId}:rev:${this.currentRevision}`;
+    const idempotencyKey = `${this.saveId}:${this.clientSessionId}:rev:${this.currentRevision}`;
+    const statusToApply = this.pendingFinalStatus;
+    this.pendingFinalStatus = null;
 
     try {
       this.requestCount++;
       let res: SaveBackendResponse;
 
-      if (this.currentRevision === 1) {
+      if (!this.createdOnServer) {
         // Первичное сохранение (POST)
         res = await apiFetch<SaveBackendResponse>("/api/chemistry/saves", {
           method: "POST",
@@ -165,11 +233,12 @@ export class AutosaveEngine {
             simulation_id: this.simulationId,
             experiment_id: this.experimentId,
             schema_version: snapshot.schemaVersion,
-            status: "active",
+            status: statusToApply ?? "active",
             idempotency_key: idempotencyKey,
             snapshot,
           }),
         });
+        this.createdOnServer = true;
       } else {
         // Обновление существующего (PUT с expected_revision)
         res = await apiFetch<SaveBackendResponse>(`/api/chemistry/saves/${this.saveId}`, {
@@ -177,15 +246,22 @@ export class AutosaveEngine {
           body: JSON.stringify({
             expected_revision: this.currentRevision,
             snapshot,
+            ...(statusToApply ? { status: statusToApply } : {}),
           }),
         });
       }
 
+      this.saveId = res.id;
       this.currentRevision = res.revision;
       this.isDirty = false;
       this.setStatus("saved");
       await offlineSaveDB.removePending(this.saveId);
     } catch (err: any) {
+      // Retain the completion intent so a later retry (online reconnect,
+      // next dirty flush) still finalizes the status instead of silently
+      // leaving the save "active" forever.
+      if (statusToApply) this.pendingFinalStatus = statusToApply;
+
       if (err?.status === 409 || (err instanceof ApiError && err.status === 409)) {
         // 409 Revision Conflict
         console.warn("[Autosave] Revision conflict detected on server.");
@@ -212,6 +288,13 @@ export class AutosaveEngine {
         syncStatus: "pending",
         updatedAt: new Date().toISOString(),
       });
+    } finally {
+      this.isSyncing = false;
+      if (this.flushQueued) {
+        this.flushQueued = false;
+        this.syncChainPromise = this.runSync();
+        await this.syncChainPromise;
+      }
     }
   }
 
@@ -220,11 +303,16 @@ export class AutosaveEngine {
    */
   public async retryPendingSync(): Promise<void> {
     if (!this.saveId) return;
+    if (this.isSyncing) return;
     const pending = await offlineSaveDB.getPending(this.saveId);
     if (!pending || pending.syncStatus !== "pending") return;
+    if (this.isSyncing) return; // re-check: flush() may have started during the getPending() await
 
     console.log("[Autosave] Network restored! Retrying pending save sync...");
+    this.isSyncing = true;
     this.setStatus("saving");
+    const statusToApply = this.pendingFinalStatus;
+    this.pendingFinalStatus = null;
 
     try {
       this.requestCount++;
@@ -233,6 +321,7 @@ export class AutosaveEngine {
         body: JSON.stringify({
           expected_revision: pending.revision,
           snapshot: pending.snapshot,
+          ...(statusToApply ? { status: statusToApply } : {}),
         }),
       });
 
@@ -241,8 +330,11 @@ export class AutosaveEngine {
       this.setStatus("saved");
       await offlineSaveDB.removePending(pending.saveId);
     } catch (err) {
+      if (statusToApply) this.pendingFinalStatus = statusToApply;
       console.error("[Autosave] Offline retry sync failed:", err);
       this.setStatus("offline_pending");
+    } finally {
+      this.isSyncing = false;
     }
   }
 

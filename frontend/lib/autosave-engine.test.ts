@@ -144,4 +144,43 @@ describe("Stage S-8 — Autosave Engine & Offline Sync Tests", () => {
     const pending = await offlineSaveDB.getPending("save-123");
     expect(pending?.syncStatus).toBe("revision_conflict");
   });
+
+  it("6. markDirty immediately emits 'pending', then 'saving' on flush, then 'saved'", async () => {
+    vi.mocked(apiFetch).mockResolvedValue({
+      id: "save-123",
+      user_id: "user-1",
+      simulation_id: "sim-chem",
+      experiment_id: "exp-heating",
+      schema_version: "1.0",
+      revision: 2,
+      status: "active",
+      idempotency_key: "save-123:rev:1",
+      snapshot: {},
+      created_at: "2026-08-04T12:00:00Z",
+      updated_at: "2026-08-04T12:00:00Z",
+      last_autosaved_at: "2026-08-04T12:00:00Z",
+    });
+
+    const statuses: AutosaveStatus[] = [];
+    autosaveEngine.subscribe((s) => statuses.push(s));
+
+    autosaveEngine.markDirty();
+    // Immediately after markDirty, status must be 'pending'
+    expect(autosaveEngine.getStatus()).toBe("pending");
+
+    await vi.advanceTimersByTimeAsync(2000);
+    // After flush completes, status must be 'saved'
+    expect(autosaveEngine.getStatus()).toBe("saved");
+    expect(statuses).toContain("pending");
+    expect(statuses).toContain("saving");
+    expect(statuses).toContain("saved");
+  });
+
+  it("7. uninit() resets status to 'idle' and clears dirty flag", () => {
+    autosaveEngine.markDirty();
+    expect(autosaveEngine.getStatus()).toBe("pending");
+
+    autosaveEngine.uninit();
+    expect(autosaveEngine.getStatus()).toBe("idle");
+  });
 });

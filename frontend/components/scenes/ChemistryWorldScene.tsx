@@ -87,6 +87,7 @@ const SandboxReachContext = createContext<SandboxReachContextValue>({
   heldId: null,
 });
 
+import { autosaveEngine } from "@/lib/autosave-engine";
 import { buildChemistryAIContext } from "@/lib/chemistry-context-builder";
 import { useQuality, type QualityLevel } from "@/lib/quality-context";
 import type { Simulation } from "@/lib/types";
@@ -2650,7 +2651,15 @@ function ChemistryScene({
   } = useChemistryInteraction();
   const hazardAccumRef = useRef(0);
 
-  useFrame((_, delta) => {
+  useFrame((_, rawDelta) => {
+    // Clamp the frame delta: a stalled/occluded tab (backgrounded window,
+    // GC pause, OS scheduling hiccup, headless-browser rAF throttling) can
+    // make Three.js report a single huge delta once rendering resumes.
+    // Without a cap, that one frame would dump minutes of simulated heating
+    // in an instant instead of the container heating up smoothly in real
+    // time. 0.1s (~6 frames at 60fps) still tracks real-time heating closely
+    // under normal play and only kicks in on genuine stalls.
+    const delta = Math.min(rawDelta, 0.1);
     const burnerOn = state.tools.some((t) => t.kind === "burner" && t.isOn);
     if (burnerOn) heatTick(delta * HEAT_RATE_C_PER_SEC, heldId);
 
@@ -3211,6 +3220,8 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
     releaseItemFromSlot,
     toggleCabinet,
     toggleBottleCap,
+    setBottleCapState,
+    toggleBurner,
     findAvailableStorageSlot,
     storeItemInCabinet,
     attachToHeatingSlot,
@@ -3389,6 +3400,43 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
   useEffect(() => {
     setSoundMuted(muted);
   }, [muted]);
+
+  // ── E2E Test Bridge ─────────────────────────────────────────────────────
+  // Exposes workspace actions on window.__e2eChemistry in dev/test mode so
+  // Playwright tests can call them directly via page.evaluate(), bypassing
+  // fragile camera-orbit + projected-HTML-marker raycasting entirely.
+  // The functions close over the stable dispatch callbacks destructured from
+  // useChemistryWorkspace() above (toggleBurner, moveItem, pourFromStockBottle,
+  // toggleCabinet, toggleBottleCap, setItemTransform).
+  //
+  // GuidedLabExperienceSection (rendered below, inside ChemistryLabExperienceProvider)
+  // merges its own lab-experience actions (advanceStep, completeExperiment) onto
+  // this same object — ChemistryWorldInner itself is the PARENT of that provider,
+  // so it can't call useChemistryLabExperience() directly. Both effects merge via
+  // Object.assign rather than replacing the object outright, so neither clobbers
+  // the other's keys regardless of render order; only this effect's mount-only
+  // cleanup (below) tears down the whole bridge.
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    const bridge = (window as any).__e2eChemistry ?? ((window as any).__e2eChemistry = {});
+    Object.assign(bridge, {
+      getState: () => JSON.parse(JSON.stringify(state)),
+      toggleBurner,
+      moveItem,
+      pourFromStockBottle,
+      toggleCabinet,
+      toggleBottleCap,
+      setBottleCapState,
+      setItemTransform,
+      attachToHeatingSlot,
+      flush: () => autosaveEngine.flush(),
+    });
+  }, [state, toggleBurner, moveItem, pourFromStockBottle, toggleCabinet, toggleBottleCap, setBottleCapState, setItemTransform, attachToHeatingSlot]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    return () => { delete (window as any).__e2eChemistry; };
+  }, []);
 
   function handleDrop(id: string, x: number, z: number) {
     if (state.emergencyStop) return; // новые лабораторные действия заблокированы во время аварии
@@ -3690,7 +3738,23 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
 // сейчас эксперимент — и всегда показывает CompletionScreen поверх, если
 // только что был завершен эксперимент
 function GuidedLabExperienceSection() {
-  const { selectedExperiment, lastAssessment } = useChemistryLabExperience();
+  const { selectedExperiment, lastAssessment, currentStepIndex, isLastStep, isCurrentStepUnlocked, advanceStep, completeExperiment } =
+    useChemistryLabExperience();
+
+  // See the E2E Test Bridge comment in ChemistryWorldInner above — this merges
+  // the lab-experience actions onto the SAME window.__e2eChemistry object
+  // (Object.assign, not replace) since only this subtree has access to
+  // useChemistryLabExperience().
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    const bridge = (window as any).__e2eChemistry ?? ((window as any).__e2eChemistry = {});
+    Object.assign(bridge, {
+      advanceStep,
+      completeExperiment,
+      getLabStepState: () => ({ currentStepIndex, isLastStep, isCurrentStepUnlocked }),
+    });
+  }, [advanceStep, completeExperiment, currentStepIndex, isLastStep, isCurrentStepUnlocked]);
+
   return (
     <>
       {lastAssessment && <CompletionScreen />}

@@ -684,7 +684,7 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
   }
 }
 
-function createInitialState(): WorkspaceState {
+export function createInitialState(): WorkspaceState {
   const beaker = createContainerItem("beaker-1", "beaker", [0, 0]);
   const testTube = createContainerItem("test-tube-1", "test_tube", [-1.2, 0.6]);
   const flaskSlot = getSlot("cabinet-left-inner-slot-1");

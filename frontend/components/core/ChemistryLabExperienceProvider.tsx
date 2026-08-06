@@ -17,8 +17,112 @@ import { submitTaskEvent, type LearningProfile } from "@/lib/progress-client";
 import { autosaveEngine } from "@/lib/autosave-engine";
 import { hydrateChemistrySave, type SerializeOptions } from "@/lib/chemistry-save-serializer";
 import { observationLogger } from "@/lib/observation-logger";
-import { WorkspaceContext } from "@/components/core/ChemistryWorkspaceProvider";
+import { WorkspaceContext, createInitialState } from "@/components/core/ChemistryWorkspaceProvider";
 import type { ChemistrySaveSnapshotV1 } from "@/lib/chemistry-save-schema";
+
+function computeStateSig(state: any): string {
+  if (!state) return "";
+  
+  const containers = [...(state.containers || [])]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map(c => {
+      const contentsStr = [...(c.data?.contents || [])]
+        .sort((a, b) => a.substanceId.localeCompare(b.substanceId))
+        .map(x => `${x.substanceId}-${x.grams}`)
+        .join(";");
+      const precipitateStr = [...(c.data?.precipitate || [])]
+        .sort((a, b) => a.substanceId.localeCompare(b.substanceId))
+        .map(x => `${x.substanceId}-${x.grams}`)
+        .join(";");
+      const pos = c.position || [0, 0];
+      return `${c.id}:${pos.map((v: number) => v.toFixed(3)).join(",")}:${(c.elevation || 0).toFixed(3)}:${(c.rotationY || 0).toFixed(3)}:${c.storageSlotId}:${c.heatingSourceId}:${c.isSealed}:${contentsStr}:${precipitateStr}:${(c.data?.temperatureC || 0).toFixed(1)}:${(c.pressureKPa ?? 101.3).toFixed(1)}`;
+    })
+    .join("|");
+
+  const stockBottles = [...(state.stockBottles || [])]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map(b => {
+      const pos = b.position || [0, 0];
+      return `${b.id}:${pos.map((v: number) => v.toFixed(3)).join(",")}:${(b.elevation || 0).toFixed(3)}:${(b.rotationY || 0).toFixed(3)}:${b.remainingGrams.toFixed(1)}:${b.capState}:${b.storageSlotId}`;
+    })
+    .join("|");
+
+  const tools = [...(state.tools || [])]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map(t => {
+      const isOnStr = t.kind === "burner" ? (t.isOn ? "on" : "off") : "none";
+      const pos = t.position || [0, 0];
+      return `${t.id}:${pos.map((v: number) => v.toFixed(3)).join(",")}:${(t.elevation || 0).toFixed(3)}:${(t.rotationY || 0).toFixed(3)}:${t.storageSlotId}:${isOnStr}`;
+    })
+    .join("|");
+
+  const cabinets = [...(state.cabinets || [])]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map(c => `${c.id}:${c.isOpen}`)
+    .join("|");
+
+  return `${containers}#${stockBottles}#${tools}#${cabinets}`;
+}
+
+function computeSnapshotSig(ws: any): string {
+  if (!ws) return "";
+  
+  const containers = [...(ws.containers || [])]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((c: any) => {
+      const contentsStr = [...(c.contents || [])]
+        .sort((a: any, b: any) => a.substanceId.localeCompare(b.substanceId))
+        .map((x: any) => `${x.substanceId}-${x.grams}`)
+        .join(";");
+      const precipitateStr = [...(c.precipitate || [])]
+        .sort((a: any, b: any) => a.substanceId.localeCompare(b.substanceId))
+        .map((x: any) => `${x.substanceId}-${x.grams}`)
+        .join(";");
+      const pos = c.position || [0, 0];
+      return `${c.id}:${pos.map((v: number) => v.toFixed(3)).join(",")}:${(c.elevation || 0).toFixed(3)}:${(c.rotationY || 0).toFixed(3)}:${c.storageSlotId ?? null}:${c.heatingSourceId ?? null}:${c.isSealed ?? false}:${contentsStr}:${precipitateStr}:${(c.temperatureC || 20).toFixed(1)}:${(c.pressureKPa ?? 101.3).toFixed(1)}`;
+    })
+    .join("|");
+
+  const stockBottles = [...(ws.stockBottles || [])]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((b: any) => {
+      const pos = b.position || [0, 0];
+      return `${b.id}:${pos.map((v: number) => v.toFixed(3)).join(",")}:${(b.elevation || 0.16).toFixed(3)}:${(b.rotationY || 0).toFixed(3)}:${(b.remainingGrams ?? 500).toFixed(1)}:${b.capState ?? "closed"}:${b.storageSlotId ?? null}`;
+    })
+    .join("|");
+
+  const burners = [...(ws.burners || [])]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((b: any) => {
+      const pos = b.position || [0, 0];
+      return `${b.id}:${pos.map((v: number) => v.toFixed(3)).join(",")}:${(b.elevation || 0).toFixed(3)}:${(b.rotationY || 0).toFixed(3)}:${b.storageSlotId ?? null}:${b.isOn ? "on" : "off"}`;
+    })
+    .join("|");
+
+  const itemTransforms = [...(ws.itemTransforms || [])]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((t: any) => {
+      const pos2d = t.position ? [t.position[0], t.position[2]] : [0, 0];
+      return `${t.id}:${pos2d.map((v: number) => v.toFixed(3)).join(",")}:${(t.elevation || 0).toFixed(3)}:${(t.rotationY || 0).toFixed(3)}:${t.storageSlotId ?? null}:none`;
+    });
+
+  const allTools = [...burners];
+  itemTransforms.forEach((itStr: string) => {
+    const id = itStr.split(":")[0];
+    if (!allTools.some(bStr => bStr.split(":")[0] === id)) {
+      allTools.push(itStr);
+    }
+  });
+  allTools.sort((a, b) => a.split(":")[0].localeCompare(b.split(":")[0]));
+  const toolsStr = allTools.join("|");
+
+  const cabinets = [...(ws.cabinets || [])]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((c: any) => `${c.id}:${c.isOpen}`)
+    .join("|");
+
+  return `${containers}#${stockBottles}#${toolsStr}#${cabinets}`;
+}
 
 /**
  * Chemistry World — Guided Laboratory System (Stage 5.6). Владеет учебным
@@ -80,6 +184,8 @@ interface ChemistryLabExperienceContextValue {
   learningProfile: LearningProfile | null;
   resumeSave: (snapshot: ChemistrySaveSnapshotV1) => void;
   isExperimentUnlockedFor: (experiment: LabExperiment) => boolean;
+  hydrationStatus: "default" | "hydrated";
+  getSerializeOptions: () => SerializeOptions | null;
 }
 
 const ChemistryLabExperienceContext = createContext<ChemistryLabExperienceContextValue | undefined>(undefined);
@@ -102,6 +208,7 @@ export function ChemistryLabExperienceProvider({
   const [lastAssessment, setLastAssessment] = useState<AssessmentReport | null>(null);
   const [lastNotebookEntry, setLastNotebookEntry] = useState<NotebookEntry | null>(null);
   const [learningProfile, setLearningProfile] = useState<LearningProfile | null>(null);
+  const [hydrationStatus, setHydrationStatus] = useState<"default" | "hydrated">("default");
 
   useEffect(() => {
     setNotebookEntries(sortNotebookEntriesByDateDesc(loadNotebook()));
@@ -118,6 +225,8 @@ export function ChemistryLabExperienceProvider({
   const maxPressureKPaRef = useRef(stepContext.hazard.pressureKPa);
   const actionsLogRef = useRef<string[]>([]);
   const reactionHistoryRef = useRef<{ reactionId: string; title: string; at: number }[]>([]);
+
+  const lastSavedSigRef = useRef<string | null>(null);
 
   const prevContentsSigRef = useRef(stepContext.activeContainer.contents.length + stepContext.activeContainer.precipitate.length);
   const prevBurnerRef = useRef(stepContext.burnerOn);
@@ -184,7 +293,15 @@ export function ChemistryLabExperienceProvider({
         })),
         burners,
         cabinets: workspaceContext?.state.cabinets || [],
-        itemTransforms: [],
+        itemTransforms: (workspaceContext?.state.tools || [])
+          .filter((t) => t.kind !== "burner")
+          .map((t) => ({
+            id: t.id,
+            position: [t.position[0], t.elevation || 0, t.position[1]] as [number, number, number],
+            rotationY: t.rotationY || 0,
+            elevation: t.elevation || 0,
+            storageSlotId: t.storageSlotId,
+          })),
       },
       experiment: {
         mode,
@@ -221,6 +338,16 @@ export function ChemistryLabExperienceProvider({
   ]);
 
   useEffect(() => {
+    autosaveEngine.updateStateGetter(getSerializeOptions);
+  }, [getSerializeOptions]);
+
+  useEffect(() => {
+    return () => {
+      autosaveEngine.destroy();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!selectedExperiment) return;
     if (stepContext.activeContainer.temperatureC > maxTempRef.current) maxTempRef.current = stepContext.activeContainer.temperatureC;
   }, [selectedExperiment, stepContext.activeContainer.temperatureC]);
@@ -250,39 +377,33 @@ export function ChemistryLabExperienceProvider({
     });
   }, [selectedExperiment, stepContext.occurredReactionIds]);
 
-  const contentsSig = stepContext.activeContainer.contents.length + stepContext.activeContainer.precipitate.length;
+  const workspaceStateSig = useMemo(() => {
+    return computeStateSig(workspaceContext?.state);
+  }, [workspaceContext?.state]);
+
   useEffect(() => {
     if (!selectedExperiment) return;
-    let changed = false;
-    if (contentsSig !== prevContentsSigRef.current) {
-      changed = true;
-      actionsLogRef.current.push("Изменение содержимого сосуда");
-      prevContentsSigRef.current = contentsSig;
+
+    if (lastSavedSigRef.current === null) {
+      lastSavedSigRef.current = workspaceStateSig;
+      return;
     }
-    if (stepContext.burnerOn !== prevBurnerRef.current) {
-      changed = true;
-      actionsLogRef.current.push(stepContext.burnerOn ? "Горелка включена" : "Горелка выключена");
-      prevBurnerRef.current = stepContext.burnerOn;
+
+    if (workspaceStateSig === lastSavedSigRef.current) {
+      return;
     }
-    if (stepContext.isSealed !== prevSealedRef.current) {
-      changed = true;
-      actionsLogRef.current.push(stepContext.isSealed ? "Сосуд запечатан" : "Сосуд открыт");
-      prevSealedRef.current = stepContext.isSealed;
-    }
-    if (stepContext.pourLog.length !== prevPourCountRef.current) {
-      changed = true;
-      actionsLogRef.current.push("Переливание между сосудами");
-      prevPourCountRef.current = stepContext.pourLog.length;
-    }
-    if (changed) {
-      attemptsRef.current += 1;
-      autosaveEngine.markDirty();
-    }
-  }, [selectedExperiment, contentsSig, stepContext.burnerOn, stepContext.isSealed, stepContext.pourLog.length]);
+
+    lastSavedSigRef.current = workspaceStateSig;
+    attemptsRef.current += 1;
+    autosaveEngine.markDirty();
+  }, [selectedExperiment, workspaceStateSig]);
 
   function resumeSave(snapshot: ChemistrySaveSnapshotV1) {
     if (!snapshot || !snapshot.experimentId) return;
     const hydrated = hydrateChemistrySave(snapshot);
+
+    lastSavedSigRef.current = computeSnapshotSig(snapshot.workspace);
+    setHydrationStatus("hydrated");
 
     setSelectedExperimentId(snapshot.experimentId);
     setCurrentStepIndex(hydrated.experiment.currentStepIndex ?? 0);
@@ -311,6 +432,10 @@ export function ChemistryLabExperienceProvider({
   function selectExperiment(id: string) {
     const experiment = getLabExperiment(id);
     if (!experiment) return;
+
+    lastSavedSigRef.current = computeStateSig(createInitialState());
+    setHydrationStatus("default");
+
     setSelectedExperimentId(id);
     setCurrentStepIndex(0);
     setConclusionDraft("");
@@ -331,6 +456,10 @@ export function ChemistryLabExperienceProvider({
     prevSealedRef.current = stepContext.isSealed;
     prevPourCountRef.current = stepContext.pourLog.length;
 
+    if (workspaceContext) {
+      workspaceContext.resetExperiment();
+    }
+
     autosaveEngine.init(
       `save-${id}`,
       "user-student",
@@ -342,10 +471,14 @@ export function ChemistryLabExperienceProvider({
   }
 
   function exitExperiment() {
+    autosaveEngine.uninit();
+    setHydrationStatus("default");
     setSelectedExperimentId(null);
   }
 
   function resetLabSession() {
+    autosaveEngine.uninit();
+    setHydrationStatus("default");
     setSelectedExperimentId(null);
     setLastAssessment(null);
     setLastNotebookEntry(null);
@@ -433,8 +566,29 @@ export function ChemistryLabExperienceProvider({
         // потеряется только серверная синхронизация Learning Profile
       });
 
+    // Финальный autosave: помечаем ChemistrySave как "completed" на бэкенде.
+    // Без этого GET /api/chemistry/saves (фильтр status==="active") продолжает
+    // считать эксперимент резюмируемым, и каталог одновременно показывает
+    // "Пройдено" (из локального Notebook) и "Есть сохранение (шаг N)" (из
+    // всё ещё активного ChemistrySave) для одного и того же эксперимента.
+    // Снапшот захватывается синхронно ЗДЕСЬ (а не через отложенный
+    // this.stateGetter() внутри движка): если этот flush встанет в очередь
+    // позади другой синхронизации, к моменту реального выполнения
+    // selectedExperimentId уже будет сброшен ниже и getSerializeOptions()
+    // станет возвращать null.
+    const finalSnapshot = getSerializeOptions();
+
     setSelectedExperimentId(null);
+    setHydrationStatus("default");
     completingRef.current = false;
+
+    // uninit() вызывается уже ПОСЛЕ попытки финализации (успешной или нет) —
+    // он обнуляет saveId, который flush() ещё читает.
+    if (finalSnapshot) {
+      autosaveEngine.flush("completed", finalSnapshot).finally(() => autosaveEngine.uninit());
+    } else {
+      autosaveEngine.uninit();
+    }
   }
 
   function isExperimentUnlockedFor(experiment: LabExperiment): boolean {
@@ -466,6 +620,8 @@ export function ChemistryLabExperienceProvider({
     learningProfile,
     resumeSave,
     isExperimentUnlockedFor,
+    hydrationStatus,
+    getSerializeOptions,
   };
 
   return <ChemistryLabExperienceContext.Provider value={value}>{children}</ChemistryLabExperienceContext.Provider>;

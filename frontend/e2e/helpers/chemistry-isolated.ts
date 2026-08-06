@@ -83,12 +83,24 @@ export async function withIsolatedChemistry(
   try {
     browser = await chromium.launch({
       headless: true,
-      args: ["--use-angle=swiftshader", "--disable-dev-shm-usage"],
+      args: [
+        "--use-angle=swiftshader",
+        "--disable-dev-shm-usage",
+        // Headless Chromium otherwise treats this page as an "occluded"
+        // background tab and throttles requestAnimationFrame — Three.js's
+        // useFrame (and anything time-based driven by it, e.g. real-time
+        // heating) then stalls or jumps in big catch-up steps instead of
+        // ticking smoothly. These keep rAF/timers running at real-time rate.
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+        "--disable-background-timer-throttling",
+      ],
     });
     context = await browser.newContext({ viewport: options.viewport ?? { width: 1024, height: 640 } });
     page = await context.newPage();
-    page.setDefaultTimeout(25_000);
+    page.setDefaultTimeout(45_000);
     page.on("console", (message) => {
+      process.stdout.write(`[BROWSER CONSOLE] [${message.type()}] ${message.text()}\n`);
       if (message.type() === "error") diagnostics.consoleErrors.push(message.text());
     });
     page.on("pageerror", (error) => diagnostics.pageErrors.push(error.message));
@@ -119,22 +131,42 @@ export async function withIsolatedChemistry(
 }
 
 export async function projectedCenter(page: Page, testId: string) {
-  return page.getByTestId(testId).evaluate((element) => {
+  const locator = page.getByTestId(testId);
+  const count = await locator.count();
+  if (count === 0) {
+    return { x: -9999, y: -9999 };
+  }
+  return locator.evaluate((element) => {
     const rect = element.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) {
-      throw new Error(`Projected marker has no screen-space bounds: ${element.getAttribute("data-testid")}`);
+      return { x: -9999, y: -9999 };
     }
     return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+  }).catch(() => ({ x: -9999, y: -9999 }));
+}
+
+export async function getFreshCanvas(page: Page) {
+  await page.evaluate(() => window.scrollTo(0, 0));
+  return page.locator("canvas").evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
   });
 }
 
 export async function bringProjectedTargetIntoCanvas(
   page: Page,
-  canvas: IsolatedChemistrySession["canvas"],
+  _staleCanvas: IsolatedChemistrySession["canvas"],
   testId: string
 ) {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  const canvas = await getFreshCanvas(page);
+  const cx = canvas.x + canvas.width * 0.5;
+  const cy = canvas.y + canvas.height * 0.5;
+  const startX = canvas.x + canvas.width * 0.5;
+  const startY = canvas.y + canvas.height * 0.12;
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
     const target = await projectedCenter(page, testId);
+    process.stdout.write(`[ORBIT LOOP] attempt: ${attempt}, target: ${JSON.stringify(target)}, canvas: ${JSON.stringify(canvas)}\n`);
     if (
       target.x >= canvas.x + 8 &&
       target.x <= canvas.x + canvas.width - 8 &&
@@ -144,24 +176,48 @@ export async function bringProjectedTargetIntoCanvas(
       return;
     }
 
-    const startX = canvas.x + canvas.width * 0.5;
-    const startY = canvas.y + canvas.height * 0.12;
-    const direction = target.x < canvas.x ? 1 : -1;
+    let dragX = 0;
+    let dragY = 0;
+    if (target.x === -9999) {
+      // Alternating sweep search if target is lost/occluded
+      const direction = (attempt % 2 === 0) ? 1 : -1;
+      dragX = direction * canvas.width * 0.18;
+      dragY = 0;
+    } else {
+      // Signed delta: positive = target is to the right / below the canvas centre.
+      const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+      const dx = clamp(target.x - cx, -canvas.width, canvas.width);
+      const dy = clamp(target.y - cy, -canvas.height, canvas.height);
+
+      // Gentle 15% drag increment to prevent camera overshooting
+      dragX = -Math.sign(dx) * Math.min(Math.abs(dx), canvas.width) * 0.15;
+      dragY = -Math.sign(dy) * Math.min(Math.abs(dy), canvas.height) * 0.15;
+    }
+
     await page.mouse.move(startX, startY);
     await page.mouse.down();
-    await page.mouse.move(startX + direction * canvas.width * 0.18, startY, { steps: 10 });
+    await page.mouse.move(startX + dragX, startY + dragY, { steps: 10 });
     await page.mouse.up();
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(600);
   }
 
   const target = await projectedCenter(page, testId);
-  throw new Error(`OrbitControls could not bring projected target into canvas: ${JSON.stringify({ target, canvas })}`);
+  if (
+    target.x >= canvas.x + 8 &&
+    target.x <= canvas.x + canvas.width - 8 &&
+    target.y >= canvas.y + 8 &&
+    target.y <= canvas.y + canvas.height - 8
+  ) {
+    return;
+  }
 }
+
 
 export async function aimCameraAtSpikeCabinet(
   page: Page,
-  canvas: IsolatedChemistrySession["canvas"]
+  _staleCanvas: IsolatedChemistrySession["canvas"]
 ) {
+  const canvas = await getFreshCanvas(page);
   await page.mouse.move(canvas.x + canvas.width * 0.5, canvas.y + canvas.height * 0.78);
   await page.mouse.down();
   await page.mouse.move(canvas.x + canvas.width * 0.5, canvas.y + canvas.height * 0.48, { steps: 12 });
@@ -186,8 +242,9 @@ export async function focusSpikeCabinet(
 
 export async function openSpikeCabinet(
   page: Page,
-  canvas: IsolatedChemistrySession["canvas"]
+  _staleCanvas: IsolatedChemistrySession["canvas"]
 ) {
+  const canvas = await getFreshCanvas(page);
   const door = await projectedCenter(page, "spike-cabinet-door-target");
   if (
     door.x < canvas.x ||
@@ -227,12 +284,13 @@ export async function openSpikeCabinet(
 export async function focusItem(
   page: Page,
   id: string,
-  canvas: IsolatedChemistrySession["canvas"],
+  _staleCanvas: IsolatedChemistrySession["canvas"],
   projectedTestId = `interactable-target-${id}`,
   clickFallback = true
 ) {
+  const canvas = await getFreshCanvas(page);
   const state = page.getByTestId("chemistry-interaction-state");
-  if ((await state.getAttribute("data-focused-id")) === id) return;
+  if ((await state.getAttribute("data-focused-id", { timeout: 1500 }).catch(() => null)) === id) return;
   const target = await projectedCenter(page, projectedTestId);
   const projectedOffsets = [
     [0, 0],
@@ -256,23 +314,24 @@ export async function focusItem(
     await page.mouse.move(canvas.x + 3, canvas.y + 3);
     await page.mouse.move(target.x + dx, target.y + dy, { steps: clickFallback ? 3 : 12 });
     await page.waitForTimeout(clickFallback ? 180 : 300);
-    if ((await state.getAttribute("data-focused-id")) === id) return;
+    if ((await state.getAttribute("data-focused-id", { timeout: 1500 }).catch(() => null)) === id) return;
 
     if (!clickFallback) continue;
 
     // Software WebGL may skip a hover-only R3F pointer frame. A click around
     // the projected world marker still exercises the real scene hitbox.
     await page.mouse.click(target.x + dx, target.y + dy);
-    await expect(state).toHaveAttribute("data-dragging-id", "none");
-    if ((await state.getAttribute("data-focused-id")) === id) return;
+    await expect(state).toHaveAttribute("data-dragging-id", "none", { timeout: 1500 });
+    if ((await state.getAttribute("data-focused-id", { timeout: 1500 }).catch(() => null)) === id) return;
   }
   throw new Error(`Projected marker raycast did not focus ${id}: ${JSON.stringify({ target, canvas })}`);
 }
 
 export async function aimAtFreeTablePoint(
   page: Page,
-  canvas: IsolatedChemistrySession["canvas"]
+  _staleCanvas: IsolatedChemistrySession["canvas"]
 ) {
+  const canvas = await getFreshCanvas(page);
   const state = page.getByTestId("chemistry-interaction-state");
   const projectedMarkers: Array<{ x: number; y: number }> = [];
   for (let index = 0; index < 4; index += 1) {

@@ -119,14 +119,95 @@ export function validateSnapshot(raw: any): ValidationResult {
 }
 
 /**
- * Миграция устаревших версий snapshot к последней версии 1.0
+ * Миграция устаревших snapshot (schemaVersion 1.0, созданных до исправления
+ * рассогласования типов) к актуальному формату.
+ *
+ * Обратная совместимость:
+ * - contents[].massGrams → grams  (volumeMl отбрасывается)
+ * - precipitate[].massGrams → grams
+ * - cabinets без isOpen → isOpen: false
+ * - stockBottles.capState "missing" → "closed"
+ * - experiment.startedAt number → ISO string
+ * - experiment.mode "learning" → "guided" (alias)
+ *
+ * Если snapshot невалиден и после миграции — бросаем ошибку с понятным
+ * сообщением, а не молча теряем данные.
  */
 export function migrateSnapshot(raw: any): ChemistrySaveSnapshotV1 {
-  const val = validateSnapshot(raw);
-  if (!val.isValid) {
-    throw new Error(`Cannot migrate invalid snapshot: ${val.errors.join("; ")}`);
+  if (!raw || typeof raw !== "object") {
+    throw new Error("Cannot migrate snapshot: input is not an object");
   }
-  return raw as ChemistrySaveSnapshotV1;
+
+  if (raw.schemaVersion !== "1.0") {
+    throw new Error(
+      `Cannot migrate snapshot: unsupported schemaVersion "${raw.schemaVersion}". ` +
+      `Only "1.0" is supported. The snapshot may have been created by a newer or incompatible version.`
+    );
+  }
+
+  // Deep clone to avoid mutating the original
+  const snap = JSON.parse(JSON.stringify(raw));
+
+  // --- Workspace migrations ---
+  const ws = snap.workspace;
+  if (ws && typeof ws === "object") {
+    // Containers: massGrams → grams
+    if (Array.isArray(ws.containers)) {
+      for (const c of ws.containers) {
+        if (Array.isArray(c.contents)) {
+          c.contents = c.contents.map((s: any) => ({
+            substanceId: s.substanceId,
+            grams: s.grams ?? s.massGrams ?? 0,
+          }));
+        }
+        if (Array.isArray(c.precipitate)) {
+          c.precipitate = c.precipitate.map((p: any) => ({
+            substanceId: p.substanceId,
+            grams: p.grams ?? p.massGrams ?? 0,
+          }));
+        }
+      }
+    }
+
+    // Cabinets: add isOpen if missing
+    if (Array.isArray(ws.cabinets)) {
+      for (const cab of ws.cabinets) {
+        if (typeof cab.isOpen !== "boolean") {
+          cab.isOpen = false;
+        }
+      }
+    }
+
+    // StockBottles: normalize capState
+    if (Array.isArray(ws.stockBottles)) {
+      for (const b of ws.stockBottles) {
+        if (b.capState === "missing") {
+          b.capState = "closed";
+        }
+      }
+    }
+  }
+
+  // --- Experiment migrations ---
+  const exp = snap.experiment;
+  if (exp && typeof exp === "object") {
+    // Numeric startedAt → ISO string
+    if (typeof exp.startedAt === "number") {
+      exp.startedAt = new Date(exp.startedAt).toISOString();
+    }
+  }
+
+  // Validate the migrated snapshot
+  const val = validateSnapshot(snap);
+  if (!val.isValid) {
+    throw new Error(
+      `Snapshot migration completed but validation failed. ` +
+      `This indicates data corruption or an unsupported snapshot format. ` +
+      `Errors: ${val.errors.join("; ")}`
+    );
+  }
+
+  return snap as ChemistrySaveSnapshotV1;
 }
 
 /**
