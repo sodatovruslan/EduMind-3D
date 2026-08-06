@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_current_user
 from app.database import get_db
 from app.models.lab_result import LabResult
-from app.models.simulation import Simulation, SimulationModule
+from app.models.simulation import Simulation, SimulationModule, SimulationVisibility
 from app.models.user import User
 from app.schemas.lab_result import LabResultRead
 from app.schemas.simulation import (
@@ -29,12 +29,22 @@ router = APIRouter(prefix="/api/simulations", tags=["simulations"])
 @router.get("/", response_model=list[SimulationRead])
 async def list_simulations(
     module: SimulationModule | None = None,
+    visibility: SimulationVisibility | None = None,
     db: AsyncSession = Depends(get_db),
     _current_user: User = Depends(get_current_user),
 ):
+    """
+    По умолчанию каталог показывает только PUBLIC — internal/test/archived
+    записи существуют в БД (нужны E2E и истории), но не должны засорять
+    пользовательский dashboard. GET /{simulation_id} по прямому ID ниже
+    сознательно НЕ фильтрует по visibility — E2E обращаются к test-записям
+    (sim-chem-world, sim-chem) напрямую по фиксированному ID, а не через
+    этот список.
+    """
     query = select(Simulation)
     if module:
         query = query.where(Simulation.module == module)
+    query = query.where(Simulation.visibility == (visibility or SimulationVisibility.PUBLIC))
     result = await db.execute(query)
     return result.scalars().all()
 

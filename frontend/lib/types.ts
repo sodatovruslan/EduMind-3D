@@ -16,10 +16,15 @@ export interface TokenPair {
 
 export type SimulationModule = "simlab" | "geo3d" | "electricity_lab" | "chemistry_world";
 
+// public: видна в dashboard. internal/test/archived: существуют в БД (нужны
+// E2E и истории), но GET /api/simulations/ по умолчанию их не отдаёт.
+export type SimulationVisibility = "public" | "internal" | "test" | "archived";
+
 export interface Simulation {
   id: string;
   title: string;
   module: SimulationModule;
+  visibility: SimulationVisibility;
   subject: string;
   config: Record<string, unknown>;
   difficulty: number;
