@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import { Html, QuadraticBezierLine, MeshTransmissionMaterial, useGLTF } from "@react-three/drei";
 import { Play, Pause, RotateCcw, AlertTriangle } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import CanvasShell from "@/components/scenes/CanvasShell";
 import AITeacherChat from "@/components/ai/AITeacherChat";
 import TaskPanel from "@/components/tasks/TaskPanel";
@@ -44,16 +45,26 @@ import type { Simulation } from "@/lib/types";
 
 // Guided Onboarding: наведение курсора в любую точку компонента (не только
 // на клемму) показывает всплывающую подпись с названием — общий хук вместо
-// повторения одной и той же пары обработчиков в каждом компоненте
-function useHoverTooltip() {
+// повторения одной и той же пары обработчиков в каждом компоненте.
+// Stage S9.8 — Sandbox UX: необязательный параметр `interactive` — курсор
+// "pointer" на наведении для компонентов, у которых наведение реально
+// приводит к клик-действию (сейчас — только Switch, тумблер переключается
+// кликом), чтобы это было видно ДО клика, а не только по тултипу с именем.
+// Остальные компоненты (Battery/Resistor/Bulb/Ammeter/Voltmeter/Fuse)
+// вызывают хук без аргумента — поведение для них не меняется.
+function useHoverTooltip(interactive = false) {
   const [hovered, setHovered] = useState(false);
   return {
     hovered,
     onPointerOver: (e: ThreeEvent<PointerEvent>) => {
       e.stopPropagation();
       setHovered(true);
+      if (interactive) document.body.style.cursor = "pointer";
     },
-    onPointerOut: () => setHovered(false),
+    onPointerOut: () => {
+      setHovered(false);
+      if (interactive) document.body.style.cursor = "auto";
+    },
   };
 }
 
@@ -379,7 +390,7 @@ function Bulb({ brightness }: { brightness: number }) {
 }
 
 function Switch({ isClosed, onToggle }: { isClosed: boolean; onToggle: () => void }) {
-  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip(true);
   const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.switch;
   // targetSize=0.8 — модель это компактный тумблер (мировой bbox после
@@ -606,6 +617,12 @@ function Fuse({ isBlown, justBlown, timeScale }: { isBlown: boolean; justBlown: 
 function WireTube({ a, b, onClick }: { a: THREE.Vector3; b: THREE.Vector3; onClick: (e: { stopPropagation: () => void }) => void }) {
   const capRef = useRef<THREE.Group>(null);
   const mountedAtRef = useRef(performance.now());
+  // Stage S9.8 — Sandbox UX: провод УЖЕ кликабелен (клик — разрыв
+  // соединения, инструкция под сценой это описывает), но до сих пор не
+  // было никакой подсказки, что именно ЭТОТ провод под курсором можно
+  // удалить — ни курсора, ни подсветки. Тот же язык, что и у danger-цвета
+  // предупреждений безопасности (красный = "уберёт/опасно").
+  const [hovered, setHovered] = useState(false);
 
   const geometry = useMemo(() => {
     const mid = a.clone().add(b).multiplyScalar(0.5);
@@ -627,8 +644,36 @@ function WireTube({ a, b, onClick }: { a: THREE.Vector3; b: THREE.Vector3; onCli
 
   return (
     <group>
-      <mesh geometry={geometry} onClick={onClick} castShadow>
-        <meshStandardMaterial color="#18181b" roughness={0.7} metalness={0.05} />
+      <mesh
+        geometry={geometry}
+        onClick={(e: ThreeEvent<MouseEvent>) => {
+          // клик удаляет именно ЭТОТ провод -> сразу после этого мешу
+          // нечего будет наводить, и onPointerOut ниже никогда не
+          // сработает (R3F не эмулирует pointerleave при размонтировании
+          // объекта) — без явного сброса здесь курсор застрял бы на
+          // "pointer" до следующего наведения на что-то другое интерактивное
+          document.body.style.cursor = "auto";
+          setHovered(false);
+          onClick(e);
+        }}
+        onPointerOver={(e: ThreeEvent<PointerEvent>) => {
+          e.stopPropagation();
+          setHovered(true);
+          document.body.style.cursor = "pointer";
+        }}
+        onPointerOut={() => {
+          setHovered(false);
+          document.body.style.cursor = "auto";
+        }}
+        castShadow
+      >
+        <meshStandardMaterial
+          color={hovered ? "#ef4444" : "#18181b"}
+          emissive={hovered ? "#ef4444" : "#000000"}
+          emissiveIntensity={hovered ? 0.6 : 0}
+          roughness={0.7}
+          metalness={0.05}
+        />
       </mesh>
       <group ref={capRef}>
         <mesh position={a}>
@@ -682,17 +727,32 @@ function PendingWirePreview() {
   const mid = from.clone().add(pendingPoint).multiplyScalar(0.5);
   mid.y -= 0.12;
   return (
-    <QuadraticBezierLine
-      start={from}
-      end={pendingPoint}
-      mid={mid}
-      color="#facc15"
-      lineWidth={1.5}
-      dashed
-      dashScale={4}
-      transparent
-      opacity={0.6}
-    />
+    <>
+      <QuadraticBezierLine
+        start={from}
+        end={pendingPoint}
+        mid={mid}
+        color="#facc15"
+        lineWidth={1.5}
+        dashed
+        dashScale={4}
+        transparent
+        opacity={0.6}
+      />
+      {/* Stage S9.8 — Sandbox UX: отмена клавишей Esc уже работала (см.
+          WireDragProvider), но никак не была видна студенту — единственный
+          способ узнать про неё был прочитать код. Подсказка появляется
+          только во время активного жеста и исчезает вместе с ним — не
+          добавляет постоянного визуального шума в остальное время. */}
+      <Html position={pendingPoint} center distanceFactor={8} style={{ pointerEvents: "none" }}>
+        <div
+          className="pointer-events-none whitespace-nowrap rounded-lg border border-amber-400/30 bg-slate-900/90 px-2 py-1 text-[11px] text-amber-200 shadow-lg"
+          style={{ transform: "translateY(-20px)" }}
+        >
+          Отпустите на клемме для соединения · Esc — отмена
+        </div>
+      </Html>
+    </>
   );
 }
 
@@ -1292,25 +1352,40 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
             Chemistry World's safety-warnings баннер (ChemistryWorldScene.tsx) —
             цвет по severity, data-testid по коду, образовательный текст.
             Не заменяет circuit-status выше (тот остаётся как есть), а
-            дополняет его структурированными предупреждениями. */}
-        {safetyWarnings.length > 0 && (
-          <div className="flex flex-col gap-2 sm:col-span-2" data-testid="safety-warnings">
-            {safetyWarnings.map((w, i) => (
-              <div
-                key={`${w.code}-${i}`}
-                data-testid={`safety-warning-${w.code}`}
-                className={`flex items-center gap-2 rounded-xl border p-3 text-sm ${
-                  w.severity === "danger"
-                    ? "border-red-400/40 bg-red-500/10 text-red-300"
-                    : "border-amber-400/40 bg-amber-500/10 text-amber-200"
-                }`}
-              >
-                <AlertTriangle size={14} className="shrink-0" />
-                {w.message}
-              </div>
-            ))}
-          </div>
-        )}
+            дополняет его структурированными предупреждениями.
+            Stage S9.8 — та же fade/slide-анимация появления/исчезновения,
+            что и у Chemistry World (AnimatePresence), вместо резкого
+            появления/исчезновения — единственная косметическая правка
+            здесь, сам баннер и его данные не тронуты. */}
+        <AnimatePresence>
+          {safetyWarnings.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.18 }}
+              className="flex flex-col gap-2 sm:col-span-2"
+              data-testid="safety-warnings"
+            >
+              {safetyWarnings.map((w, i) => (
+                <motion.div
+                  key={`${w.code}-${i}`}
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  data-testid={`safety-warning-${w.code}`}
+                  className={`flex items-center gap-2 rounded-xl border p-3 text-sm ${
+                    w.severity === "danger"
+                      ? "border-red-400/40 bg-red-500/10 text-red-300"
+                      : "border-amber-400/40 bg-amber-500/10 text-amber-200"
+                  }`}
+                >
+                  <AlertTriangle size={14} className="shrink-0" />
+                  {w.message}
+                </motion.div>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <div className="sm:col-span-2">
           <h3 className="mb-2 font-mono text-xs uppercase tracking-widest text-slate-500">Быстрая проверка</h3>
