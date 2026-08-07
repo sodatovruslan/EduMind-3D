@@ -32,6 +32,7 @@ export default function ElectricityGuidedLabPanel() {
     currentStepIndex,
     currentStep,
     isCurrentStepUnlocked,
+    currentStepFeedback,
     advanceStep,
     isLastStep,
     measurements,
@@ -218,8 +219,12 @@ export default function ElectricityGuidedLabPanel() {
           выдумывает новый текст, а прямо указывает, что дело именно в
           невыполненном условии, а не в баге/зависшей кнопке. */}
       {!isCurrentStepUnlocked && (
-        <p className="mt-1.5 text-xs text-slate-500" role="status" data-testid="electricity-guided-lab-locked-hint">
-          Кнопка станет активной, как только выполнится условие шага выше.
+        <p
+          className={`mt-1.5 text-xs ${currentStepFeedback ? "text-amber-300" : "text-slate-500"}`}
+          role="status"
+          data-testid="electricity-guided-lab-locked-hint"
+        >
+          {currentStepFeedback ?? "Кнопка станет активной, как только выполнится условие шага выше."}
         </p>
       )}
     </div>

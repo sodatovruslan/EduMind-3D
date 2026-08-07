@@ -11,6 +11,13 @@ import {
   type ElectricityLabStep,
   type ElectricityLabStepContext,
 } from "@/lib/electricity-lab-catalog";
+import { checkElectricalSafety } from "@/lib/electricity-safety";
+import {
+  ammeterPlacementMessage,
+  checkAmmeterPlacement,
+  checkVoltmeterPlacement,
+  voltmeterPlacementMessage,
+} from "@/lib/measurement-validation";
 import {
   buildElectricityNotebookEntry,
   sortElectricityNotebookEntriesByDateDesc,
@@ -73,6 +80,12 @@ interface ElectricityLabExperienceContextValue {
   currentStepIndex: number;
   currentStep: ElectricityLabStep | null;
   isCurrentStepUnlocked: boolean;
+  // Stage S9.5 — Guided Experiments: почему currentStep всё ещё заблокирован
+  // (null, если он разблокирован или причина не сводится к безопасности/
+  // размещению приборов — тогда UI покажет только общую инструкцию шага).
+  // Переиспользует те же сообщения, что уже показывает баннер безопасности
+  // и приборные подсказки — ничего не выдумывает заново.
+  currentStepFeedback: string | null;
   advanceStep: () => void;
   isLastStep: boolean;
   suggestedTerminals: [string, string] | null;
@@ -244,6 +257,30 @@ export function ElectricityLabExperienceProvider({
   const isLastStep = selectedExperiment ? currentStepIndex === selectedExperiment.steps.length - 1 : false;
   const suggestedTerminals = currentStep?.suggestedTerminals ? currentStep.suggestedTerminals(effectiveStepContext) : null;
 
+  // Stage S9.5 — Guided Experiments: объяснение блокировки. Сначала — самая
+  // критичная опасность (danger, например короткое замыкание — она может
+  // сделать показания приборов бессмысленными/недостоверными), затем сам шаг
+  // (если у него есть специфичная причина — например, амперметр включён
+  // параллельно), затем общая проверка размещения приборов.
+  let currentStepFeedback: string | null = null;
+  if (currentStep && !isCurrentStepUnlocked) {
+    const dangerWarning = checkElectricalSafety({
+      components: effectiveStepContext.components,
+      connections: effectiveStepContext.connections,
+      solution: effectiveStepContext.solution,
+    }).find((w) => w.severity === "danger");
+    currentStepFeedback = dangerWarning?.message ?? currentStep.feedback?.(effectiveStepContext) ?? null;
+    if (!currentStepFeedback) {
+      const ammeterMsg = ammeterPlacementMessage(
+        checkAmmeterPlacement(effectiveStepContext.components, effectiveStepContext.connections, effectiveStepContext.solution)
+      );
+      const voltmeterMsg = voltmeterPlacementMessage(
+        checkVoltmeterPlacement(effectiveStepContext.components, effectiveStepContext.connections, effectiveStepContext.solution)
+      );
+      currentStepFeedback = ammeterMsg ?? voltmeterMsg ?? null;
+    }
+  }
+
   function advanceStep() {
     if (!selectedExperiment || !currentStep) return;
     if (!currentStep.isUnlocked(effectiveStepContext)) return; // реальная проверка, не просто клик
@@ -330,6 +367,7 @@ export function ElectricityLabExperienceProvider({
     currentStepIndex,
     currentStep,
     isCurrentStepUnlocked,
+    currentStepFeedback,
     advanceStep,
     isLastStep,
     suggestedTerminals,

@@ -874,3 +874,65 @@ Backend/frontend остановлены после диагностики Playwr
 3. `unsafe_measurement`/`unsafe_connection` события логируются с генерическим `code` полем (не detail-специфичным per-instance) — соответствует уже установленной в S9.3/этом чекпоинте гранулярности (та же, что у `short_circuit`), не усложнялось намеренно.
 
 Ничего не закоммичено в этой части до отдельного шага коммита ниже.
+
+Закоммичено как `feat(electricity): S9.4 approved` (commit `ff2612f`, от `sodatovruslan`, без Co-Authored-By, без push).
+
+---
+
+## Обновление 2026-08-07 (продолжение №10) — Stage S9.5: Guided Experiments до production quality
+
+### Задача чекпоинта
+Довести guided experiments Electricity Lab до того же уровня, что и Chemistry World, **не переписывая Electricity Lab и не дублируя физику**: полный жизненный цикл (выбор/шаги/подсказки/успех-неудача/завершение/рестарт), реагирующий на РЕАЛЬНОЕ состояние цепи; валидация шагов через уже существующие production-системы (солвер, `measurement-validation.ts`, `electricity-safety.ts`); **сначала изучить `electricity-lab-catalog.ts` и существующие определения экспериментов** и по возможности апгрейдить их вместо параллельного каталога; минимальный UX поверх существующих панелей; безопасность не должна давать засчитать небезопасный результат; состояние — детерминированное/сериализуемое (готово к будущему автосейву, но сам автосейв не реализуется); 3 категории тестов. Не начинать S9.6/S9.7/S9.8/S9.9.
+
+### Что обнаружено при обязательном первом шаге (чтение перед написанием кода)
+У Electricity Lab **уже был** полноценный слой guided experiments из более раннего чекпоинта "Stage E-2" — `frontend/lib/electricity-lab-catalog.ts` (8 экспериментов, полный цикл шагов introduction/theory/equipment/assembly/measurement/analysis/conclusion/finish, реальные `isUnlocked`/`isComplete`, научные вопросы, XP), `ElectricityLabExperienceProvider.tsx` (выбор/индекс шага/измерения/подсказки/журнал/завершение, всё уже plain-сериализуемое состояние), `ElectricityGuidedLabPanel.tsx`/`ElectricityExperimentCatalogBrowser.tsx`/`ElectricityLabReportPanel.tsx`/`ElectricityLabNotebookPanel.tsx` (UI), уже подключённые в `ElectricityLabScene.tsx`. Это НЕ то же самое, что `task-engine.ts` (6 быстрых заданий, не трогался) — это и есть тот более богатый слой, который задача просила изучить и доработать, а не строить заново.
+
+**Реальный пробел**: ни один из 8 экспериментов не обращался к `measurement-validation.ts` (S9.3) или `electricity-safety.ts` (S9.4) — обе системы появились ПОСЛЕ того, как этот guided-слой был написан. Конкретно: `measureCurrent`/`measureVoltage` можно было засчитать завершёнными с неправильно подключённым амперметром/вольтметром (если `isCircuitActive`/показание вольтметра случайно выглядели правдоподобно); любой из 8 экспериментов можно было засчитать завершённым при активном `danger`-предупреждении (короткое замыкание, обход предохранителя, опасное измерение) — обе системы просто никогда не общались друг с другом.
+
+### Что сделано ✅
+
+1. **`frontend/lib/electricity-lab-catalog.ts`** — добавлены `isElectricallySafe(ctx, allowedDangerCodes?)` (читает `checkElectricalSafety`, блокирует завершение при любом `danger`-предупреждении, кроме кодов, которые эксперимент намеренно провоцирует), `isAmmeterPlacedCorrectly`/`isVoltmeterPlacedCorrectly` (читают `checkAmmeterPlacement`/`checkVoltmeterPlacement`), и необязательное поле `feedback` на `ElectricityLabStep` для объяснения блокировки конкретного шага. У всех 8 экспериментов `isComplete` (и соответствующий `finishStep`) теперь дополнительно требует `isElectricallySafe`; у `measureCurrent`/`measureVoltage` шаг сборки дополнительно требует правильного размещения прибора. `elec-advanced-fuse-overload` явно разрешает свой собственный `fuse_blown` (это и есть цель эксперимента), но по-прежнему блокируется любой ДРУГОЙ опасностью (например, обходом предохранителя). Ни одна физическая/топологическая величина не пересчитана заново — каждая новая проверка это прямой вызов уже существующих чистых функций S9.3/S9.4.
+2. **`frontend/components/core/ElectricityLabExperienceProvider.tsx`** — добавлено `currentStepFeedback: string | null` в контекст: сначала самое критичное активное `danger`-предупреждение, затем собственный `feedback()` шага, затем сообщение о размещении прибора, иначе `null` (UI покажет общий текст). Новых полей домена/состояния нет — вычисляется так же, как уже вычислялся `isCurrentStepUnlocked`.
+3. **`frontend/components/lab/ElectricityGuidedLabPanel.tsx`** — существующий абзац с подсказкой о блокировке теперь показывает `currentStepFeedback` (жёлтым), если он есть, иначе — прежний общий текст. Никакого редизайна/новой вёрстки.
+
+### Тесты (3 категории, как и просили — плюс UI-рендер существующей панели)
+- **Unit** — `frontend/lib/electricity-lab-catalog.test.ts` (расширен), **13/13** (5 новых): амперметр-шунтирует-резистор блокирует `measureCurrent` с переиспользованным сообщением, затем разблокируется после исправления на канонический монтаж; вольтметр-последовательно блокирует `measureVoltage` аналогично; все 8 экспериментов блокируются активным коротким замыканием, даже когда их собственные числовые условия выполнены; `fuseOverload` разрешает свой `fuse_blown`, но блокируется одновременным обходом предохранителя; `lampBrightness` НЕ блокируется предупреждением (`warning`) о превышении мощности лампы (блокирует только `danger`).
+- **Integration** — `frontend/components/core/ElectricityGuidedExperiment.integration.test.tsx` (новый), **2/2**: настоящий `ExperimentStateProvider` → настоящий `solveCircuit()` → настоящий `ElectricityLabExperienceProvider`, через реальные `addConnection`/`removeConnection`/`updateComponent`; ошибка амперметра исправляется вживую без перемонтирования; настоящее короткое замыкание, введённое посреди эксперимента, блокирует шаг `finish` и снимается сразу после устранения.
+- **Workflow** — `frontend/components/core/ElectricityGuidedExperiment.workflow.test.tsx` (новый), **4/4**: полное прохождение работы от начала до конца (`elec-beginner-measure-current`); неправильная проводка → исправление (`elec-beginner-measure-voltage`, вольтметр последовательно → исправлен); намеренное КЗ → устранение (`elec-advanced-short-circuit`, КЗ зафиксировано и разрешено перед разблокировкой `finish`); сценарий рестарта (`exitExperiment` + повторный `selectExperiment` полностью сбрасывает индекс шага/измерения/черновики, работа проходится заново с чистой сессии).
+- **UI** — `frontend/components/lab/ElectricityGuidedLabPanel.test.tsx` (новый), **2/2**: настоящая панель через ту же цепочку провайдеров показывает только общий текст при пустой цепи и конкретное переиспользованное сообщение про амперметр (жёлтым) после реальной ошибки подключения.
+- **Backward compatibility**: все 8 прежних тестов `electricity-lab-catalog.test.ts` прошли без изменений.
+
+### Playwright — честно не предпринимался в этом чекпоинте
+Файла `electricity-guided-lab.spec.ts` не существовало и не был добавлен. Известное зависание headless Chromium/SwiftShader на `mouse.move` (доказано в S9.3 против неизменённого baseline и намеренно не расследовалось дальше в S9.3/S9.4 по прямому указанию) принимается как ограничение текущего окружения. Три уровня Vitest-тестов выше уже прогоняют реальный провайдер/солвер/безопасность/измерения от начала до конца без браузера — это честно задокументированный пробел в браузерном покрытии, а не заявление, что оно проверено.
+
+### Результаты проверок
+| Проверка | Результат |
+|---|---|
+| `npx tsc --noEmit` | 0 ошибок |
+| `electricity-lab-catalog.test.ts` (расширен, +5) | **13/13 PASSED** |
+| `ElectricityGuidedExperiment.integration.test.tsx` (новый) | **2/2 PASSED** |
+| `ElectricityGuidedExperiment.workflow.test.tsx` (новый) | **4/4 PASSED** |
+| `ElectricityGuidedLabPanel.test.tsx` (новый) | **2/2 PASSED** |
+| `npx vitest run` (полный) | **516/516 PASSED (51 файл)**, было 503/48 на S9.4 |
+| `npm run lint` | 0 ошибок, 0 предупреждений |
+| `circuit-engine.ts`, `nodal-analysis-solver.ts`, `measurement-validation.ts`, `electricity-safety.ts`, `ExperimentStateProvider.tsx` | **не изменены** |
+| Каталог из 8 экспериментов (id/title/XP) | **не изменён** — только условия разблокировки/завершения ужесточены |
+
+### Файлы, изменённые/добавленные в этой части
+| Файл | Что изменено |
+|------|-------------|
+| `frontend/lib/electricity-lab-catalog.ts` | добавлены проверки безопасности/размещения приборов в `isComplete` всех 8 экспериментов + поле `feedback` на шаге |
+| `frontend/lib/electricity-lab-catalog.test.ts` | +5 юнит-тестов на новую логику |
+| `frontend/components/core/ElectricityLabExperienceProvider.tsx` | добавлено `currentStepFeedback` в контекст |
+| `frontend/components/lab/ElectricityGuidedLabPanel.tsx` | подсказка блокировки теперь показывает `currentStepFeedback` |
+| `frontend/components/core/ElectricityGuidedExperiment.integration.test.tsx` | новый файл — 2 интеграционных теста |
+| `frontend/components/core/ElectricityGuidedExperiment.workflow.test.tsx` | новый файл — 4 workflow-сценария |
+| `frontend/components/lab/ElectricityGuidedLabPanel.test.tsx` | новый файл — 2 UI-теста реального рендера панели |
+| `electricity_stage_s9_plan.md` | добавлен раздел `S9.5 - Guided Experiments`, чеклист §3 обновлён |
+
+### Что осталось ❌
+1. Playwright-сценарий для guided-lab UI не добавлен — см. секцию выше (честно принятое, задокументированное ограничение окружения, не расследовалось дальше по прямому указанию).
+2. Assessment/Teacher Reports (S9.6), Autosave/Resume (S9.7), Sandbox UX (S9.8), Final Polish (S9.9) — не начаты, вне скоупа этого чекпоинта.
+3. Живая проверка в браузере (консоль без ошибок, визуальная проверка баннера подсказки) не проводилась — заменена рендер-тестами через Testing Library с той же реальной цепочкой провайдеров (см. `ElectricityGuidedLabPanel.test.tsx`).
+
+Ничего не закоммичено в этой части до отдельного шага коммита ниже.
