@@ -253,6 +253,85 @@ describe("solveCircuitNodal — real capability the DFS solver does not have (pa
     expect(nodal.readings.r1.currentA).toBeCloseTo(3, 2); // branch A: 12/4
     expect(nodal.readings.r3.currentA).toBeCloseTo(1.5, 2); // branch B: 12/8
   });
+
+  // Stage S9.9 — the test above is labelled "bridge-like" but the two
+  // branches never actually share a bridging element (m1/m2 are never tied
+  // together) — it's really just two independent parallel branches, which
+  // series/parallel reduction alone can already solve. A GENUINE Wheatstone
+  // bridge (a 5th resistor directly connecting the two branches' midpoints)
+  // is the textbook case that specifically CANNOT be reduced via series/
+  // parallel rules and requires real nodal analysis — added here to close
+  // that gap explicitly rather than assume the existing test already covers it.
+  it("solves a genuine Wheatstone bridge — BALANCED case: bridge resistor carries zero current", () => {
+    // r1/r2 = 100/200 = 0.5 and r3/r4 = 100/200 = 0.5 -> balanced bridge ->
+    // V(m1) == V(m2) regardless of the bridge resistor's own value -> the
+    // bridge (r5) must carry zero current. A textbook, hand-verifiable fact.
+    const components: CircuitComponent[] = [
+      { id: "bat", kind: "battery", terminals: ["bat_pos", "bat_neg"], voltageV: 12 },
+      { id: "r1", kind: "resistor", terminals: ["a1", "m1"], resistanceOhm: 100 },
+      { id: "r2", kind: "resistor", terminals: ["m1", "b1"], resistanceOhm: 200 },
+      { id: "r3", kind: "resistor", terminals: ["a2", "m2"], resistanceOhm: 100 },
+      { id: "r4", kind: "resistor", terminals: ["m2", "b2"], resistanceOhm: 200 },
+      { id: "r5", kind: "resistor", terminals: ["m1", "m2"], resistanceOhm: 50 }, // the bridge itself
+    ];
+    const connections: Connection[] = [
+      { id: "c1", terminals: ["bat_pos", "a1"] },
+      { id: "c2", terminals: ["bat_pos", "a2"] },
+      { id: "c3", terminals: ["b1", "bat_neg"] },
+      { id: "c4", terminals: ["b2", "bat_neg"] },
+    ];
+    const nodal = solveCircuitNodal(components, connections);
+
+    expect(nodal.readings.r5.currentA).toBeCloseTo(0, 3);
+    // with the bridge inert, each branch behaves as an independent 300Ω
+    // series path in parallel with the other -> R_total = 150Ω -> I = 0.08A
+    expect(nodal.currentA).toBeCloseTo(0.08, 3);
+    expect(nodal.readings.r1.currentA).toBeCloseTo(0.04, 3);
+    expect(nodal.readings.r3.currentA).toBeCloseTo(0.04, 3);
+  });
+
+  it("solves a genuine Wheatstone bridge — UNBALANCED case: satisfies Kirchhoff's Current Law at every internal node", () => {
+    // r1/r2 = 1 and r3/r4 = 3 -> deliberately unbalanced -> the bridge
+    // carries real, non-zero current and neither branch can be solved in
+    // isolation. Rather than hand-deriving the matrix solution (error-prone
+    // to transcribe correctly), this asserts the one thing that MUST hold
+    // for any physically correct solution regardless of the exact values:
+    // current in equals current out at every node that isn't the source/
+    // ground — a genuinely independent check, not circular with how each
+    // reading.currentA is itself computed (vDrop/R) inside the solver.
+    const components: CircuitComponent[] = [
+      { id: "bat", kind: "battery", terminals: ["bat_pos", "bat_neg"], voltageV: 9 },
+      { id: "r1", kind: "resistor", terminals: ["a1", "m1"], resistanceOhm: 100 },
+      { id: "r2", kind: "resistor", terminals: ["m1", "b1"], resistanceOhm: 100 },
+      { id: "r3", kind: "resistor", terminals: ["a2", "m2"], resistanceOhm: 300 },
+      { id: "r4", kind: "resistor", terminals: ["m2", "b2"], resistanceOhm: 100 },
+      { id: "r5", kind: "resistor", terminals: ["m1", "m2"], resistanceOhm: 50 },
+    ];
+    const connections: Connection[] = [
+      { id: "c1", terminals: ["bat_pos", "a1"] },
+      { id: "c2", terminals: ["bat_pos", "a2"] },
+      { id: "c3", terminals: ["b1", "bat_neg"] },
+      { id: "c4", terminals: ["b2", "bat_neg"] },
+    ];
+    const nodal = solveCircuitNodal(components, connections);
+
+    // the bridge must be doing real work in the unbalanced case (sanity
+    // check that this test isn't accidentally balanced too)
+    expect(Math.abs(nodal.readings.r5.currentA)).toBeGreaterThan(0.001);
+
+    // KCL at m1: current arriving via r1 (a1->m1, positive by sign
+    // convention) must equal current leaving via r2 (m1->b1) plus current
+    // leaving via r5 (m1->m2)
+    expect(nodal.readings.r1.currentA).toBeCloseTo(nodal.readings.r2.currentA + nodal.readings.r5.currentA, 4);
+
+    // KCL at m2: current arriving via r3 (a2->m2) plus current arriving via
+    // r5 (m1->m2) must equal current leaving via r4 (m2->b2)
+    expect(nodal.readings.r3.currentA + nodal.readings.r5.currentA).toBeCloseTo(nodal.readings.r4.currentA, 4);
+
+    // overall conservation: total battery current splits between the two
+    // branch entry points (a1 via r1, a2 via r3) and nothing else
+    expect(nodal.currentA).toBeCloseTo(Math.abs(nodal.readings.r1.currentA + nodal.readings.r3.currentA), 4);
+  });
 });
 
 describe("solveCircuitNodal — numerical stability stress cases (the roadmap's stated Option B risk)", () => {

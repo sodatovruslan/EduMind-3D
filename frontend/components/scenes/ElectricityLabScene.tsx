@@ -1342,7 +1342,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
           )}
           {solution.isClosedLoop && solution.isCircuitActive && (
             <p className="text-emerald-300">
-              Ток течет: I = {solution.currentA.toFixed(2)} А (закон Ома: U/R = {(battery?.voltageV ?? 0).toFixed(1)}В /
+              Ток течет: I = {solution.currentA.toFixed(2)} А (закон Ома: U/R = {(battery?.voltageV ?? 0).toFixed(1)} В /
               контур).
             </p>
           )}
