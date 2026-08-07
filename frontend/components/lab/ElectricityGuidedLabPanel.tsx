@@ -3,6 +3,7 @@
 import { ArrowRight, CheckCircle2, Gauge, Target, X } from "lucide-react";
 import { useElectricityLabExperience } from "@/components/core/ElectricityLabExperienceProvider";
 import type { ElectricityLabStepKind } from "@/lib/electricity-lab-catalog";
+import ElectricityAutosaveBadge from "./ElectricityAutosaveBadge";
 
 /**
  * Electricity Lab — Guided Laboratory Workflow UI (Stage E-2, Task 2/4/5).
@@ -61,16 +62,19 @@ export default function ElectricityGuidedLabPanel() {
             {STEP_LABEL[currentStep.kind]} · Шаг {currentStepIndex + 1} / {totalSteps}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={exitExperiment}
-          data-testid="electricity-guided-lab-exit"
-          title="Выйти из лабораторной работы"
-          aria-label="Выйти из лабораторной работы"
-          className="text-slate-400 hover:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-neon-violet"
-        >
-          <X size={18} />
-        </button>
+        <div className="flex items-center gap-2">
+          <ElectricityAutosaveBadge />
+          <button
+            type="button"
+            onClick={exitExperiment}
+            data-testid="electricity-guided-lab-exit"
+            title="Выйти из лабораторной работы"
+            aria-label="Выйти из лабораторной работы"
+            className="text-slate-400 hover:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-neon-violet"
+          >
+            <X size={18} />
+          </button>
+        </div>
       </div>
 
       <div

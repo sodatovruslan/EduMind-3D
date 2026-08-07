@@ -22,6 +22,7 @@ import ElectricityExperimentCatalogBrowser from "@/components/lab/ElectricityExp
 import ElectricityGuidedLabPanel from "@/components/lab/ElectricityGuidedLabPanel";
 import ElectricityLabReportPanel from "@/components/lab/ElectricityLabReportPanel";
 import ElectricityLabNotebookPanel from "@/components/lab/ElectricityLabNotebookPanel";
+import ElectricityResumeModal from "@/components/lab/ElectricityResumeModal";
 import { COMPONENT_INFO } from "@/lib/component-info";
 import { useSimulationClock } from "@/lib/use-simulation-clock";
 import { useQuality, type QualityLevel } from "@/lib/quality-context";
@@ -961,7 +962,24 @@ function ElectricityResetButton({ onReset }: { onReset: () => void }) {
 // только что была завершена работа (тот же паттерн, что
 // GuidedLabExperienceSection в Chemistry World)
 function ElectricityLabExperienceSection() {
-  const { selectedExperiment, lastNotebookEntry } = useElectricityLabExperience();
+  const { selectedExperiment, lastNotebookEntry, pendingResume, catalog, resumeSave, discardPendingResume } =
+    useElectricityLabExperience();
+
+  // Stage S9.7 — Autosave & Resume: незавершённая сессия найдена и ни одна
+  // работа ещё не выбрана в этой загрузке страницы — предлагаем
+  // Продолжить/Начать заново вместо каталога, пока студент не решит.
+  if (pendingResume && !selectedExperiment) {
+    const experiment = catalog.find((e) => e.id === pendingResume.experiment.experimentId);
+    return (
+      <ElectricityResumeModal
+        experimentTitle={experiment?.title ?? pendingResume.experiment.experimentId}
+        snapshot={pendingResume}
+        onContinue={() => resumeSave(pendingResume)}
+        onStartOver={discardPendingResume}
+      />
+    );
+  }
+
   return (
     <>
       {lastNotebookEntry && <ElectricityLabReportPanel />}

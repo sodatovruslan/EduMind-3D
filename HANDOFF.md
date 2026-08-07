@@ -1006,3 +1006,76 @@ Chemistry World на деле имеет ДВА независимых assessmen
 5. Autosave/Resume (S9.7), Sandbox UX (S9.8), Final Polish (S9.9) — не начаты, вне скоупа этого чекпоинта.
 
 Ничего не закоммичено в этой части до отдельного шага коммита ниже.
+
+Закоммичено как `feat(electricity): S9.6 approved` (commit `c47aefa`, от `sodatovruslan`, без Co-Authored-By, без push).
+
+---
+
+## Обновление 2026-08-07 (продолжение №12) — Stage S9.7: Autosave & Resume до production quality
+
+### Задача чекпоинта
+Дать студенту возможность выйти из незавершённой лабораторной работы, перезагрузить страницу или вернуться позже и продолжить с правильного шага с восстановленным значимым состоянием — на том же уровне надёжности, что и у Chemistry World, без переписывания persistence с нуля. Сохранять только значимое доменное состояние (id эксперимента, шаг, completedStepIds, статус, подсказки, evidence-совместимое состояние, черновик вывода, реальное состояние компонентов/проводки, состояние предохранителя/переключателя, ревизия), не сохранять переходное runtime-состояние (Three.js-рефы/меши/hover/drag/камера — этого всё равно нет ни в одном из провайдеров Electricity Lab). Debounced autosave с dirty-detection и защитой от спама сохранений. Минимальный UX (индикатор сохранения, Продолжить, Начать заново). Интеграция с продакшн-солвером/S9.3/S9.4/S9.5/S9.6 без дублирования состояния. Три уровня тестов. Не начинать S9.8/S9.9, не переписывать сцену/солвер.
+
+### Архитектурное решение, подтверждённое пользователем перед реализацией
+Аудит показал: у Electricity Lab до этого чекпоинта не было ВООБЩЕ никакого сохранения незавершённой сессии (только Лабораторный журнал — записи по факту ЗАВЕРШЁННЫХ попыток, в localStorage). Autosave Chemistry World — это реальная backend-инфраструктура: таблица Postgres `chemistry_saves` + FastAPI-роутер `/api/chemistry/saves` с optimistic-concurrency ревизиями, idempotency-ключами и офлайн-очередью на IndexedDB. Поскольку прямое переиспользование существующей backend-таблицы/роутера означало бы либо семантически неверное использование чужой сущности, либо отдельную backend-разработку (новая таблица+роутер+миграция) — то есть заметное расширение скоупа за пределы "переиспользовать существующее", — этот выбор был явно вынесен на подтверждение пользователю ДО реализации (см. AskUserQuestion в диалоге). Выбран путь **только localStorage**, тот же, что Electricity Lab уже использует для Журнала. Схема снимка всё равно версионирована (`schemaVersion`, `revision`), как и у Chemistry World, поэтому будущий переход на backend-синхронизацию не потребует смены формы — только смены пути записи.
+
+### Что сделано ✅
+
+1. **`frontend/lib/electricity-save-schema.ts`** (новый) — `ElectricitySaveSnapshotV1`: `circuit` (components+connections, соответствуют `ExperimentStateProvider`), `experiment` (experimentId/currentStepIndex/completedStepIds/taskStatus/startedAt/hintsUsed/measurements/questionAnswers/observationsDraft/conclusionDraft/evidenceEvents/sessionObservations). Проще, чем `ChemistrySaveSnapshotV1` — намеренно нет слоя workspace/containers/cabinets, потому что у Electricity Lab единственная фиксированная физическая раскладка стенда (см. `CANONICAL_WIRING` в `electricity-lab-catalog.ts`), а не свободно расставляемые предметы.
+2. **`frontend/lib/electricity-save-serializer.ts`** (новый) — `serializeElectricitySave` (детерминированно, components/connections отсортированы по id — тот же приём, что и chemistry-save-serializer.ts), `validateElectricitySaveSnapshot`, `hydrateElectricitySave` (выбрасывает исключение на невалидном снимке; `startedAtMs` восстанавливается из ИСХОДНОГО `startedAt`, а не момента resume — итоговый `durationMs` при завершении честно учитывает всю сессию, включая время до перезагрузки).
+3. **`frontend/lib/electricity-autosave-engine.ts`** (новый) — класс `ElectricityAutosaveEngine` + синглтон. Тот же ПАТТЕРН, что у Chemistry World's `autosave-engine.ts` (debounce 1500мс, периодический safety-net 20000мс, подписка на статус, flush при `beforeunload`/`pagehide`/`visibilitychange`), но не тот же код: запись в localStorage синхронна, поэтому нет mutex/`flushQueued`/409-конфликтов/офлайн-очереди — этой сложности просто неоткуда взяться без сетевого пути записи.
+4. **`ElectricityLabExperienceProvider.tsx`** — теперь также вызывает `useExperimentState()` напрямую (тот же кросс-провайдерный паттерн, что и у Chemistry's `ChemistryLabExperienceProvider` через `workspaceContext.hydrateFromSave`), чтобы получить `resetExperiment`/`addConnection` для гидратации. Добавлены: `pendingResume` (загружается один раз при монтировании, тот же паттерн, что и загрузка Журнала), `getSerializeOptions` (переиспользуется и движком автосохранения, и ничем больше), dirty-detection через `useEffect` (полагается на собственное сравнение ссылок React в массиве зависимостей вместо ручного diff строки-сигнатуры у Chemistry — проще, тот же эффект), `resumeSave`/`discardPendingResume`. `selectExperiment`/`resumeSave` вызывают `electricityAutosaveEngine.init(...)`; `exitExperiment`/`resetLabSession`/`completeExperiment` вызывают `uninit()`; `resetLabSession`/`completeExperiment` дополнительно удаляют сохранение (явный сброс цепи или реальное завершение — оба случая корректно завершают возможность resume; обычный `exitExperiment()` сохранение НЕ трогает — в этом весь смысл возобновляемости).
+5. **`frontend/components/lab/ElectricityResumeModal.tsx` / `ElectricityAutosaveBadge.tsx`** (новые) — тот же минимальный UX, что и у Chemistry World (Продолжить/Начать заново, бейдж сохранения), упрощённый (нет офлайн/конфликт-статусов — им физически неоткуда взяться без сети).
+6. **`ElectricityLabScene.tsx`** — `ElectricityLabExperienceSection()` показывает `ElectricityResumeModal` вместо каталога/панели, когда есть `pendingResume` и ни одна работа ещё не выбрана.
+7. **`ElectricityGuidedLabPanel.tsx`** — подключён `ElectricityAutosaveBadge` рядом с кнопкой выхода.
+
+### Что НЕ сохраняется (намеренно, по прямому указанию)
+Three.js-рефы, меши, hover/drag/состояние камеры — их и так нет ни в `ExperimentStateProvider`, ни в `ElectricityLabExperienceProvider` (в отличие от Chemistry, у Electricity Lab фиксированная раскладка стенда, а не свободно расставляемые предметы), поэтому фильтровать runtime-мусор при сериализации было физически нечего — в отличие от `hydrateChemistrySave`'s `runtimeDefaults`.
+
+### Тесты (3 категории, как и просили)
+- **Unit** (23): `electricity-save-serializer.test.ts` (15) — детерминированность сериализации, полный round-trip serialize→hydrate, все случаи `validateElectricitySaveSnapshot` (битый schemaVersion/отсутствующие id/некорректная revision/битый circuit/experiment), `hydrateElectricitySave` бросает исключение на невалидном снимке и не падает на битом `startedAt`; `electricity-autosave-engine.test.ts` (8) — debounce (20 быстрых `markDirty()` → одна запись), инкремент ревизии на каждый успешный flush (продолжает с `initialRevision`, не с 1), no-op до `init()`/при пустом состоянии, `uninit()` останавливает таймеры не трогая уже записанный снимок, периодический safety-net, последовательность статусов подписки.
+- **Integration** (4, реальный `ExperimentStateProvider` + реальный `ElectricityLabExperienceProvider` + реальный localStorage, "перезагрузка" — полное размонтирование/монтирование дерева провайдеров с тем же `simulationId`): реальный прогресс попадает в localStorage под ключом симуляции; полный reload+resume восстанавливает проводку/шаг/измерения один в один, восстановленная цепь корректно решается; `isBlown`/`isClosed` переживают resume (это просто поля на восстановленных `components`); `hintsUsed`/evidence, накопленные до перезагрузки, учтены в итоговой оценке после resume.
+- **Workflow** (3, полные реалистичные сессии): ровно запрошенная последовательность — старт → прогресс → автосохранение → пересоздание провайдера/сессии → resume → завершение, с одной записью в журнале и удалённым сохранением; Start Over отклоняет старое сохранение, и следующий `selectExperiment()` не тащит за собой старые измерения; ошибка подключения ДО перезагрузки и исправление ПОСЛЕ resume корректно учтены по обе стороны границы reload в итоговых `measurementErrorsCount`/`selfCorrectionsCount` (непрерывность evidence-журнала через реальную перезагрузку).
+- **UI**: `ElectricityResumeModal.test.tsx` (2) — рендер названия/номера шага/ревизии, клики Продолжить/Начать заново вызывают правильные колбэки.
+- **Playwright**: не предпринимался — то же принятое ограничение SwiftShader/headless, что и в S9.3-S9.6.
+
+### Результаты проверок
+| Проверка | Результат |
+|---|---|
+| `npx tsc --noEmit` | 0 ошибок |
+| `electricity-save-serializer.test.ts` (новый) | **15/15 PASSED** |
+| `electricity-autosave-engine.test.ts` (новый) | **8/8 PASSED** |
+| `ElectricityAutosave.integration.test.tsx` (новый) | **4/4 PASSED** |
+| `ElectricityAutosave.workflow.test.tsx` (новый) | **3/3 PASSED** |
+| `ElectricityResumeModal.test.tsx` (новый) | **2/2 PASSED** |
+| `npx vitest run` (полный) | **573/573 PASSED (60 файлов)**, было 542/55 на S9.6 |
+| `npm run lint` | 0 ошибок, 0 предупреждений |
+| `circuit-engine.ts`, `nodal-analysis-solver.ts`, `measurement-validation.ts`, `electricity-safety.ts`, `electricity-lab-catalog.ts`, `electricity-evidence.ts`, `electricity-assessment.ts`, backend | **не изменены** |
+
+### Файлы, изменённые/добавленные в этой части
+| Файл | Что изменено |
+|------|-------------|
+| `frontend/lib/electricity-save-schema.ts` | новый файл — версионированная схема снимка |
+| `frontend/lib/electricity-save-serializer.ts` | новый файл — serialize/validate/hydrate |
+| `frontend/lib/electricity-save-serializer.test.ts` | новый файл — 15 юнит-тестов |
+| `frontend/lib/electricity-autosave-engine.ts` | новый файл — debounced localStorage autosave |
+| `frontend/lib/electricity-autosave-engine.test.ts` | новый файл — 8 юнит-тестов |
+| `frontend/components/core/ElectricityLabExperienceProvider.tsx` | autosave/resume подключены к реальному состоянию |
+| `frontend/components/lab/ElectricityResumeModal.tsx` | новый файл — UI Продолжить/Начать заново |
+| `frontend/components/lab/ElectricityResumeModal.test.tsx` | новый файл — 2 UI-теста |
+| `frontend/components/lab/ElectricityAutosaveBadge.tsx` | новый файл — индикатор сохранения |
+| `frontend/components/scenes/ElectricityLabScene.tsx` | `ElectricityLabExperienceSection` показывает Resume-модалку |
+| `frontend/components/lab/ElectricityGuidedLabPanel.tsx` | подключён `ElectricityAutosaveBadge` |
+| `frontend/components/core/ElectricityAutosave.integration.test.tsx` | новый файл — 4 интеграционных теста |
+| `frontend/components/core/ElectricityAutosave.workflow.test.tsx` | новый файл — 3 workflow-сценария |
+| `electricity_stage_s9_plan.md` | добавлен раздел `S9.7 - Autosave & Resume`, чеклист §3 обновлён, "Unresolved limitations" обновлён |
+
+### Что осталось ❌
+1. Playwright-сценарий для autosave/resume UI не добавлен — то же принятое ограничение окружения.
+2. Autosave — ТОЛЬКО localStorage: сохранение теряется при очистке хранилища браузера, не синхронизируется между устройствами. Явное, подтверждённое пользователем архитектурное решение этого чекпоинта, не недосмотр.
+3. Единовременно может существовать только ОДНА незавершённая сессия на симуляцию (один ключ localStorage на `simulationId`) — соответствует реальности Electricity Lab (`ElectricityLabExperienceProvider` и так отслеживает только один `selectedExperimentId`), в отличие от Chemistry с отдельной записью на каждый эксперимент.
+4. Рефы обнаружения ПЕРЕХОДОВ (`ammeterInvalidRef`/`voltmeterInvalidRef`/`activeDangerCodesRef`) сбрасываются в "чистое" состояние при resume, а не восстанавливаются из снимка — если восстановленная цепь на момент resume уже была в опасном/неверном состоянии, следующий рендер отметит это как НОВУЮ ошибку, а не уже существовавшую. Влияет только на точность bookkeeping evidence-журнала сразу вокруг resume, не на корректность gating/безопасности.
+5. Backend `TASK_TOPICS`, мультистуденческий teacher-дашборд — без изменений, те же пробелы, что и в S9.6.
+6. Sandbox UX (S9.8), Final Polish (S9.9) — не начаты, вне скоупа этого чекпоинта.
+
+Ничего не закоммичено в этой части до отдельного шага коммита ниже.

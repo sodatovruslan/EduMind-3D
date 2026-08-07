@@ -1,7 +1,8 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { bulbBrightness, type CircuitComponent, type CircuitSolution, type Connection } from "@/lib/circuit-engine";
+import { useExperimentState } from "./ExperimentStateProvider";
 import {
   ELECTRICITY_LAB_CATALOG,
   getElectricityLabExperiment,
@@ -27,6 +28,9 @@ import {
 } from "@/lib/electricity-notebook";
 import type { ElectricityEvidenceCode, ElectricityEvidenceEvent } from "@/lib/electricity-evidence";
 import { submitTaskEvent, type LearningProfile } from "@/lib/progress-client";
+import type { ElectricitySaveSnapshotV1 } from "@/lib/electricity-save-schema";
+import { hydrateElectricitySave, type SerializeElectricitySaveOptions } from "@/lib/electricity-save-serializer";
+import { clearElectricitySave, electricityAutosaveEngine, loadElectricitySave } from "@/lib/electricity-autosave-engine";
 
 /**
  * Electricity Lab — Guided Laboratory System (Stage E-2). Аналог
@@ -104,6 +108,13 @@ interface ElectricityLabExperienceContextValue {
   lastNotebookEntry: ElectricityNotebookEntry | null;
   learningProfile: LearningProfile | null;
   isExperimentUnlockedFor: (experiment: ElectricityLabExperiment) => boolean;
+  // Stage S9.7 — Autosave & Resume: снимок незавершённой сессии, найденный
+  // в localStorage при монтировании (null — сохранения нет или студент уже
+  // в активной сессии). UI показывает модалку "Продолжить"/"Начать заново"
+  // только пока pendingResume не null и selectedExperiment ещё null.
+  pendingResume: ElectricitySaveSnapshotV1 | null;
+  resumeSave: (snapshot: ElectricitySaveSnapshotV1) => void;
+  discardPendingResume: () => void;
 }
 
 const ElectricityLabExperienceContext = createContext<ElectricityLabExperienceContextValue | undefined>(undefined);
@@ -126,10 +137,23 @@ export function ElectricityLabExperienceProvider({
   const [notebookEntries, setNotebookEntries] = useState<ElectricityNotebookEntry[]>([]);
   const [lastNotebookEntry, setLastNotebookEntry] = useState<ElectricityNotebookEntry | null>(null);
   const [learningProfile, setLearningProfile] = useState<LearningProfile | null>(null);
+  // Stage S9.7 — Autosave & Resume: незавершённая сессия из localStorage,
+  // найденная один раз при монтировании (тот же паттерн, что и notebook
+  // выше). Мутирует реальное состояние ExperimentStateProvider (соседний
+  // провайдер, всегда предок этого — тот же способ, каким Chemistry World's
+  // ChemistryLabExperienceProvider вызывает workspaceContext.hydrateFromSave).
+  const [pendingResume, setPendingResume] = useState<ElectricitySaveSnapshotV1 | null>(null);
+  const { resetExperiment, addConnection } = useExperimentState();
 
   useEffect(() => {
     setNotebookEntries(sortElectricityNotebookEntriesByDateDesc(loadNotebook()));
-  }, []);
+    setPendingResume(loadElectricitySave(simulationId));
+  }, [simulationId]);
+
+  // размонтирование провайдера (уход со страницы Electricity Lab) —
+  // останавливает таймеры движка окончательно; localStorage-снимок не
+  // трогается (та же логика, что и uninit() внутри exitExperiment())
+  useEffect(() => () => electricityAutosaveEngine.destroy(), []);
 
   const selectedExperiment = selectedExperimentId ? getElectricityLabExperiment(selectedExperimentId) ?? null : null;
 
@@ -272,6 +296,73 @@ export function ElectricityLabExperienceProvider({
     return Array.from(ids);
   }, [notebookEntries]);
 
+  // Stage S9.7 — Autosave & Resume: единственное место, которое знает, КАК
+  // собрать снимок текущей сессии — переиспользуется и автосохранением
+  // (через electricityAutosaveEngine.updateStateGetter), и ничем больше.
+  // null, если нет активного эксперимента (движок в этом случае не пишет
+  // ничего — тот же контракт, что и Chemistry's getSerializeOptions).
+  const getSerializeOptions = useCallback((): Omit<
+    SerializeElectricitySaveOptions,
+    "saveId" | "simulationId" | "revision"
+  > | null => {
+    if (!selectedExperiment) return null;
+    return {
+      components: stepContext.components,
+      connections: stepContext.connections,
+      experimentId: selectedExperiment.id,
+      currentStepIndex,
+      completedStepIds: selectedExperiment.steps.slice(0, currentStepIndex).map((s) => s.id),
+      taskStatus: "in_progress",
+      startedAt: new Date(experimentStartedAtRef.current ?? Date.now()).toISOString(),
+      hintsUsed: hintsRef.current,
+      measurements,
+      questionAnswers,
+      observationsDraft,
+      conclusionDraft,
+      evidenceEvents: evidenceRef.current,
+      sessionObservations: {
+        minVoltageV: minVoltageRef.current,
+        maxVoltageV: Math.max(maxVoltageRef.current, battery?.voltageV ?? 0),
+        minResistanceOhm: minResistanceRef.current,
+        maxResistanceOhm: Math.max(maxResistanceRef.current, resistor?.resistanceOhm ?? 0),
+        maxCurrentA: Math.max(maxCurrentRef.current, stepContext.solution.currentA),
+        maxBulbBrightness: maxBrightnessRef.current,
+        fuseBlownObserved: fuseBlownObservedRef.current,
+        openCircuitObserved: openCircuitObservedRef.current,
+        shortCircuitObserved: shortCircuitObservedRef.current,
+      },
+    };
+  }, [
+    selectedExperiment,
+    currentStepIndex,
+    stepContext.components,
+    stepContext.connections,
+    stepContext.solution,
+    measurements,
+    questionAnswers,
+    observationsDraft,
+    conclusionDraft,
+    battery?.voltageV,
+    resistor?.resistanceOhm,
+  ]);
+
+  // держит геттер движка свежим на каждый рендер (движок вызывает его
+  // ПОЗЖЕ, из debounce/periodic таймера — обязан видеть актуальное состояние)
+  useEffect(() => {
+    electricityAutosaveEngine.updateStateGetter(getSerializeOptions);
+  }, [getSerializeOptions]);
+
+  // dirty-detection: React уже даёт это бесплатно через массив зависимостей
+  // — эффект перезапускается ТОЛЬКО когда одно из значений реально
+  // изменилось (новая ссылка на components/connections после реального
+  // экшена в ExperimentStateProvider, не на каждый холостой рендер).
+  // markDirty() сам обеспечивает debounce записи — здесь просто сигнал
+  // "что-то из значимого состояния сессии изменилось".
+  useEffect(() => {
+    if (!selectedExperiment) return;
+    electricityAutosaveEngine.markDirty();
+  }, [selectedExperiment, currentStepIndex, stepContext.components, stepContext.connections, measurements, questionAnswers, observationsDraft, conclusionDraft]);
+
   function selectExperiment(id: string) {
     const experiment = getElectricityLabExperiment(id);
     if (!experiment) return;
@@ -299,19 +390,81 @@ export function ElectricityLabExperienceProvider({
     voltmeterInvalidRef.current = false;
     activeDangerCodesRef.current = new Set();
     evidenceRef.current = [{ code: "experiment_started", at: Date.now(), detail: id }];
+
+    setPendingResume(null);
+    electricityAutosaveEngine.init(`electricity-save-${simulationId}`, simulationId, 1, getSerializeOptions);
+  }
+
+  // Stage S9.7 — Autosave & Resume: восстанавливает РЕАЛЬНОЕ состояние
+  // обоих провайдеров (ExperimentStateProvider — через resetExperiment +
+  // повторный addConnection на каждое сохранённое соединение;
+  // ElectricityLabExperienceProvider — через прямое присвоение состояния/
+  // refs) из снимка. Ничего не пересчитывает физику — solveCircuit()
+  // отработает сам на следующем рендере от восстановленных components/
+  // connections, тот же путь, что и для любого другого реального действия.
+  function resumeSave(snapshot: ElectricitySaveSnapshotV1) {
+    const hydrated = hydrateElectricitySave(snapshot);
+    const experiment = getElectricityLabExperiment(hydrated.experimentId);
+    if (!experiment) return; // защитный случай: неизвестный/устаревший id эксперимента в снимке
+
+    resetExperiment(hydrated.components);
+    hydrated.connections.forEach((c) => addConnection(c));
+
+    setSelectedExperimentId(hydrated.experimentId);
+    setCurrentStepIndex(Math.min(hydrated.currentStepIndex, experiment.steps.length - 1));
+    setMeasurements(hydrated.measurements);
+    setQuestionAnswers(hydrated.questionAnswers);
+    setObservationsDraft(hydrated.observationsDraft);
+    setConclusionDraft(hydrated.conclusionDraft);
+    setLastNotebookEntry(null);
+
+    hintsRef.current = hydrated.hintsUsed;
+    evidenceRef.current = hydrated.evidenceEvents;
+    experimentStartedAtRef.current = hydrated.startedAtMs; // исходное начало сессии, не момент resume — честный durationMs
+    minVoltageRef.current = hydrated.sessionObservations.minVoltageV;
+    maxVoltageRef.current = hydrated.sessionObservations.maxVoltageV;
+    minResistanceRef.current = hydrated.sessionObservations.minResistanceOhm;
+    maxResistanceRef.current = hydrated.sessionObservations.maxResistanceOhm;
+    maxCurrentRef.current = hydrated.sessionObservations.maxCurrentA;
+    maxBrightnessRef.current = hydrated.sessionObservations.maxBulbBrightness;
+    fuseBlownObservedRef.current = hydrated.sessionObservations.fuseBlownObserved;
+    openCircuitObservedRef.current = hydrated.sessionObservations.openCircuitObserved;
+    shortCircuitObservedRef.current = hydrated.sessionObservations.shortCircuitObserved;
+    // сбрасываем детекторы ПЕРЕХОДОВ (не итоги) — следующий рендер честно
+    // пересчитает текущий статус амперметра/вольтметра/опасностей против
+    // восстановленной цепи заново, без ложных срабатываний из старого ref
+    ammeterInvalidRef.current = false;
+    voltmeterInvalidRef.current = false;
+    activeDangerCodesRef.current = new Set();
+
+    setPendingResume(null);
+    electricityAutosaveEngine.init(snapshot.saveId, simulationId, snapshot.revision, getSerializeOptions);
+  }
+
+  function discardPendingResume() {
+    clearElectricitySave(simulationId);
+    setPendingResume(null);
   }
 
   function exitExperiment() {
     setSelectedExperimentId(null);
+    // сохранение НЕ трогается — именно это делает выход посередине
+    // эксперимента возобновляемым позже; движок просто перестаёт активно
+    // отслеживать изменения, пока не выбран следующий эксперимент
+    electricityAutosaveEngine.uninit();
   }
 
   // сценарий сброса — та же необходимость, что нашлась в Chemistry World
   // Stage 5.7: сброс цепи (кнопка "Сбросить") должен также выходить из
   // текущей учебной сессии, иначе студент остаётся на устаревшем шаге
-  // против уже сброшенной, пустой цепи
+  // против уже сброшенной, пустой цепи. Stage S9.7: явный сброс цепи —
+  // достаточно сильный сигнал, чтобы удалить сохранение (иначе оно бы
+  // предлагало восстановить состояние, которое студент только что стёр).
   function resetLabSession() {
     setSelectedExperimentId(null);
     setLastNotebookEntry(null);
+    clearElectricitySave(simulationId);
+    electricityAutosaveEngine.uninit();
   }
 
   const effectiveStepContext: ElectricityLabStepContext = {
@@ -453,6 +606,12 @@ export function ElectricityLabExperienceProvider({
         // потеряется только серверная синхронизация Learning Profile
       });
 
+    // Stage S9.7: эксперимент реально завершён — восстанавливать больше
+    // нечего, снимок удаляется (иначе резюме-модалка предложила бы
+    // "продолжить" уже пройденную работу при следующей загрузке страницы)
+    clearElectricitySave(simulationId);
+    electricityAutosaveEngine.uninit();
+
     setSelectedExperimentId(null);
     completingRef.current = false;
   }
@@ -489,6 +648,9 @@ export function ElectricityLabExperienceProvider({
     lastNotebookEntry,
     learningProfile,
     isExperimentUnlockedFor,
+    pendingResume,
+    resumeSave,
+    discardPendingResume,
   };
 
   return <ElectricityLabExperienceContext.Provider value={value}>{children}</ElectricityLabExperienceContext.Provider>;
