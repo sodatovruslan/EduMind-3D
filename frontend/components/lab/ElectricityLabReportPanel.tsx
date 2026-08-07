@@ -37,6 +37,37 @@ export default function ElectricityLabReportPanel() {
         {lastNotebookEntry.score}/100
       </div>
 
+      {/* Stage S9.6 — Assessment & Teacher Analytics: разбивка по 4
+          категориям (electricity-assessment.ts) поверх итогового score
+          выше — не заменяет его, а объясняет из чего он реально сложился. */}
+      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4" data-testid="electricity-report-assessment">
+        {(
+          [
+            ["completion", "Завершение"],
+            ["accuracy", "Точность"],
+            ["safety", "Безопасность"],
+            ["circuitBuilding", "Сборка цепи"],
+          ] as const
+        ).map(([key, label]) => (
+          <div key={key} className="rounded-lg border border-glass-border bg-white/5 p-2 text-center">
+            <div className="font-mono text-lg font-semibold text-slate-100">{lastNotebookEntry.assessment[key].score}</div>
+            <div className="text-[10px] uppercase tracking-widest text-slate-500">{label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Stage S9.6 — реальные счётчики попытки: сколько подсказок/ошибок/
+          нарушений безопасности/самостоятельных исправлений и сколько
+          заняло по времени — то, что раньше не сохранялось нигде. */}
+      <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs text-slate-400" data-testid="electricity-report-evidence-summary">
+        <span>Подсказок: {lastNotebookEntry.hintsUsed}</span>
+        <span>Ошибок: {lastNotebookEntry.mistakesCount}</span>
+        <span>Нарушений безопасности: {lastNotebookEntry.safetyIncidentsCount}</span>
+        <span>Ошибок измерения: {lastNotebookEntry.measurementErrorsCount}</span>
+        {lastNotebookEntry.selfCorrectionsCount > 0 && <span>Самостоятельно исправлено: {lastNotebookEntry.selfCorrectionsCount}</span>}
+        {lastNotebookEntry.durationMs !== null && <span>Время: {Math.round(lastNotebookEntry.durationMs / 1000)} с</span>}
+      </div>
+
       <div className="mb-3">
         <h4 className="mb-1 font-mono text-xs uppercase tracking-widest text-slate-400">Цель эксперимента</h4>
         <p className="text-sm text-slate-300">{lastNotebookEntry.objective}</p>

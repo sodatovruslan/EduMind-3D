@@ -66,6 +66,12 @@ export default function ElectricityLabNotebookPanel() {
                       <span className="text-slate-500">Вывод:</span> {entry.conclusion}
                     </div>
                   )}
+                  {/* Stage S9.6 — Teacher Analytics: реальные счётчики попытки,
+                      те же данные, что и в детальном отчёте (ElectricityLabReportPanel) */}
+                  <div className="font-mono text-xs text-slate-400" data-testid={`electricity-notebook-entry-${entry.id}-evidence`}>
+                    Подсказок: {entry.hintsUsed} · Ошибок: {entry.mistakesCount} · Нарушений безопасности: {entry.safetyIncidentsCount}
+                    {entry.durationMs !== null && ` · Время: ${Math.round(entry.durationMs / 1000)} с`}
+                  </div>
                   <div>
                     <span className="text-slate-500">Заметка преподавателя:</span> {entry.teacherNote}
                   </div>

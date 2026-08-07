@@ -936,3 +936,73 @@ Backend/frontend остановлены после диагностики Playwr
 3. Живая проверка в браузере (консоль без ошибок, визуальная проверка баннера подсказки) не проводилась — заменена рендер-тестами через Testing Library с той же реальной цепочкой провайдеров (см. `ElectricityGuidedLabPanel.test.tsx`).
 
 Ничего не закоммичено в этой части до отдельного шага коммита ниже.
+
+Закоммичено как `feat(electricity): S9.5 approved` (commit `c81dcb7`, от `sodatovruslan`, без Co-Authored-By, без push).
+
+---
+
+## Обновление 2026-08-07 (продолжение №11) — Stage S9.6: Assessment & Teacher Analytics до production quality
+
+### Задача чекпоинта
+Довести оценку и teacher-аналитику Electricity Lab до того же уровня, что и Chemistry World, на основе РЕАЛЬНЫХ действий студента и реального доменного состояния: 1) Observation/Evidence Layer (реальные учебные факты — старт, шаг, подсказка, ошибка проводки, небезопасная проводка, ошибка амперметра/вольтметра, успешное исправление, КЗ, перегорание предохранителя, успешное измерение, завершение); 2) детерминированный Assessment Engine (без LLM); 3) образовательная обратная связь; 4) teacher-facing сводка (student/experiment/completion/score/attempts/mistakes/hints/safety/measurement/time); 5) структурированный контекст для будущего AI-teacher (без нового AI-чата); 6) интеграция с S9.5/солвером/measurement-validation.ts/electricity-safety.ts/существующим progress/notebook/report без дублирования состояния; 7) 3 уровня тестов. Не начинать S9.7/S9.8/S9.9, не переписывать солвер, не создавать параллельную систему прогресса.
+
+### Что обнаружено при обязательном первом шаге (аудит перед кодом)
+Chemistry World на деле имеет ДВА независимых assessment-движка в `chemistry-assessment.ts`: (1) `assessExperiment` — простой, реально вызываемый в production (`ChemistryLabExperienceProvider.completeExperiment()`), 5-категорийный, на ref-счётчиках сессии; (2) `computeDeterministicAssessment` — гораздо более тяжёлая система с evidenceEventIds и весовыми критериями, полностью реализованная и протестированная, но **нигде не вызываемая в реальном приложении** (grep подтвердил: ноль production-вызовов; её собственный UI `StudentFeedbackPanel.tsx` тоже нигде не импортируется). По прямому указанию пользователя "не дублировать архитектуру Chemistry World, если только паттерн реально подходит" — Stage S9.6 следует ЖИВОЙ System 1, а не System 2: реплицировать мёртвый код означало бы скопировать неиспользуемый прототип, а не production-паттерн.
+
+Также подтверждено: `electricity-notebook.ts` (Stage E-2) уже структурно аналогичен живой System 1 Chemistry (`computeScore`/`buildTeacherNote`/`ElectricityNotebookEntry`) — расширен на месте, не заменён. `ExperimentStateProvider.tsx`'s `SimEvent`/`actionsLog` существует, но это write-only приёмник для устаревшего `/api/simulations/{id}/complete`, без временных меток/последовательности/id — слишком тонкий для полноценного evidence-журнала, поэтому добавлен новый лёгкий журнал (см. ниже), переиспользующий те же чистые проверки (`measurement-validation.ts`/`electricity-safety.ts`), не дублируя физику/топологию. `progress-client.ts`'s `submitTaskEvent`/`LabAIContext`/`buildAIContext` уже были подключены из `ElectricityLabExperienceProvider` — расширены, не заменены. Backend-пробел (`TASK_TOPICS` в `progress_service.py` не знает ID guided-экспериментов) подтверждён как реальный, но оставлен вне скоупа этого фронтенд-чекпоинта, как и во всех предыдущих S9.1-S9.5.
+
+### Что сделано ✅
+
+1. **Новый файл `frontend/lib/electricity-evidence.ts`** — `ElectricityEvidenceCode`/`ElectricityEvidenceEvent`/`ElectricityEvidenceSummary` + `summarizeElectricityEvidence()`. Дискретный, append-only журнал РЕАЛЬНЫХ переходов состояния (experiment_started/step_completed/hint_used/incorrect_wiring/unsafe_wiring/ammeter_placement_error/voltmeter_placement_error/successful_correction/short_circuit_triggered/fuse_blown/successful_measurement/experiment_completed) — не покадровое состояние; события пишутся только на реальных переходах (например invalid→valid), переиспользуя `checkAmmeterPlacement`/`checkVoltmeterPlacement`/`checkElectricalSafety` из S9.3/S9.4.
+2. **Новый файл `frontend/lib/electricity-assessment.ts`** — `assessElectricityExperiment()`: детерминированная 4-категорийная оценка (`completion`/`accuracy`/`safety`/`circuitBuilding`) + `overallScore` + `summary`, целиком из evidence summary + question results. Без LLM, без рандома. Тот же дух, что и живой `assessExperiment` Chemistry (разбивка по категориям + overall + summary), а не System 2.
+3. **`frontend/lib/electricity-notebook.ts` расширен (аддитивно)** — `ElectricityNotebookEntry`/`Input` получили `hintsUsed`/`mistakesCount`/`safetyIncidentsCount`/`measurementErrorsCount`/`selfCorrectionsCount`/`durationMs`/`assessment` (новые поля входа `evidenceEvents`/`totalSteps`/`durationMs` — необязательные, с нулевым evidence по умолчанию). `buildTeacherNote` дополнена аддитивно (предложения про безопасность/измерения/самокоррекцию/отсутствие ошибок добавляются только когда релевантны) — прежнее предложение про score-уровень и про неверный вопрос не тронуто ни на символ. `computeScore`/`score` **не изменены вообще** — полная обратная совместимость, доказана прогоном всех 5 прежних тестов без изменений (5/5) плюс 4 новых.
+4. **`ElectricityLabExperienceProvider.tsx`** — добавлены `evidenceRef`/`experimentStartedAtRef` + 3 новых `useEffect`'а (переход размещения амперметра, переход размещения вольтметра, переход danger-кодов безопасности — `unsafe_measurement` намеренно исключён из safety-эффекта, т.к. уже полностью учтён приборными эффектами, чтобы одна и та же реальная ошибка не считалась дважды). `advanceStep`/`recordMeasurement`/`recordHintUsed`/`completeExperiment` теперь пишут дискретные события evidence в момент, когда они реально произошли. `completeExperiment()` прокидывает `evidenceEvents`/`totalSteps`/`durationMs` в `buildElectricityNotebookEntry`, и обогащает `submitTaskEvent`'s `mistakes` реальными кодами ошибок из Evidence Layer (не только неверные ответы на вопросы) — переиспользует уже подключённый backend-пайплайн, без нового эндпоинта.
+5. **`frontend/lib/ai-context-builder.ts`** — `LabExperienceAIContext.lastNotebookEntry` получил `hintsUsed`/`mistakesCount`/`safetyIncidentsCount`/`measurementErrorsCount`/`assessmentOverallScore`, чтобы будущий AI-учитель мог ссылаться на конкретные факты, а не только на итоговый балл. Никакого нового AI-эндпоинта или билдера контекста — тот же `buildAIContext`/`/api/ai/teacher`, что уже был у Electricity Lab.
+6. **`ElectricityLabReportPanel.tsx`/`ElectricityLabNotebookPanel.tsx`** — отрисовывают новые поля (разбивка по 4 категориям, счётчики подсказок/ошибок/безопасности/времени) внутри уже существующей структуры панелей — без редизайна, без новых компонентов.
+
+### Тесты (3 категории, как и просили)
+- **Unit** (14): `electricity-evidence.test.ts` (5) — агрегация по синтетическим массивам событий; `electricity-assessment.test.ts` (9) — формула оценки (чистый прогон = 100 по всем категориям, штраф безопасности -25/инцидент, штраф сборки -15/ошибка +5/самокоррекция, штраф подсказок с потолком -10, точность по реальным ответам, категории не уходят ниже 0, детерминированный текст summary).
+- **Notebook backward-compat + расширение** (9 = 5 старых без изменений + 4 новых): нулевой evidence -> нулевые счётчики и неизменный score/teacherNote; реальный evidence -> корректные агрегаты и более низкий assessment (но НЕИЗМЕННЫЙ score — доказывает независимость двух метрик); teacherNote упоминает реальное число нарушений безопасности; `durationMs` персистится как есть.
+- **Integration** (4, реальный `ExperimentStateProvider` + реальный `ElectricityLabExperienceProvider` + реальный солвер): чистое завершение (все счётчики 0, overallScore 100); амперметр неправильно подключён -> исправлен (mistake+correction на итоговой записи); КЗ спровоцировано посреди эксперимента -> устранено (safetyIncidentsCount>0, assessment.safety<100, teacherNote упоминает); вольтметр неправильно подключён -> исправлен.
+- **Workflow** (4, полные многошаговые сессии): чистое прохождение от выбора до completeExperiment (overallScore 100); две разные ошибки за одну сессию, обе исправлены самостоятельно (обе учтены); та же чистая сессия с 3 подсказками и без — разница только в overallScore, категории не тронуты (доказывает изоляцию штрафа за подсказки); намеренное перегорание предохранителя (`elec-advanced-fuse-overload`, где `fuse_blown` явно РАЗРЕШЁН для завершения) всё равно засчитывается как реальный safety-инцидент и снижает `assessment.safety` — gating и scoring корректно независимы друг от друга.
+- **Playwright**: не предпринимался — то же принятое ограничение SwiftShader/headless, что и в S9.3-S9.5 (новый spec не добавлялся, задокументировано, не расследовалось повторно по действующему указанию).
+
+### Результаты проверок
+| Проверка | Результат |
+|---|---|
+| `npx tsc --noEmit` | 0 ошибок |
+| `electricity-evidence.test.ts` (новый) | **5/5 PASSED** |
+| `electricity-assessment.test.ts` (новый) | **9/9 PASSED** |
+| `electricity-notebook.test.ts` (расширен, +4) | **9/9 PASSED** |
+| `ElectricityAssessment.integration.test.tsx` (новый) | **4/4 PASSED** |
+| `ElectricityAssessment.workflow.test.tsx` (новый) | **4/4 PASSED** |
+| `npx vitest run` (полный) | **542/542 PASSED (55 файлов)**, было 516/51 на S9.5 |
+| `npm run lint` | 0 ошибок, 0 предупреждений |
+| `circuit-engine.ts`, `nodal-analysis-solver.ts`, `measurement-validation.ts`, `electricity-safety.ts`, `electricity-lab-catalog.ts`, `ExperimentStateProvider.tsx`, backend | **не изменены** |
+
+### Файлы, изменённые/добавленные в этой части
+| Файл | Что изменено |
+|------|-------------|
+| `frontend/lib/electricity-evidence.ts` | новый файл — Evidence Layer (типы + агрегация) |
+| `frontend/lib/electricity-evidence.test.ts` | новый файл — 5 юнит-тестов |
+| `frontend/lib/electricity-assessment.ts` | новый файл — детерминированный Assessment Engine |
+| `frontend/lib/electricity-assessment.test.ts` | новый файл — 9 юнит-тестов |
+| `frontend/lib/electricity-notebook.ts` | добавлены поля evidence/assessment на запись (аддитивно) |
+| `frontend/lib/electricity-notebook.test.ts` | +4 юнит-теста на новые поля |
+| `frontend/components/core/ElectricityLabExperienceProvider.tsx` | Evidence Layer подключён к реальным действиям студента |
+| `frontend/lib/ai-context-builder.ts` | `lastNotebookEntry` в AI-контексте дополнен реальными счётчиками |
+| `frontend/lib/ai-context-builder.test.ts` | фикстура переведена на реальный `buildElectricityNotebookEntry()`, добавлены проверки новых полей |
+| `frontend/components/lab/ElectricityLabReportPanel.tsx` | разбивка по 4 категориям + счётчики evidence |
+| `frontend/components/lab/ElectricityLabNotebookPanel.tsx` | строка со счётчиками evidence в развёрнутой записи |
+| `frontend/components/core/ElectricityAssessment.integration.test.tsx` | новый файл — 4 интеграционных теста |
+| `frontend/components/core/ElectricityAssessment.workflow.test.tsx` | новый файл — 4 workflow-сценария |
+| `electricity_stage_s9_plan.md` | добавлен раздел `S9.6 - Assessment & Teacher Analytics`, чеклист §3 обновлён, добавлена секция "Unresolved limitations" |
+
+### Что осталось ❌
+1. Playwright-сценарий для assessment/teacher-analytics UI не добавлен — то же принятое ограничение окружения.
+2. Backend `TASK_TOPICS` (`progress_service.py`) не знает ID guided-экспериментов (`elec-*`) — реальный, но заранее известный и вне-скоупа пробел (только фронтенд в этом чекпоинте, как и в S9.1-S9.5).
+3. "Teacher Analytics" здесь — это данные по попытке на уже существующей студенческой записи/отчёте (та же архитектура, что и у Chemistry World — там тоже нет отдельной структуры `TeacherReport`), а не мультистуденческий дашборд учителя — такого экрана нет нигде в проекте ни для одной из лабораторий.
+4. `durationMs` — простая разница `Date.now()` от `selectExperiment()` до `completeExperiment()`, не исключает время в свёрнутой вкладке.
+5. Autosave/Resume (S9.7), Sandbox UX (S9.8), Final Polish (S9.9) — не начаты, вне скоупа этого чекпоинта.
+
+Ничего не закоммичено в этой части до отдельного шага коммита ниже.

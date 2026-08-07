@@ -25,6 +25,7 @@ import {
   type ElectricityNotebookEntry,
   type QuestionResult,
 } from "@/lib/electricity-notebook";
+import type { ElectricityEvidenceCode, ElectricityEvidenceEvent } from "@/lib/electricity-evidence";
 import { submitTaskEvent, type LearningProfile } from "@/lib/progress-client";
 
 /**
@@ -151,6 +152,78 @@ export function ElectricityLabExperienceProvider({
   const openCircuitObservedRef = useRef(false);
   const shortCircuitObservedRef = useRef(false);
 
+  // Stage S9.6 — Assessment & Teacher Analytics: лёгкий дискретный журнал
+  // реальных событий текущей попытки (electricity-evidence.ts), плюс refs
+  // для обнаружения ПЕРЕХОДОВ (не пересчитывается физика — просто
+  // сравнивается предыдущий и текущий статус уже готовых проверок
+  // measurement-validation.ts/electricity-safety.ts). Единственный источник
+  // правды для оценки (electricity-assessment.ts) при завершении.
+  const evidenceRef = useRef<ElectricityEvidenceEvent[]>([]);
+  const experimentStartedAtRef = useRef<number | null>(null);
+  const ammeterInvalidRef = useRef(false);
+  const voltmeterInvalidRef = useRef(false);
+  const activeDangerCodesRef = useRef<Set<string>>(new Set());
+
+  function pushEvidence(code: ElectricityEvidenceCode, detail?: string) {
+    evidenceRef.current = [...evidenceRef.current, { code, at: Date.now(), detail }];
+  }
+
+  // ammeter/voltmeter placement — переиспользует measurement-validation.ts
+  // (Stage S9.3), тот же расчёт, что уже используется для currentStepFeedback
+  // ниже; здесь только фиксируется МОМЕНТ появления/исчезновения ошибки.
+  useEffect(() => {
+    if (!selectedExperiment) return;
+    const check = checkAmmeterPlacement(stepContext.components, stepContext.connections, stepContext.solution);
+    const isInvalid = check.status === "parallel_invalid" || check.status === "not_in_loop";
+    if (isInvalid && !ammeterInvalidRef.current) {
+      pushEvidence("incorrect_wiring", `ammeter:${check.status}`);
+      pushEvidence("ammeter_placement_error", ammeterPlacementMessage(check) ?? undefined);
+    } else if (!isInvalid && ammeterInvalidRef.current) {
+      pushEvidence("successful_correction", "ammeter");
+    }
+    ammeterInvalidRef.current = isInvalid;
+  }, [selectedExperiment, stepContext.components, stepContext.connections, stepContext.solution]);
+
+  useEffect(() => {
+    if (!selectedExperiment) return;
+    const check = checkVoltmeterPlacement(stepContext.components, stepContext.connections, stepContext.solution);
+    const isInvalid = check.status === "series_invalid";
+    if (isInvalid && !voltmeterInvalidRef.current) {
+      pushEvidence("incorrect_wiring", `voltmeter:${check.status}`);
+      pushEvidence("voltmeter_placement_error", voltmeterPlacementMessage(check) ?? undefined);
+    } else if (!isInvalid && voltmeterInvalidRef.current) {
+      pushEvidence("successful_correction", "voltmeter");
+    }
+    voltmeterInvalidRef.current = isInvalid;
+  }, [selectedExperiment, stepContext.components, stepContext.connections, stepContext.solution]);
+
+  // danger-предупреждения безопасности — переиспользует checkElectricalSafety
+  // (Stage S9.4). "unsafe_measurement" сознательно пропущен здесь: та же
+  // самая ошибка уже полностью учтена выше через ammeter/voltmeter-эффекты
+  // (иначе одна и та же реальная ошибка засчиталась бы дважды).
+  useEffect(() => {
+    if (!selectedExperiment) return;
+    const warnings = checkElectricalSafety({
+      components: stepContext.components,
+      connections: stepContext.connections,
+      solution: stepContext.solution,
+    });
+    const dangerCodes = new Set(
+      warnings.filter((w) => w.severity === "danger" && w.code !== "unsafe_measurement").map((w) => w.code)
+    );
+    dangerCodes.forEach((code) => {
+      if (!activeDangerCodesRef.current.has(code)) {
+        pushEvidence("unsafe_wiring", code);
+        if (code === "short_circuit") pushEvidence("short_circuit_triggered");
+        if (code === "fuse_blown") pushEvidence("fuse_blown");
+      }
+    });
+    activeDangerCodesRef.current.forEach((code) => {
+      if (!dangerCodes.has(code)) pushEvidence("successful_correction", code);
+    });
+    activeDangerCodesRef.current = dangerCodes;
+  }, [selectedExperiment, stepContext.components, stepContext.connections, stepContext.solution]);
+
   useEffect(() => {
     if (!selectedExperiment) return;
     const v = battery?.voltageV ?? 0;
@@ -220,6 +293,12 @@ export function ElectricityLabExperienceProvider({
     fuseBlownObservedRef.current = false;
     openCircuitObservedRef.current = false;
     shortCircuitObservedRef.current = false;
+
+    experimentStartedAtRef.current = Date.now();
+    ammeterInvalidRef.current = false;
+    voltmeterInvalidRef.current = false;
+    activeDangerCodesRef.current = new Set();
+    evidenceRef.current = [{ code: "experiment_started", at: Date.now(), detail: id }];
   }
 
   function exitExperiment() {
@@ -284,12 +363,19 @@ export function ElectricityLabExperienceProvider({
   function advanceStep() {
     if (!selectedExperiment || !currentStep) return;
     if (!currentStep.isUnlocked(effectiveStepContext)) return; // реальная проверка, не просто клик
+    pushEvidence("step_completed", currentStep.id);
     setCurrentStepIndex((i) => Math.min(i + 1, selectedExperiment.steps.length - 1));
   }
 
   function recordMeasurement() {
     const snap = snapshotMeasurement({ components: stepContext.components, solution: stepContext.solution });
     setMeasurements((prev) => [...prev, { ...snap, at: Date.now() }]);
+    const warnings = checkElectricalSafety({
+      components: stepContext.components,
+      connections: stepContext.connections,
+      solution: stepContext.solution,
+    });
+    if (!warnings.some((w) => w.severity === "danger")) pushEvidence("successful_measurement");
   }
 
   function answerQuestion(questionId: string, selectedIndex: number) {
@@ -298,6 +384,7 @@ export function ElectricityLabExperienceProvider({
 
   function recordHintUsed() {
     hintsRef.current += 1;
+    pushEvidence("hint_used");
   }
 
   const completingRef = useRef(false);
@@ -307,12 +394,15 @@ export function ElectricityLabExperienceProvider({
     if (!selectedExperiment) return;
     if (!selectedExperiment.isComplete(effectiveStepContext)) return; // нельзя завершить без реального подтверждения
     completingRef.current = true;
+    pushEvidence("experiment_completed");
 
     const questionResults: QuestionResult[] = selectedExperiment.questions.map((q) => {
       const selectedIndex = questionAnswers[q.id] ?? -1;
       const correctIndex = q.correctIndex(effectiveStepContext);
       return { questionId: q.id, prompt: q.prompt, selectedIndex, correctIndex, correct: selectedIndex === correctIndex };
     });
+
+    const durationMs = experimentStartedAtRef.current !== null ? Date.now() - experimentStartedAtRef.current : null;
 
     const entry = buildElectricityNotebookEntry({
       experimentId: selectedExperiment.id,
@@ -326,12 +416,26 @@ export function ElectricityLabExperienceProvider({
       observations: observationsDraft,
       conclusion: conclusionDraft,
       hintsUsed: hintsRef.current,
+      evidenceEvents: evidenceRef.current,
+      totalSteps: selectedExperiment.steps.length,
+      durationMs,
     });
 
     const nextEntries = sortElectricityNotebookEntriesByDateDesc([...notebookEntries, entry]);
     setNotebookEntries(nextEntries);
     saveNotebook(nextEntries);
     setLastNotebookEntry(entry);
+
+    // Stage S9.6: обогащаем уже существующий пайплайн submitTaskEvent
+    // реальными кодами ошибок из Evidence Layer (не только неверные ответы
+    // на вопросы) — тот же backend-эндпоинт, никакой новой системы прогресса.
+    const evidenceMistakeCodes = Array.from(
+      new Set(
+        evidenceRef.current
+          .filter((e) => e.code === "incorrect_wiring" || e.code === "unsafe_wiring")
+          .map((e) => e.detail ?? e.code)
+      )
+    );
 
     submitTaskEvent({
       simulationId,
@@ -341,7 +445,7 @@ export function ElectricityLabExperienceProvider({
       completed: true,
       hintsUsed: hintsRef.current,
       attempts: measurements.length,
-      mistakes: questionResults.filter((q) => !q.correct).map((q) => q.questionId),
+      mistakes: [...questionResults.filter((q) => !q.correct).map((q) => q.questionId), ...evidenceMistakeCodes],
     })
       .then((res) => setLearningProfile(res.profile))
       .catch(() => {
