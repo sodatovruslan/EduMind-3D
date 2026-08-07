@@ -27,6 +27,14 @@ export interface CircuitComponent {
   isClosed?: boolean; // switch
   ratedCurrentA?: number; // fuse — порог срабатывания
   isBlown?: boolean; // fuse — текущее состояние (мутируется вызывающим кодом между расчетами)
+  // post-S9.9 acceptance fix — sandbox component repositioning: позиция на
+  // верстаке. Optional и никогда не читается физикой/солвером ниже —
+  // чисто пространственное состояние сцены, но хранится здесь (а не в
+  // отдельном стейте), чтобы бесплатно течь через уже существующий
+  // ExperimentStateProvider/S9.7 autosave без изменения их схемы.
+  // undefined — компонент использует свою дефолтную позицию по кругу (см.
+  // DEFAULT_COMPONENT_POSITIONS в ElectricityLabScene.tsx).
+  position?: [number, number, number];
 }
 
 export interface Connection {

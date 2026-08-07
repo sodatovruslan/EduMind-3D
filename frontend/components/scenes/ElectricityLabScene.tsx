@@ -15,6 +15,7 @@ import {
   useExperimentState,
 } from "@/components/core/ExperimentStateProvider";
 import { WireDragProvider, WireDragSurface, useWireDrag } from "@/components/core/WireDragProvider";
+import { ComponentDragProvider, ComponentDragSurface, useComponentDrag } from "@/components/core/ComponentDragProvider";
 import ConnectionPoint from "@/components/core/ConnectionPoint";
 import { TutorialProvider, useTutorial } from "@/components/tutorial/TutorialProvider";
 import TutorialPanel from "@/components/tutorial/TutorialPanel";
@@ -46,24 +47,22 @@ import type { Simulation } from "@/lib/types";
 // Guided Onboarding: наведение курсора в любую точку компонента (не только
 // на клемму) показывает всплывающую подпись с названием — общий хук вместо
 // повторения одной и той же пары обработчиков в каждом компоненте.
-// Stage S9.8 — Sandbox UX: необязательный параметр `interactive` — курсор
-// "pointer" на наведении для компонентов, у которых наведение реально
-// приводит к клик-действию (сейчас — только Switch, тумблер переключается
-// кликом), чтобы это было видно ДО клика, а не только по тултипу с именем.
-// Остальные компоненты (Battery/Resistor/Bulb/Ammeter/Voltmeter/Fuse)
-// вызывают хук без аргумента — поведение для них не меняется.
-function useHoverTooltip(interactive = false) {
+// Stage S9.8 — необязательный курсор на наведении для компонентов, у
+// которых наведение реально приводит к действию: "pointer" для Switch
+// (клик переключает), "grab" для всех остальных с post-S9.9 — их теперь
+// можно взять и перетащить (см. useComponentPlacement ниже).
+function useHoverTooltip(cursor?: "pointer" | "grab") {
   const [hovered, setHovered] = useState(false);
   return {
     hovered,
     onPointerOver: (e: ThreeEvent<PointerEvent>) => {
       e.stopPropagation();
       setHovered(true);
-      if (interactive) document.body.style.cursor = "pointer";
+      if (cursor) document.body.style.cursor = cursor;
     },
     onPointerOut: () => {
       setHovered(false);
-      if (interactive) document.body.style.cursor = "auto";
+      if (cursor) document.body.style.cursor = "auto";
     },
   };
 }
@@ -257,8 +256,45 @@ function useSuggestedTerminals(): [string, string] | null {
   return tutorialTerminals ?? labTerminals;
 }
 
+// post-S9.9 sandbox acceptance fix — исходная раскладка стенда (та же,
+// что раньше была захардкожена прямо в position={...} каждого компонента)
+// теперь служит ТОЛЬКО дефолтом для компонентов, у которых ещё нет
+// сохранённой позиции (component.position === undefined) — уже существующие
+// сохранения/тесты, не знающие о position, продолжают работать один в один.
+const DEFAULT_COMPONENT_POSITIONS: Record<string, [number, number, number]> = {
+  battery: [-3.2, 0.28, 0],
+  resistor: [-1.5, 0.28, 0],
+  bulb: [0.2, 0.6, 0],
+  switch: [1.9, 0.1, 0],
+  ammeter: [3.2, 0.28, -0.45],
+  voltmeter: [-1.5, 1.05, 0.9],
+  fuse: [1.4, 0.28, -1.6],
+};
+
+// единая точка "откуда компонент знает свою текущую позицию на верстаке" —
+// committed-значение из ExperimentStateProvider (реальное доменное
+// состояние, течёт через тот же reducer и S9.7 autosave без изменений их
+// схемы) либо live-превью во время активного перетаскивания ИМЕННО этого
+// компонента. Возвращает и обработчик начала захвата.
+function useComponentPlacement(componentId: string) {
+  const { state } = useExperimentState();
+  const { draggingComponentId, previewPosition, startDrag } = useComponentDrag();
+  const defaultPosition = DEFAULT_COMPONENT_POSITIONS[componentId] ?? [0, 0.28, 0];
+  const committedPosition = state.components.find((c) => c.id === componentId)?.position ?? defaultPosition;
+  const isDragging = draggingComponentId === componentId;
+  const position = isDragging && previewPosition ? previewPosition : committedPosition;
+
+  function onPointerDown(e: ThreeEvent<PointerEvent>) {
+    e.stopPropagation();
+    startDrag(componentId, committedPosition);
+  }
+
+  return { position, isDragging, onPointerDown };
+}
+
 function Battery() {
-  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("grab");
+  const { position, isDragging, onPointerDown } = useComponentPlacement("battery");
   const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.battery;
   // targetSize=0.9 — та же длина, что была у процедурного cylinderGeometry
@@ -271,7 +307,13 @@ function Battery() {
   // с ним она вставала вертикально ("солдатиком").
   const model = usePreparedGLTF(MODEL_PATHS.battery, 0.9);
   return (
-    <group position={[-3.2, 0.28, 0]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
+    <group
+      position={position}
+      scale={isDragging ? 1.06 : 1}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+      onPointerDown={onPointerDown}
+    >
       {/* реалистичная GLB-модель батареи вместо процедурного цилиндра —
           масштаб посчитан автофитом, модель уже лежит вдоль нужной оси */}
       <primitive object={model} />
@@ -295,18 +337,26 @@ function Battery() {
       <Html position={[0.4, 0.32, 0]} center distanceFactor={8} style={{ pointerEvents: "none" }}>
         <div className="pointer-events-none text-lg font-bold leading-none text-slate-300">−</div>
       </Html>
-      {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} />}
+      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} />}
     </group>
   );
 }
 
 function Resistor() {
   const bandColors = ["#a16207", "#000000", "#dc2626"];
-  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("grab");
+  const { position, isDragging, onPointerDown } = useComponentPlacement("resistor");
   const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.resistor;
   return (
-    <group position={[-1.5, 0.28, 0]} rotation={[0, 0, Math.PI / 2]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
+    <group
+      position={position}
+      rotation={[0, 0, Math.PI / 2]}
+      scale={isDragging ? 1.06 : 1}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+      onPointerDown={onPointerDown}
+    >
       {/* керамическое тело */}
       <mesh castShadow>
         <cylinderGeometry args={[0.13, 0.13, 0.7, 20]} />
@@ -329,7 +379,7 @@ function Resistor() {
       </mesh>
       <ConnectionPoint id="resistor_a" position={[0, 0.4, 0]} suggested={suggestedTerminals?.includes("resistor_a") ?? false} />
       <ConnectionPoint id="resistor_b" position={[0, -0.4, 0]} suggested={suggestedTerminals?.includes("resistor_b") ?? false} />
-      {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0, 0.2]} />}
+      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0, 0.2]} />}
     </group>
   );
 }
@@ -337,7 +387,8 @@ function Resistor() {
 function Bulb({ brightness }: { brightness: number }) {
   const lightRef = useRef<THREE.PointLight>(null);
   const filamentMaterialRef = useRef<THREE.MeshStandardMaterial | null>(null);
-  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("grab");
+  const { position, isDragging, onPointerDown } = useComponentPlacement("bulb");
   const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.bulb;
   // targetSize=0.68 — высота старой сборки (цоколь -0.4 .. верх стекла
@@ -377,20 +428,28 @@ function Bulb({ brightness }: { brightness: number }) {
   });
 
   return (
-    <group position={[0.2, 0.6, 0]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
+    <group
+      position={position}
+      scale={isDragging ? 1.06 : 1}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+      onPointerDown={onPointerDown}
+    >
       {/* реалистичная GLB-модель лампы накаливания (стекло/нить/цоколь уже
           смоделированы отдельными мешами) вместо процедурного шара+тора */}
       <primitive object={model} />
       <pointLight ref={lightRef} color="#fde047" intensity={0} distance={4} decay={2} />
       <ConnectionPoint id="bulb_a" position={[-0.42, -0.6, 0]} suggested={suggestedTerminals?.includes("bulb_a") ?? false} />
       <ConnectionPoint id="bulb_b" position={[0.42, -0.6, 0]} suggested={suggestedTerminals?.includes("bulb_b") ?? false} />
-      {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.4, 0]} />}
+      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.4, 0]} />}
     </group>
   );
 }
 
 function Switch({ isClosed, onToggle }: { isClosed: boolean; onToggle: () => void }) {
-  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip(true);
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("pointer");
+  const { position, isDragging, onPointerDown } = useComponentPlacement("switch");
+  const { consumeJustDragged } = useComponentDrag();
   const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.switch;
   // targetSize=0.8 — модель это компактный тумблер (мировой bbox после
@@ -409,11 +468,26 @@ function Switch({ isClosed, onToggle }: { isClosed: boolean; onToggle: () => voi
   });
 
   return (
-    <group position={[1.9, 0.1, 0]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
-      <primitive object={base} onClick={onToggle} />
+    <group
+      position={position}
+      scale={isDragging ? 1.06 : 1}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+      onPointerDown={onPointerDown}
+    >
+      <primitive
+        object={base}
+        onClick={() => {
+          // после реального перетаскивания (не клика) отпускание кнопки
+          // мыши приходится на тот же меш — без этой проверки тумблер
+          // паразитно переключался бы сразу после каждого перемещения
+          if (consumeJustDragged("switch")) return;
+          onToggle();
+        }}
+      />
       <ConnectionPoint id="switch_a" position={[-0.4, 0.13, 0]} suggested={suggestedTerminals?.includes("switch_a") ?? false} />
       <ConnectionPoint id="switch_b" position={[0.4, 0.13, 0]} suggested={suggestedTerminals?.includes("switch_b") ?? false} />
-      {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.35, 0]} />}
+      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.35, 0]} />}
     </group>
   );
 }
@@ -503,11 +577,19 @@ function MeterHousing({
 }
 
 function Ammeter({ currentA, placementStatus, warningMessage }: { currentA: number; placementStatus: string; warningMessage: string | null }) {
-  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("grab");
+  const { position, isDragging, onPointerDown } = useComponentPlacement("ammeter");
   const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.ammeter;
   return (
-    <group position={[3.2, 0.28, -0.45]} rotation={[0, Math.PI / 2, 0]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
+    <group
+      position={position}
+      rotation={[0, Math.PI / 2, 0]}
+      scale={isDragging ? 1.06 : 1}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+      onPointerDown={onPointerDown}
+    >
       <MeterHousing
         position={[0, 0, 0]}
         label="A"
@@ -519,17 +601,24 @@ function Ammeter({ currentA, placementStatus, warningMessage }: { currentA: numb
       />
       <ConnectionPoint id="ammeter_a" position={[0, 0, 0.45]} suggested={suggestedTerminals?.includes("ammeter_a") ?? false} />
       <ConnectionPoint id="ammeter_b" position={[0, 0, -0.45]} suggested={suggestedTerminals?.includes("ammeter_b") ?? false} />
-      {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.3, 0]} />}
+      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.3, 0]} />}
     </group>
   );
 }
 
 function Voltmeter({ voltageV, placementStatus, warningMessage }: { voltageV: number; placementStatus: string; warningMessage: string | null }) {
-  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("grab");
+  const { position, isDragging, onPointerDown } = useComponentPlacement("voltmeter");
   const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.voltmeter;
   return (
-    <group position={[-1.5, 1.05, 0.9]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
+    <group
+      position={position}
+      scale={isDragging ? 1.06 : 1}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+      onPointerDown={onPointerDown}
+    >
       <MeterHousing
         position={[0, 0, 0]}
         label="V"
@@ -541,7 +630,7 @@ function Voltmeter({ voltageV, placementStatus, warningMessage }: { voltageV: nu
       />
       <ConnectionPoint id="voltmeter_a" position={[-0.4, 0, 0]} color={BRASS_COLOR} suggested={suggestedTerminals?.includes("voltmeter_a") ?? false} />
       <ConnectionPoint id="voltmeter_b" position={[0.4, 0, 0]} color={BRASS_COLOR} suggested={suggestedTerminals?.includes("voltmeter_b") ?? false} />
-      {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.3, 0]} />}
+      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.3, 0]} />}
     </group>
   );
 }
@@ -588,11 +677,19 @@ function FuseParticles({ active, timeScale, count }: { active: boolean; timeScal
 function Fuse({ isBlown, justBlown, timeScale }: { isBlown: boolean; justBlown: boolean; timeScale: number }) {
   const { preset } = useQuality();
   const particleCount = Math.min(preset.maxParticles, 14);
-  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("grab");
+  const { position, isDragging, onPointerDown } = useComponentPlacement("fuse");
   const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.fuse;
   return (
-    <group position={[1.4, 0.28, -1.6]} rotation={[0, 0, Math.PI / 2]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
+    <group
+      position={position}
+      rotation={[0, 0, Math.PI / 2]}
+      scale={isDragging ? 1.06 : 1}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+      onPointerDown={onPointerDown}
+    >
       <mesh castShadow>
         <cylinderGeometry args={[0.09, 0.09, 0.5, 16]} />
         <MeshTransmissionMaterial thickness={0.03} roughness={0.1} transmission={0.85} ior={1.4} color={isBlown ? "#1c1917" : "#e0f2fe"} resolution={64} samples={1} />
@@ -604,7 +701,7 @@ function Fuse({ isBlown, justBlown, timeScale }: { isBlown: boolean; justBlown: 
       <FuseParticles active={justBlown} timeScale={timeScale} count={particleCount} />
       <ConnectionPoint id="fuse_a" position={[0, 0.3, 0]} suggested={suggestedTerminals?.includes("fuse_a") ?? false} />
       <ConnectionPoint id="fuse_b" position={[0, -0.3, 0]} suggested={suggestedTerminals?.includes("fuse_b") ?? false} />
-      {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0, 0.2]} />}
+      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0, 0.2]} />}
     </group>
   );
 }
@@ -692,6 +789,17 @@ function WireTube({ a, b, onClick }: { a: THREE.Vector3; b: THREE.Vector3; onCli
 function Wires() {
   const { state, removeConnection } = useExperimentState();
   const { getTerminalPosition } = useWireDrag();
+  // post-S9.9: пока идёт перетаскивание компонента, мировые позиции его
+  // клемм меняются каждый кадр (см. ConnectionPoint.tsx), но простое
+  // мутирование Map-а в WireDragProvider само по себе не триггерит
+  // ре-рендер этого компонента — принудительно тикаем ТОЛЬКО во время
+  // активного драга, чтобы a/b ниже подхватывали свежие позиции и провод
+  // визуально следовал за компонентом в реальном времени
+  const { draggingComponentId } = useComponentDrag();
+  const [, forceTick] = useState(0);
+  useFrame(() => {
+    if (draggingComponentId) forceTick((t) => (t + 1) % 1_000_000);
+  });
 
   return (
     <>
@@ -867,14 +975,16 @@ function CircuitScene({
       <Wires />
       <PendingWirePreview />
       <WireDragSurface y={0.01} size={12} />
+      <ComponentDragSurface y={0.011} size={12} />
     </group>
   );
 }
 
-// мост между WireDragProvider (обычный React-контекст, живет и снаружи
-// Canvas) и CanvasShell: пока пользователь тянет провод, OrbitControls
-// должен быть выключен — иначе тот же pointer-жест дополнительно крутит
-// камеру, и координаты терминалов "уезжают" прямо во время клика
+// мост между WireDragProvider/ComponentDragProvider (обычные React-
+// контексты, живут и снаружи Canvas) и CanvasShell: пока пользователь
+// тянет провод ИЛИ перетаскивает компонент, OrbitControls должен быть
+// выключен — иначе тот же pointer-жест дополнительно крутит камеру, и
+// координаты терминалов/компонента "уезжают" прямо во время клика
 function ElectricityCanvas({
   quality,
   solution,
@@ -887,6 +997,7 @@ function ElectricityCanvas({
   safetyWarnings: SafetyWarning[];
 }) {
   const { draggingFrom } = useWireDrag();
+  const { draggingComponentId } = useComponentDrag();
   return (
     <CanvasShell
       cameraPosition={[3.4, 2.6, 7.4]}
@@ -894,7 +1005,7 @@ function ElectricityCanvas({
       floorY={-0.06}
       bloomIntensity={0.4}
       quality={quality}
-      orbitEnabled={!draggingFrom}
+      orbitEnabled={!draggingFrom && !draggingComponentId}
       minPolarAngle={Math.PI / 6}
       maxPolarAngle={Math.PI / 2.1}
     >
@@ -1002,9 +1113,15 @@ function TeacherChatPanel({
 // сброшенной, пустой цепи.
 function ElectricityResetButton({ onReset }: { onReset: () => void }) {
   const { resetLabSession } = useElectricityLabExperience();
+  // post-S9.9: полный сброс отменяет и любое активное перетаскивание
+  // компонента — иначе после сброса завершение уже идущего драга
+  // перезаписало бы только что восстановленную дефолтную позицию
+  // устаревшим значением из превью
+  const { cancelDrag } = useComponentDrag();
   return (
     <button
       onClick={() => {
+        cancelDrag();
         onReset();
         resetLabSession();
       }}
@@ -1199,6 +1316,14 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
     playConnect();
   }
 
+  // post-S9.9 sandbox acceptance fix — единственное место, где позиция
+  // компонента реально попадает в домен (ExperimentStateProvider), ровно
+  // тот же путь, что и любое другое реальное действие (updateComponent),
+  // поэтому автоматически течёт и через существующий S9.7 autosave.
+  function handleComponentMove(componentId: string, position: [number, number, number]) {
+    updateComponent(componentId, { position });
+  }
+
   function handleVoltageChange(value: number) {
     updateComponent("battery", { voltageV: value });
     logEvent({ type: "param_changed", componentId: "battery", field: "voltageV", value });
@@ -1234,6 +1359,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
       simulationId={simulation.id}
       stepContext={{ components: state.components, connections: state.connections, solution }}
     >
+    <ComponentDragProvider onMove={handleComponentMove}>
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
     <div className="flex-1 rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">
       <div className="relative">
@@ -1418,6 +1544,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
       solution={solution}
     />
     </div>
+    </ComponentDragProvider>
     </ElectricityLabExperienceProvider>
     </TaskProgressProvider>
     </TutorialProvider>
