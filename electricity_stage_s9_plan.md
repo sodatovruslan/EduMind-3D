@@ -147,25 +147,48 @@ Both were caught by running the **full** test suite, not just the circuit-specif
 #### S9.2 Integration Result (real, from this checkpoint)
 **Integrated.** `solveCircuit` in `circuit-engine.ts` now runs Option B (Nodal Analysis) internally; public contract, all consumer files, and all previously-passing behavior are unchanged. Full details, real test output, and the two bugs found+fixed are in `solver-spike-report.md`.
 
+### S9.3 - Measurement Tools
+#### Goal
+Bring ammeter/voltmeter to the same production quality as Chemistry World's measurement tooling: detect incorrect placement (ammeter in parallel, voltmeter in series), show an educational warning instead of a misleading number, keep live updates while wiring, using only the already-integrated production solver.
+#### Existing architecture
+`task-engine.ts` (a separate, older "6 quick tasks" module) already had the exact topological placement checks needed (Task 2: ammeter-parallel detection, Task 3: voltmeter-not-parallel-to-load detection) — but only surfaced through the task/quiz panel, never on the meter display itself in real time.
+#### Files to modify
+`task-engine.ts` (pure refactor — delegate to the new shared module instead of its own private copy of the same union-find logic; behavior proven unchanged by running its own unmodified test file), `ElectricityLabScene.tsx` (targeted: `MeterHousing`/`Ammeter`/`Voltmeter` gain an optional warning display; `CircuitScene` computes the two checks via `useMemo`). `circuit-engine.ts`, `WireDragProvider.tsx`, `ConnectionPoint.tsx`, `ExperimentStateProvider.tsx` — **not touched** (no real solver bug found this checkpoint, no reason to touch it; drag-and-drop/wiring untouched per the task's explicit constraint).
+#### New files
+`measurement-validation.ts` (shared placement-diagnosis logic + Russian educational messages), `measurement-validation.test.ts` (8 unit tests), `MeasurementTools.integration.test.tsx` (5 integration tests through the real `ExperimentStateProvider` + real `solveCircuit`), `electricity-measurement-tools.spec.ts` (Playwright, reuses `electricity-lab.spec.ts`'s wiring helpers).
+#### Domain model changes
+None — no new fields on `CircuitComponent`/`CircuitSolution`; placement status is derived, not stored.
+#### Tests
+- Unit: `measurement-validation.test.ts`, 8/8 passing, against the real production solver.
+- Integration: `MeasurementTools.integration.test.tsx`, 5/5 passing, through the real state provider + real solver (proves live valid→invalid transitions without remounting, and recovery via the real `removeConnection` action).
+- Backward compatibility: `task-engine.test.ts` run completely unmodified, 19/19 passing — proves the refactor didn't change Task 2/3 behavior.
+- Playwright: `electricity-measurement-tools.spec.ts` written and type-checked, but **not yet verified by a real run** — see the S9.3 Result note below.
+
+#### S9.3 Result (real, from this checkpoint)
+**Implemented and unit/integration-verified; Playwright run blocked by machine state, not a code issue.** `npx tsc --noEmit`: 0 errors. Full `npx vitest run`: 482/482 passing (45 files). `npm run lint`: 0 warnings. The new Playwright scenario hung on its first `mouse.move` after both a 180s and a 240s budget; before treating this as a regression, the **existing, unmodified** `electricity-lab.spec.ts` was run as a control and hung identically on the same line — proving this is pre-existing headless Chromium/SwiftShader instability on this machine (the same class of issue already documented for Chemistry World E2E elsewhere in this repo's history), not something Stage S9.3 introduced. 18 stuck `chrome.exe` processes were killed afterward; servers stopped. The scenario is ready to run once the environment is stable (or on a different machine/CI).
+
 ## 3. Stage S9 Completion Criteria
 
 ### Production Acceptance Checklist
-*Checked only where this checkpoint has real evidence (test run, tsc, lint). Unchecked items are genuinely unverified in this checkpoint, not assumed failing — several (measurement/safety UI, autosave/resume, Playwright) are explicitly out of scope per the integration instructions and belong to a later stage.*
+*Checked only where real evidence exists (test run, tsc, lint). Unchecked items are genuinely unverified, not assumed failing — several (safety UI, autosave/resume) are explicitly out of scope for S9 so far.*
 - [x] Series circuit calculations correct — `circuit-engine.test.ts`, unmodified, 10/10 passing against the new solver.
 - [x] Parallel circuit calculations correct — `circuit-engine.integration.test.ts` + `nodal-analysis-solver.test.ts`.
 - [x] Mixed circuit validation — same.
 - [x] Ohm's Law verified — same (all solver tests are Ohm's-law-based).
 - [x] Voltage drop matches theory — `circuit-engine.test.ts` + integration tests check exact voltage drops.
-- [ ] Ammeter series validation — pre-existing `task-engine.ts` check, unaffected by S9, not re-audited beyond confirming its tests still pass.
-- [ ] Voltmeter parallel validation — same caveat as above.
-- [ ] Fuse burnout animation — UI/visual, not covered by unit tests, not verified in this checkpoint.
-- [x] Short circuit detection — verified, including the dead-short bug found and fixed this checkpoint (`task-engine.test.ts` 19/19).
+- [x] Ammeter series validation — `measurement-validation.test.ts` + `MeasurementTools.integration.test.tsx` (S9.3): parallel placement detected against the real solver, correct series placement confirmed, live transition verified.
+- [x] Voltmeter parallel validation — same (S9.3): series placement detected (and shown to genuinely block the circuit via the real solver, not a scripted message), parallel placement confirmed valid.
+- [ ] Fuse burnout animation — UI/visual, not covered by unit tests, not verified.
+- [x] Short circuit detection — verified, including the dead-short bug found and fixed in S9.2 (`task-engine.test.ts` 19/19).
 - [x] Overload protection — fuse-rating logic verified (`circuit-engine.test.ts`, `circuit-engine.integration.test.ts`'s parallel-branch fuse case).
-- [ ] Guided experiment flow / XP rewards / Teacher report generation / Autosave / Resume / Offline save — unrelated to the solver, not touched, not verified this checkpoint.
-- [x] <5ms per frame — real benchmark, 0.02-0.09ms per solve, 60-450x under budget.
-- [ ] Zero console errors — would require running the live scene in a browser; not done this checkpoint (unit/integration tests only, per the requested verification commands).
+- [ ] Guided experiment flow / XP rewards / Teacher report generation / Autosave / Resume / Offline save — unrelated to the solver/measurement tools, not touched, not verified.
+- [x] <5ms per frame — real benchmark (S9.2), 0.02-0.09ms per solve, 60-450x under budget.
+- [ ] Zero console errors — would require running the live scene in a browser; not verified (S9.3's Playwright run was blocked by pre-existing machine instability, confirmed via a control run of the unmodified `electricity-lab.spec.ts`).
 - [x] Zero TypeScript errors — `npx tsc --noEmit`, 0 errors.
 - [x] Zero ESLint warnings — `npm run lint`, 0 warnings.
-- [ ] All critical physics/domain scenarios covered — solver-level scenarios yes; broader domain/UI scenarios not re-audited.
-- [x] Full Vitest suite passes — 469/469 (43 files).
-- [ ] All Playwright scenarios pass — not run this checkpoint (not among the requested verification commands; also out of scope — "Do not start measurement UI, safety UI, or next Stage").
+- [ ] All critical physics/domain scenarios covered — solver + measurement-tool scenarios yes; broader domain/UI scenarios not re-audited.
+- [x] Full Vitest suite passes — 482/482 (45 files).
+- [ ] All Playwright scenarios pass — `electricity-measurement-tools.spec.ts` written and type-checked but not run to completion (machine instability, see S9.3 Result above); existing `electricity-lab.spec.ts` also currently blocked by the same issue as a control.
+
+### ✅ Stage S9.3 — Approved
+Approved as following the project strategy: reuse existing production logic (`task-engine.ts`'s Task 2/3 diagnosis → `measurement-validation.ts`), no duplicated algorithms, production architecture preserved (`circuit-engine.ts`, wiring, drag-and-drop untouched), full backward compatibility (proven by the unmodified `task-engine.test.ts`, 19/19). The Playwright hang is accepted as a pre-existing environment limitation (reproduces on the unmodified baseline) and is **not investigated further during Stage S9** per explicit direction. Committed as `feat(electricity): S9.3 approved`.

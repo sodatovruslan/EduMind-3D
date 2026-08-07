@@ -1,4 +1,5 @@
 import type { CircuitComponent, CircuitSolution, Connection } from "@/lib/circuit-engine";
+import { buildNodeGroups, componentsOnSameNodePair, isTerminalWired } from "@/lib/measurement-validation";
 
 /**
  * Interactive Learning System — Task Validator. Чистые функции, без React/Three,
@@ -53,61 +54,10 @@ export interface TaskDefinition {
   validate: (state: CircuitState) => TaskValidationResult;
 }
 
-// ---- топология: своя минимальная union-find, а не импорт из circuit-engine.ts
-// (Circuit Engine трогать нельзя) — строит те же узлы-группы по тем же
-// Connection[], что использует и solveCircuit, только здесь нужен доступ
-// к группировке узлов "снаружи", а не только к итоговому решению одного контура.
-
-class NodeUnionFind {
-  private parent = new Map<string, string>();
-
-  find(x: string): string {
-    if (!this.parent.has(x)) this.parent.set(x, x);
-    const p = this.parent.get(x)!;
-    if (p !== x) {
-      const root = this.find(p);
-      this.parent.set(x, root);
-      return root;
-    }
-    return x;
-  }
-
-  union(a: string, b: string): void {
-    const rootA = this.find(a);
-    const rootB = this.find(b);
-    if (rootA !== rootB) this.parent.set(rootA, rootB);
-  }
-}
-
-function buildNodeGroups(connections: Connection[]): NodeUnionFind {
-  const uf = new NodeUnionFind();
-  for (const connection of connections) uf.union(connection.terminals[0], connection.terminals[1]);
-  return uf;
-}
-
-function nodePairKey(component: CircuitComponent, uf: NodeUnionFind): string {
-  return component.terminals
-    .map((t) => uf.find(t))
-    .sort()
-    .join("::");
-}
-
-// компоненты, чьи выводы соединены ровно с той же парой узлов, что и целевой
-// компонент — то есть реально включены параллельно ему в текущей проводке
-function componentsOnSameNodePair(
-  components: CircuitComponent[],
-  uf: NodeUnionFind,
-  targetId: string
-): CircuitComponent[] {
-  const target = components.find((c) => c.id === targetId);
-  if (!target) return [];
-  const key = nodePairKey(target, uf);
-  return components.filter((c) => c.id !== targetId && nodePairKey(c, uf) === key);
-}
-
-function isTerminalWired(connections: Connection[], terminalId: string): boolean {
-  return connections.some((c) => c.terminals[0] === terminalId || c.terminals[1] === terminalId);
-}
+// Топологические примитивы (union-find по узлам/парам клемм) перенесены в
+// measurement-validation.ts — единый источник правды, которым теперь
+// пользуются и задания здесь, и показания приборов прямо на сцене
+// (Stage S9.3). Circuit Engine (circuit-engine.ts) по-прежнему не тронут.
 
 // общие для нескольких заданий диагнозы — читают то же CircuitSolution,
 // что и остальной интерфейс (панель статуса цепи использует те же поля)

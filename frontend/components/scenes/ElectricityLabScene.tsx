@@ -27,6 +27,12 @@ import { useSimulationClock } from "@/lib/use-simulation-clock";
 import { useQuality, type QualityLevel } from "@/lib/quality-context";
 import { buildAIContext } from "@/lib/ai-context-builder";
 import { solveCircuit, bulbBrightness, type CircuitComponent, type CircuitSolution, type Connection } from "@/lib/circuit-engine";
+import {
+  checkAmmeterPlacement,
+  checkVoltmeterPlacement,
+  ammeterPlacementMessage,
+  voltmeterPlacementMessage,
+} from "@/lib/measurement-validation";
 import { apiFetch, ApiError } from "@/lib/api";
 import { playConnect, playDisconnect, playFuseBlow, playPowerOn, playSwitchClick } from "@/lib/sound-effects";
 import { ACHIEVEMENTS } from "@/lib/achievements";
@@ -405,12 +411,21 @@ function MeterHousing({
   value,
   unit,
   testId,
+  placementStatus = "valid",
+  warningMessage = null,
 }: {
   position: [number, number, number];
   label: string;
   value: number;
   unit: string;
   testId: string;
+  // Stage S9.3: неправильное подключение (амперметр параллельно/вольтметр
+  // последовательно) — data-value ниже ВСЕГДА остаётся реальным числом от
+  // production-солвера (ничего не скрываем от тестов/расчётов), но видимый
+  // текст на табло заменяется понятным предупреждением вместо
+  // вводящего в заблуждение числа.
+  placementStatus?: string;
+  warningMessage?: string | null;
 }) {
   const displayRef = useRef<HTMLDivElement>(null);
   const displayedValueRef = useRef(value);
@@ -422,7 +437,9 @@ function MeterHousing({
     // каждый кадр (data-value ниже остается точным для тестов/расчетов)
     displayedValueRef.current = THREE.MathUtils.lerp(displayedValueRef.current, value, Math.min(1, delta * 5));
     if (displayRef.current) {
-      displayRef.current.textContent = `${displayedValueRef.current.toFixed(2)} ${unit}`;
+      displayRef.current.textContent = warningMessage
+        ? "⚠ Неверно"
+        : `${displayedValueRef.current.toFixed(2)} ${unit}`;
     }
   });
 
@@ -444,25 +461,49 @@ function MeterHousing({
         <div
           data-testid={testId}
           data-value={value}
-          className="pointer-events-none rounded bg-black/80 px-2 py-1 font-mono text-[10px] text-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.45)]"
+          data-placement-status={placementStatus}
+          className={`pointer-events-none rounded px-2 py-1 font-mono text-[10px] shadow-[0_0_8px_rgba(16,185,129,0.45)] ${
+            warningMessage ? "bg-red-950/90 text-red-400" : "bg-black/80 text-emerald-400"
+          }`}
+          title={warningMessage ?? undefined}
         >
-          <div className="text-[8px] uppercase tracking-widest text-emerald-600">{label}</div>
+          <div className={`text-[8px] uppercase tracking-widest ${warningMessage ? "text-red-500" : "text-emerald-600"}`}>
+            {label}
+          </div>
           <div ref={displayRef} className="tabular-nums">
-            {value.toFixed(2)} {unit}
+            {warningMessage ? "⚠ Неверно" : `${value.toFixed(2)} ${unit}`}
           </div>
         </div>
       </Html>
+      {warningMessage && (
+        <Html position={[0, 0.32, 0.16]} center distanceFactor={7} style={{ pointerEvents: "none" }}>
+          <div
+            data-testid={`${testId}-warning`}
+            className="pointer-events-none w-40 whitespace-normal rounded-lg border border-red-400/40 bg-red-950/90 px-2 py-1 text-center text-[10px] leading-tight text-red-200 shadow-lg"
+          >
+            {warningMessage}
+          </div>
+        </Html>
+      )}
     </group>
   );
 }
 
-function Ammeter({ currentA }: { currentA: number }) {
+function Ammeter({ currentA, placementStatus, warningMessage }: { currentA: number; placementStatus: string; warningMessage: string | null }) {
   const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
   const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.ammeter;
   return (
     <group position={[3.2, 0.28, -0.45]} rotation={[0, Math.PI / 2, 0]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
-      <MeterHousing position={[0, 0, 0]} label="A" value={currentA} unit="A" testId="ammeter-reading" />
+      <MeterHousing
+        position={[0, 0, 0]}
+        label="A"
+        value={currentA}
+        unit="A"
+        testId="ammeter-reading"
+        placementStatus={placementStatus}
+        warningMessage={warningMessage}
+      />
       <ConnectionPoint id="ammeter_a" position={[0, 0, 0.45]} suggested={suggestedTerminals?.includes("ammeter_a") ?? false} />
       <ConnectionPoint id="ammeter_b" position={[0, 0, -0.45]} suggested={suggestedTerminals?.includes("ammeter_b") ?? false} />
       {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.3, 0]} />}
@@ -470,13 +511,21 @@ function Ammeter({ currentA }: { currentA: number }) {
   );
 }
 
-function Voltmeter({ voltageV }: { voltageV: number }) {
+function Voltmeter({ voltageV, placementStatus, warningMessage }: { voltageV: number; placementStatus: string; warningMessage: string | null }) {
   const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
   const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.voltmeter;
   return (
     <group position={[-1.5, 1.05, 0.9]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
-      <MeterHousing position={[0, 0, 0]} label="V" value={voltageV} unit="V" testId="voltmeter-reading" />
+      <MeterHousing
+        position={[0, 0, 0]}
+        label="V"
+        value={voltageV}
+        unit="V"
+        testId="voltmeter-reading"
+        placementStatus={placementStatus}
+        warningMessage={warningMessage}
+      />
       <ConnectionPoint id="voltmeter_a" position={[-0.4, 0, 0]} color={BRASS_COLOR} suggested={suggestedTerminals?.includes("voltmeter_a") ?? false} />
       <ConnectionPoint id="voltmeter_b" position={[0.4, 0, 0]} color={BRASS_COLOR} suggested={suggestedTerminals?.includes("voltmeter_b") ?? false} />
       {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.3, 0]} />}
@@ -674,6 +723,20 @@ function CircuitScene({ solution, timeScale }: { solution: CircuitSolution; time
   const ammeterReading = solution.readings.ammeter?.currentA ?? 0;
   const voltmeterReading = solution.readings.voltmeter?.voltageV ?? 0;
 
+  // Stage S9.3: реальная диагностика размещения приборов по той же
+  // топологии (state.connections), что использует и task-engine.ts —
+  // не пересчитывает физику, только читает уже посчитанный solution.
+  const ammeterCheck = useMemo(
+    () => checkAmmeterPlacement(state.components, state.connections, solution),
+    [state.components, state.connections, solution]
+  );
+  const voltmeterCheck = useMemo(
+    () => checkVoltmeterPlacement(state.components, state.connections, solution),
+    [state.components, state.connections, solution]
+  );
+  const ammeterWarning = ammeterPlacementMessage(ammeterCheck);
+  const voltmeterWarning = voltmeterPlacementMessage(voltmeterCheck);
+
   return (
     <group>
       {/* дополнительный мягкий фронтальный свет для этой сцены — не
@@ -694,8 +757,8 @@ function CircuitScene({ solution, timeScale }: { solution: CircuitSolution; time
           playSwitchClick();
         }}
       />
-      <Ammeter currentA={ammeterReading} />
-      <Voltmeter voltageV={voltmeterReading} />
+      <Ammeter currentA={ammeterReading} placementStatus={ammeterCheck.status} warningMessage={ammeterWarning} />
+      <Voltmeter voltageV={voltmeterReading} placementStatus={voltmeterCheck.status} warningMessage={voltmeterWarning} />
       <Fuse isBlown={fuse?.isBlown ?? false} justBlown={Boolean(solution.fuseToBlowId)} timeScale={timeScale} />
       <Wires />
       <PendingWirePreview />
