@@ -18,7 +18,14 @@ export type SimEvent =
   | { type: "reset" }
   | { type: "short_circuit" }
   | { type: "fuse_blown"; componentId: string }
-  | { type: "component_damaged"; componentId: string };
+  | { type: "component_damaged"; componentId: string }
+  // Stage S9.4 — Safety Event Engine: структурные события безопасности,
+  // производные от electricity-safety.ts (checkElectricalSafety), логируются
+  // тем же путём, что и уже существующие short_circuit/fuse_blown выше —
+  // никакого отдельного event-логгера не заводится.
+  | { type: "overload"; code: string }
+  | { type: "unsafe_measurement"; code: string }
+  | { type: "unsafe_connection"; code: string };
 
 interface ExperimentState {
   components: CircuitComponent[];

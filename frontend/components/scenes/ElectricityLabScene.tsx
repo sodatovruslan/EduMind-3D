@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import { Html, QuadraticBezierLine, MeshTransmissionMaterial, useGLTF } from "@react-three/drei";
-import { Play, Pause, RotateCcw } from "lucide-react";
+import { Play, Pause, RotateCcw, AlertTriangle } from "lucide-react";
 import CanvasShell from "@/components/scenes/CanvasShell";
 import AITeacherChat from "@/components/ai/AITeacherChat";
 import TaskPanel from "@/components/tasks/TaskPanel";
@@ -33,6 +33,7 @@ import {
   ammeterPlacementMessage,
   voltmeterPlacementMessage,
 } from "@/lib/measurement-validation";
+import { checkElectricalSafety, type SafetyWarning } from "@/lib/electricity-safety";
 import { apiFetch, ApiError } from "@/lib/api";
 import { playConnect, playDisconnect, playFuseBlow, playPowerOn, playSwitchClick } from "@/lib/sound-effects";
 import { ACHIEVEMENTS } from "@/lib/achievements";
@@ -694,9 +695,20 @@ function PendingWirePreview() {
   );
 }
 
-function CircuitScene({ solution, timeScale }: { solution: CircuitSolution; timeScale: number }) {
+function CircuitScene({
+  solution,
+  timeScale,
+  safetyWarnings,
+}: {
+  solution: CircuitSolution;
+  timeScale: number;
+  safetyWarnings: SafetyWarning[];
+}) {
   const { state, updateComponent, logEvent } = useExperimentState();
   const shortLoggedRef = useRef(false);
+  const overloadLoggedRef = useRef(false);
+  const unsafeMeasurementLoggedRef = useRef(false);
+  const unsafeConnectionLoggedRef = useRef(false);
 
   useEffect(() => {
     if (solution.fuseToBlowId) {
@@ -714,6 +726,37 @@ function CircuitScene({ solution, timeScale }: { solution: CircuitSolution; time
     }
     if (!solution.isShortCircuit) shortLoggedRef.current = false;
   }, [solution.isShortCircuit, logEvent]);
+
+  // Stage S9.4 — Safety Event Engine: тот же паттерн "залогировать один раз,
+  // пока предупреждение не исчезло", что уже использован выше для
+  // short_circuit — ничего не меняет в самом event-логе, просто добавляет
+  // 3 новых кода, производных от electricity-safety.ts.
+  useEffect(() => {
+    const hasOverload = safetyWarnings.some((w) => w.code === "overload");
+    if (hasOverload && !overloadLoggedRef.current) {
+      overloadLoggedRef.current = true;
+      logEvent({ type: "overload", code: "overload" });
+    }
+    if (!hasOverload) overloadLoggedRef.current = false;
+  }, [safetyWarnings, logEvent]);
+
+  useEffect(() => {
+    const hasUnsafeMeasurement = safetyWarnings.some((w) => w.code === "unsafe_measurement");
+    if (hasUnsafeMeasurement && !unsafeMeasurementLoggedRef.current) {
+      unsafeMeasurementLoggedRef.current = true;
+      logEvent({ type: "unsafe_measurement", code: "unsafe_measurement" });
+    }
+    if (!hasUnsafeMeasurement) unsafeMeasurementLoggedRef.current = false;
+  }, [safetyWarnings, logEvent]);
+
+  useEffect(() => {
+    const hasUnsafeConnection = safetyWarnings.some((w) => w.code === "unsafe_connection");
+    if (hasUnsafeConnection && !unsafeConnectionLoggedRef.current) {
+      unsafeConnectionLoggedRef.current = true;
+      logEvent({ type: "unsafe_connection", code: "unsafe_connection" });
+    }
+    if (!hasUnsafeConnection) unsafeConnectionLoggedRef.current = false;
+  }, [safetyWarnings, logEvent]);
 
   const bulb = state.components.find((c) => c.id === "bulb");
   const switchComponent = state.components.find((c) => c.id === "switch");
@@ -775,10 +818,12 @@ function ElectricityCanvas({
   quality,
   solution,
   timeScale,
+  safetyWarnings,
 }: {
   quality: QualityLevel;
   solution: CircuitSolution;
   timeScale: number;
+  safetyWarnings: SafetyWarning[];
 }) {
   const { draggingFrom } = useWireDrag();
   return (
@@ -792,7 +837,7 @@ function ElectricityCanvas({
       minPolarAngle={Math.PI / 6}
       maxPolarAngle={Math.PI / 2.1}
     >
-      <CircuitScene solution={solution} timeScale={timeScale} />
+      <CircuitScene solution={solution} timeScale={timeScale} safetyWarnings={safetyWarnings} />
     </CanvasShell>
   );
 }
@@ -1063,6 +1108,13 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
   const battery = state.components.find((c) => c.id === "battery");
   const resistor = state.components.find((c) => c.id === "resistor");
   const solution = useMemo(() => solveCircuit(state.components, state.connections), [state.components, state.connections]);
+  // Stage S9.4 — Safety System: считается один раз здесь (тот же паттерн,
+  // что и solution выше) и прокидывается и в 3D-сцену (event-логирование),
+  // и в 2D-баннер ниже — ничего не пересчитывается дважды.
+  const safetyWarnings = useMemo(
+    () => checkElectricalSafety({ components: state.components, connections: state.connections, solution }),
+    [state.components, state.connections, solution]
+  );
 
   function handleConnect(fromId: string, toId: string) {
     addConnection({ id: `${fromId}-${toId}-${Date.now()}`, terminals: [fromId, toId] });
@@ -1108,7 +1160,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
     <div className="flex-1 rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">
       <div className="relative">
         <WireDragProvider onConnect={handleConnect}>
-          <ElectricityCanvas quality={quality} solution={solution} timeScale={clock.timeScale} />
+          <ElectricityCanvas quality={quality} solution={solution} timeScale={clock.timeScale} safetyWarnings={safetyWarnings} />
         </WireDragProvider>
       </div>
 
@@ -1217,6 +1269,30 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
             </p>
           )}
         </div>
+
+        {/* Stage S9.4 — Safety System: тот же визуальный язык, что и
+            Chemistry World's safety-warnings баннер (ChemistryWorldScene.tsx) —
+            цвет по severity, data-testid по коду, образовательный текст.
+            Не заменяет circuit-status выше (тот остаётся как есть), а
+            дополняет его структурированными предупреждениями. */}
+        {safetyWarnings.length > 0 && (
+          <div className="flex flex-col gap-2 sm:col-span-2" data-testid="safety-warnings">
+            {safetyWarnings.map((w, i) => (
+              <div
+                key={`${w.code}-${i}`}
+                data-testid={`safety-warning-${w.code}`}
+                className={`flex items-center gap-2 rounded-xl border p-3 text-sm ${
+                  w.severity === "danger"
+                    ? "border-red-400/40 bg-red-500/10 text-red-300"
+                    : "border-amber-400/40 bg-amber-500/10 text-amber-200"
+                }`}
+              >
+                <AlertTriangle size={14} className="shrink-0" />
+                {w.message}
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="sm:col-span-2">
           <h3 className="mb-2 font-mono text-xs uppercase tracking-widest text-slate-500">Быстрая проверка</h3>

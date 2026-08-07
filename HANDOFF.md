@@ -811,4 +811,66 @@ Backend/frontend остановлены после диагностики Playwr
 ### ✅ Stage S9.3 одобрен пользователем
 Реализация подтверждена как соответствующая стратегии проекта: переиспользование существующей production-логики (`task-engine.ts`'s Task 2/3 → `measurement-validation.ts`), отсутствие дублирования алгоритмов, сохранение production-архитектуры (`circuit-engine.ts`/wiring/drag-and-drop не тронуты), полная обратная совместимость (доказана неизменённым `task-engine.test.ts`, 19/19). Проблема с Playwright принята как известное ограничение текущего окружения (воспроизводится на baseline) — **дальше не расследуется в рамках Stage S9**, по прямому указанию пользователя.
 
-Изменения этого чекпоинта закоммичены (см. commit `feat(electricity): S9.3 approved` — от имени `sodatovruslan`, без Co-Authored-By, без push). Ждём следующий Stage.
+Изменения этого чекпоинта закоммичены (см. commit `feat(electricity): S9.3 approved` — от имени `sodatovruslan`, без Co-Authored-By, без push).
+
+---
+
+## Обновление 2026-08-07 (продолжение №9) — Stage S9.4: Safety System до production quality
+
+### Задача чекпоинта
+Довести систему безопасности Electricity Lab до того же уровня, что и Chemistry World: детект короткого замыкания (прямое замыкание батареи + опасно низкое сопротивление — уже унифицировано солвером), поведение предохранителя (перегорание/персистентность/визуал/блокировка тока), детект перегрузки (предупреждение ДО фактического отказа), структурные события безопасности (`short_circuit`, `overload`, `fuse_blown`, `unsafe_measurement`, `unsafe_connection`), минимальный UI (баннеры/иконки/объяснения, без редизайна). Переиспользовать солвер/measurement-validation/task-engine, не дублировать логику. Не трогать `circuit-engine.ts` без реального бага.
+
+### Что сделано ✅
+
+1. **Новый модуль `frontend/lib/electricity-safety.ts`** — тот же паттерн, что `chemistry-safety.ts` (чистая функция от уже посчитанного состояния, никакого AI/рандома):
+   - **`SafetyWarning` — не продублирован, а импортирован из `chemistry-safety.ts`** (`export type { SafetyWarning }`) — обе лаборатории используют один и тот же тип/визуальный язык (`severity: "warning" | "danger"`).
+   - `checkElectricalSafety({ components, connections, solution })` — единая точка входа, объединяет 4 группы проверок:
+     - **short_circuit** (danger) — читает уже унифицированный солвером `solution.isShortCircuit` (и прямое замыкание батареи, и опасно низкое сопротивление контура — это ОДИН флаг в production-солвере с версии S9.2, здесь не пересчитывается заново).
+     - **fuse_blown** (danger) — по `component.isBlown`, с образовательным текстом и номиналом.
+     - **overload** (warning) — НОВАЯ проверка "предупреждение ДО отказа": ток предохранителя в диапазоне 80-100% от `ratedCurrentA`, но ещё не перегорел; отдельно — мощность на лампе выше `ratedPowerW` (сама лампа не "ломается" физически в этой симуляции, но предупреждение честное и образовательное).
+     - **unsafe_connection** (danger) — НОВАЯ проверка: ток течёт в обход предохранителя (переиспользует `isTerminalWired` из `measurement-validation.ts`, никакой собственной топологии).
+     - **unsafe_measurement** — **полностью переиспользует `checkAmmeterPlacement`/`checkVoltmeterPlacement`/`ammeterPlacementMessage`/`voltmeterPlacementMessage` из `measurement-validation.ts` (Stage S9.3)** — амперметр-шунт → danger, вольтметр-в-разрыве → warning. Ни одной новой строчки топологической логики.
+
+2. **`SimEvent` в `ExperimentStateProvider.tsx` расширен на 3 новых варианта** (`overload`, `unsafe_measurement`, `unsafe_connection`) — чисто аддитивно, `short_circuit`/`fuse_blown` уже существовали и не трогались. Reducer не переключается по форме события (просто накапливает в массив) — расширение безопасно по построению.
+
+3. **`ElectricityLabScene.tsx` — точечные изменения**:
+   - `safetyWarnings` считается ОДИН раз в `ElectricityLabInner` (`useMemo`, тот же паттерн, что и `solution`) и прокидывается и в 3D-сцену (`CircuitScene`, через `ElectricityCanvas`), и в 2D-баннер.
+   - `CircuitScene` получил 3 новых `useEffect`'а (тот же "залогировать один раз, пока предупреждение не исчезло" паттерн, что уже использовался для `short_circuit`) — логируют `overload`/`unsafe_measurement`/`unsafe_connection` через уже существующий `logEvent`.
+   - Новый 2D-баннер `data-testid="safety-warnings"` / `data-testid="safety-warning-{code}"` — **визуально скопирован 1:1 с Chemistry World's** баннера в `ChemistryWorldScene.tsx` (тот же цвет по severity: `border-red-400/40 bg-red-500/10 text-red-300` / `border-amber-400/40 bg-amber-500/10 text-amber-200`, та же структура). Не заменяет существующий `circuit-status` — дополняет его.
+   - **`circuit-engine.ts`, `task-engine.ts`, `measurement-validation.ts`, `WireDragProvider.tsx`, `ConnectionPoint.tsx` — не изменены.** Реального бага в солвере не найдено — трогать не за чем. `task-engine.ts`'s собственные тривиальные однострочные проверки `isShortCircuit`/`isBlown` (не топология, просто чтение готового флага) НЕ рефакторились повторно — это не "дублирование алгоритма" уровня Stage S9.3 (топология), а два независимых чтения одного и того же уже посчитанного булева поля; трогать стабильный, полностью протестированный файл ради этого не было необходимости.
+
+### Тесты (3 категории, как и просили)
+- **Unit** — `frontend/lib/electricity-safety.test.ts`, **13 тестов**, через настоящий `solveCircuit()`. Один честный нюанс, пойманный при первом прогоне: тестовая фикстура без резистора (только лампа 4Ω при 12В) реально перегружала лампу физически — это не баг проверки, а корректная физика; фикстура исправлена на сбалансированную топологию (резистор+лампа, как в реальной сцене).
+- **Integration** — `frontend/components/core/ElectricitySafety.integration.test.tsx`, **5 тестов**, через настоящий `ExperimentStateProvider` (тот же reducer, что использует сцена) + настоящий солвер: единичные срезы состояния (health circuit, короткое замыкание, перегоревший предохранитель, перегрузка, снятие unsafe_connection через реальный `removeConnection`).
+- **Safety workflow** — `frontend/components/core/ElectricitySafetyWorkflow.integration.test.tsx`, **3 многошаговых сценария**: (а) рост напряжения — безопасно → предупреждение о перегрузке → предохранитель перегорает → `resetExperiment` возвращает к чистому состоянию; (б) амперметр по ошибке подключён параллельно → предупреждение → студент переподключает последовательно → предупреждение живо исчезает без перемонтирования; (в) цепь в обход предохранителя → предупреждение → перепроводка через предохранитель → предупреждение снимается.
+
+### Результаты проверок
+| Проверка | Результат |
+|---|---|
+| `npx tsc --noEmit` | 0 ошибок |
+| `electricity-safety.test.ts` (новый, 13 тестов) | **13/13 PASSED** |
+| `ElectricitySafety.integration.test.tsx` (новый, 5 тестов) | **5/5 PASSED** |
+| `ElectricitySafetyWorkflow.integration.test.tsx` (новый, 3 сценария) | **3/3 PASSED** |
+| `npx vitest run` (полный) | **503/503 PASSED (48 файлов)** |
+| `npm run lint` | 0 ошибок, 0 предупреждений |
+| `circuit-engine.ts` | **не изменён** — реального бага не найдено |
+| `task-engine.ts`, `measurement-validation.ts` | **не изменены** — переиспользованы как есть |
+
+Один разовый инфраструктурный сбой воркера vitest ("Timeout waiting for worker to respond" на несвязанном `ChemistryInteractionProvider.test.tsx`) при первом полном прогоне — не повторился при перезапуске, не связан с изменениями этого чекпоинта.
+
+### Файлы, изменённые/добавленные в этой части
+| Файл | Что изменено |
+|------|-------------|
+| `frontend/lib/electricity-safety.ts` | новый файл — Safety System (короткое замыкание/предохранитель/перегрузка/небезопасное измерение/небезопасное соединение) |
+| `frontend/lib/electricity-safety.test.ts` | новый файл — 13 юнит-тестов |
+| `frontend/components/core/ExperimentStateProvider.tsx` | `SimEvent` +3 варианта (`overload`, `unsafe_measurement`, `unsafe_connection`) |
+| `frontend/components/scenes/ElectricityLabScene.tsx` | 2D-баннер предупреждений безопасности + event-логирование новых кодов |
+| `frontend/components/core/ElectricitySafety.integration.test.tsx` | новый файл — 5 интеграционных тестов |
+| `frontend/components/core/ElectricitySafetyWorkflow.integration.test.tsx` | новый файл — 3 workflow-сценария |
+
+### Что осталось ❌
+1. Playwright-сценарий для Safety System не добавлялся отдельно в этом чекпоинте — задача явно просила unit/integration/workflow тесты (все добавлены), Playwright не был в явном списке для S9.4 (в отличие от S9.3). Можно добавить позже при необходимости.
+2. Guided Experiments/Assessment/Autosave для Electricity Lab — по-прежнему не начаты, не в скоупе.
+3. `unsafe_measurement`/`unsafe_connection` события логируются с генерическим `code` полем (не detail-специфичным per-instance) — соответствует уже установленной в S9.3/этом чекпоинте гранулярности (та же, что у `short_circuit`), не усложнялось намеренно.
+
+Ничего не закоммичено в этой части до отдельного шага коммита ниже.

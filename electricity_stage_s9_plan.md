@@ -167,6 +167,9 @@ None — no new fields on `CircuitComponent`/`CircuitSolution`; placement status
 #### S9.3 Result (real, from this checkpoint)
 **Implemented and unit/integration-verified; Playwright run blocked by machine state, not a code issue.** `npx tsc --noEmit`: 0 errors. Full `npx vitest run`: 482/482 passing (45 files). `npm run lint`: 0 warnings. The new Playwright scenario hung on its first `mouse.move` after both a 180s and a 240s budget; before treating this as a regression, the **existing, unmodified** `electricity-lab.spec.ts` was run as a control and hung identically on the same line — proving this is pre-existing headless Chromium/SwiftShader instability on this machine (the same class of issue already documented for Chemistry World E2E elsewhere in this repo's history), not something Stage S9.3 introduced. 18 stuck `chrome.exe` processes were killed afterward; servers stopped. The scenario is ready to run once the environment is stable (or on a different machine/CI).
 
+#### ✅ Stage S9.3 — Approved
+Approved as following the project strategy: reuse existing production logic (`task-engine.ts`'s Task 2/3 diagnosis → `measurement-validation.ts`), no duplicated algorithms, production architecture preserved (`circuit-engine.ts`, wiring, drag-and-drop untouched), full backward compatibility (proven by the unmodified `task-engine.test.ts`, 19/19). The Playwright hang is accepted as a pre-existing environment limitation (reproduces on the unmodified baseline) and is **not investigated further during Stage S9** per explicit direction. Committed as `feat(electricity): S9.3 approved`.
+
 ## 3. Stage S9 Completion Criteria
 
 ### Production Acceptance Checklist
@@ -180,7 +183,7 @@ None — no new fields on `CircuitComponent`/`CircuitSolution`; placement status
 - [x] Voltmeter parallel validation — same (S9.3): series placement detected (and shown to genuinely block the circuit via the real solver, not a scripted message), parallel placement confirmed valid.
 - [ ] Fuse burnout animation — UI/visual, not covered by unit tests, not verified.
 - [x] Short circuit detection — verified, including the dead-short bug found and fixed in S9.2 (`task-engine.test.ts` 19/19).
-- [x] Overload protection — fuse-rating logic verified (`circuit-engine.test.ts`, `circuit-engine.integration.test.ts`'s parallel-branch fuse case).
+- [x] Overload protection — fuse-rating logic verified (`circuit-engine.test.ts`, `circuit-engine.integration.test.ts`'s parallel-branch fuse case); S9.4 adds a genuine pre-failure warning zone (`electricity-safety.test.ts`) on top of the existing blow/no-blow threshold.
 - [ ] Guided experiment flow / XP rewards / Teacher report generation / Autosave / Resume / Offline save — unrelated to the solver/measurement tools, not touched, not verified.
 - [x] <5ms per frame — real benchmark (S9.2), 0.02-0.09ms per solve, 60-450x under budget.
 - [ ] Zero console errors — would require running the live scene in a browser; not verified (S9.3's Playwright run was blocked by pre-existing machine instability, confirmed via a control run of the unmodified `electricity-lab.spec.ts`).
@@ -190,5 +193,21 @@ None — no new fields on `CircuitComponent`/`CircuitSolution`; placement status
 - [x] Full Vitest suite passes — 482/482 (45 files).
 - [ ] All Playwright scenarios pass — `electricity-measurement-tools.spec.ts` written and type-checked but not run to completion (machine instability, see S9.3 Result above); existing `electricity-lab.spec.ts` also currently blocked by the same issue as a control.
 
-### ✅ Stage S9.3 — Approved
-Approved as following the project strategy: reuse existing production logic (`task-engine.ts`'s Task 2/3 diagnosis → `measurement-validation.ts`), no duplicated algorithms, production architecture preserved (`circuit-engine.ts`, wiring, drag-and-drop untouched), full backward compatibility (proven by the unmodified `task-engine.test.ts`, 19/19). The Playwright hang is accepted as a pre-existing environment limitation (reproduces on the unmodified baseline) and is **not investigated further during Stage S9** per explicit direction. Committed as `feat(electricity): S9.3 approved`.
+### S9.4 - Safety System
+#### Goal
+Bring Electricity Lab's safety system to the same production quality as Chemistry World: short-circuit detection, fuse behaviour, overload detection (warning before permanent failure), a structured Safety Event Engine (`short_circuit`, `overload`, `fuse_blown`, `unsafe_measurement`, `unsafe_connection`), and minimal UI (banners/icons/explanations) — no redesign.
+#### Existing architecture
+`circuit-engine.ts` already unifies "direct battery short" and "dangerously low resistance" into one `isShortCircuit` flag (since S9.2); fuse-blow threshold logic already lives in the solver; `measurement-validation.ts` (S9.3) already has the exact topology checks needed for `unsafe_measurement`; `task-engine.ts` already has its own minimal inline `short_circuit`/`fuse_blown` reads (task-scoped, not touched). Chemistry World's `chemistry-safety.ts` is the reference quality bar and the literal source of the shared `SafetyWarning` type.
+#### Files to modify
+`ExperimentStateProvider.tsx` (additive `SimEvent` variants only — no reducer logic changes), `ElectricityLabScene.tsx` (safety banner + event-logging effects, same minimal-footprint pattern as S9.3's meter warnings). `circuit-engine.ts`, `task-engine.ts`, `measurement-validation.ts`, `WireDragProvider.tsx`, `ConnectionPoint.tsx` — **not touched** (no real solver bug found; task-engine's trivial one-line flag reads aren't the kind of duplicated topology algorithm S9.3's refactor targeted).
+#### New files
+`electricity-safety.ts` (safety checks, reuses `chemistry-safety.ts`'s `SafetyWarning` type and `measurement-validation.ts`'s placement checks), `electricity-safety.test.ts` (unit), `ElectricitySafety.integration.test.tsx` (integration), `ElectricitySafetyWorkflow.integration.test.tsx` (multi-step workflow scenarios).
+#### Domain model changes
+`SimEvent` union gains 3 additive variants (`overload`, `unsafe_measurement`, `unsafe_connection`); no changes to `CircuitComponent`/`CircuitSolution`.
+#### Tests
+- Unit: 13/13, real `solveCircuit()`, covering short circuit, fuse blown, overload (fuse-current-approaching-rating AND bulb-power-exceeding-rating), unsafe_connection (fuse bypass), unsafe_measurement (reusing S9.3's checks), and a fully-healthy zero-warnings case.
+- Integration: 5/5, through the real `ExperimentStateProvider` + real solver, single-state snapshots.
+- Safety workflow: 3/3 multi-step scenarios (voltage ramp-up to fuse blow then reset; measurement mistake made then corrected live; fuse bypass detected then rewired correctly) — the explicitly-requested third test category, distinct from single-snapshot integration tests.
+
+#### S9.4 Result (real, from this checkpoint)
+**Implemented and fully test-verified.** `npx tsc --noEmit`: 0 errors. Full `npx vitest run`: 503/503 passing (48 files) — one transient vitest-pool worker timeout on an unrelated Chemistry test file occurred on the first run and did not reproduce on retry (not linked to these changes). `npm run lint`: 0 warnings. `circuit-engine.ts`/`task-engine.ts`/`measurement-validation.ts` confirmed untouched via `git status`. The `SafetyWarning` type is literally imported from `chemistry-safety.ts` (re-exported, not redefined) and `unsafe_measurement` calls directly into `measurement-validation.ts`'s existing placement checks — zero duplicated logic across both reuse points.
