@@ -1583,3 +1583,41 @@ Damping/lerp/zoom-speed/min-max-zoom/pole-clamp/double-click-behavior **не т�
 
 ### Статус на конец продолжения №20
 **GeoWorld G2 (Tile/LOD architecture spike) — завершено и закоммичено.** Архитектура доказана на заглушечных данных, готова принять реального провайдера в G3 без изменений в `TileEngine`/LOD-логике/рендер-слое (меняется только реализация `TileProvider` и форма `TileData`). Ручная browser-приёмка визуального поведения LOD — за пользователем. G3 не начат.
+
+---
+
+## Обновление 2026-08-08 (продолжение №21) — Design System V2, D0+D1+D2: аудит, фундамент токенов, публичный лендинг
+
+### Контекст
+Отдельная от GeoWorld/Chemistry/Electricity ветка работы — полный визуальный редизайн EduMind 3D (`EDUMIND_DESIGN_SYSTEM_V2.md`, канонический план, создан и одобрен в этой части). Домен-движки (химия/электричество/GeoWorld/AI/backend/progress/autosave) не тронуты нигде в этой части — только presentation layer.
+
+### D0 — аудит + архитектура (одобрено)
+Аудит существующего фронтенда (AppShell, `CanvasShell`, композиция симуляционных страниц, `.glass-panel`/neon-токены) → `EDUMIND_DESIGN_SYSTEM_V2.md` с философией дизайна, roadmap D0–D9 (позже расширен до D0–D14 вторым брифом: Public Landing → Auth → Student/Teacher архитектура, route migration matrix на все существующие страницы).
+
+### D1 — фундамент токенов/примитивов (одобрено, закоммичено `005e37f`)
+Аддитивные семантические токены (`background`/`surface`/`surface-elevated`/`text-primary`/`text-secondary`/`text-muted`/`border`/`accent`/`success`/`warning`/`danger` + `accent-physics`/`accent-chemistry`/`accent-geo`) как CSS custom properties в `globals.css`, `darkMode: "class"` в `tailwind.config.ts` — ни один старый ключ (`brand`, `neon-*`, `surface-deep`, `.glass-panel`) не тронут, ни одна существующая страница не изменилась визуально. `ThemeProvider` (`lib/theme-context.tsx`) — Light/Dark/System, персист в `localStorage`, no-FOUC инлайн-скрипт в `app/layout.tsx`. Примитивы `components/design-system/{Button,Surface,GlassPanel,ThemeToggle}`. Визуальное доказательство — `(dev)/design-preview`.
+
+### D2 — публичный лендинг (закоммичено, эта часть)
+**Роутинг.** `app/page.tsx` (`/`) больше не редиректит вообще — рендерит лендинг всегда, для авторизованных и нет (явное требование брифа: авторизованный пользователь должен по-прежнему видеть `/`). CTA адаптируются через `useAuth().user` ("Начать"/"Войти" → "Открыть кабинет"). Legacy `Sidebar`/`Navbar` (`components/ui/*`) не монтируются — `/` живёт вне `app/(app)/layout.tsx`.
+
+**RU/EN/TG (добавлено по ходу части, по прямому указанию).** Новая лёгкая i18n-инфраструктура: `lib/i18n/dictionaries/{ru,en,tg}.ts` (`ru.ts` — эталон структуры, `en`/`tg` типизированы как `typeof ru` — пропущенный ключ перевода = ошибка компиляции), `lib/locale-context.tsx` (`LocaleProvider`/`useLocale()`, тот же паттерн, что `ThemeProvider`, `localStorage["edumind:locale"]`, дефолт `"ru"`), `components/design-system/LocaleSwitcher.tsx`. Провайдер смонтирован глобально в `app/layout.tsx` (аддитивно), чтобы D3+ мог переиспользовать без переподключения. Шрифт тела (`Inter`) получил подмножество `cyrillic-ext` (было `latin`+`cyrillic`) — без него таджикские буквы ӣ/ҷ/қ/ғ/ҳ/ӯ падали бы на системный fallback-шрифт. Таджикский текст написан вручную (не машинный перевод), но **не проверен носителем языка** — честная оговорка.
+
+**Секции** (`components/landing/`): `Navbar` (floating glass, якорная навигация, мобильное меню, `LocaleSwitcher`+`ThemeToggle`, auth-aware CTA) → `Hero` + `HeroVisual` (чистая CSS/SVG-композиция — без монтирования R3F/Three.js на лендинге, см. Производительность) → `WorldsShowcase` (`#worlds`) → `HowItWorks` (`#how-it-works`) → `ForStudents` (`#students`) → `ForTeachers` (`#teachers`) → `AITeacherHighlight` (компактная, не полноразмерная секция) → `FinalCta` → `Footer`.
+
+**Реальные возможности, ничего не выдумано:** ровно 3 мира (Electricity Lab/Chemistry World/GeoWorld — SimLab/Physics сознательно не рекламируется на лендинге по прямому указанию брифа, хотя маршрут существует). Ученикам — реальное 3D-взаимодействие, пошаговые лабораторные, XP/уровень/серия (`LearningProfile`), AI-наставник. Учителям — `ClassStats`, `LabResult[]`, и специально `weak_topics`/`recent_mistakes`/`accuracy` из `LearningProfile` (существуют в бэкенде, нигде в UI не показывались раньше) — никакой выдуманной "слежки за классом" или системы заданий. CTA каждого мира ведёт в `/register`/`/dashboard` (не угадывает конкретный `[id]` симуляции — публичного маршрута к конкретной симуляции не существует).
+
+**Новый переиспользуемый примитив D1** (обоснованный пробел, не самовольное расширение): `components/design-system/ButtonLink.tsx` — навигационный аналог `Button` (рендерит `next/link`, не `<button>` с вложенной ссылкой). `Button.tsx` теперь экспортирует `buttonClassName()` как единый источник стиля для обоих.
+
+### Результаты проверок (после D1+D2 вместе)
+| Проверка | Результат |
+|---|---|
+| `npx tsc --noEmit` | 0 ошибок |
+| `npm run lint` | 0 ошибок, 0 предупреждений |
+| `npx vitest run` (полный) | **677/677 PASSED (75 файлов)** — было 670/74 до этой части (+7 тестов на `app/page.test.tsx`: рендер лендинга вместо редиректа, CTA-роутинг для гостя/авторизованного, мобильное меню, живое переключение языка + персист, восстановление сохранённого языка, все 3 мира на месте) |
+| dev-сервер, `GET /`, `/login`, `/register`, `/dashboard` | SSR HTML 200, эвристический greps на заголовок героя + названия всех 3 миров подтверждают рендер, ошибок в логе нет |
+
+### Честная оговорка
+Нет инструмента браузерной автоматизации в этой сессии — реальная визуальная приёмка (Desktop/Mobile × Light/Dark, читаемость glass-панелей, отсутствие горизонтального скролла, "ощущение" лендинга) не проверена ассистентом визуально, только SSR HTML + логика компонентов + typecheck/lint/тесты. Таджикский перевод не проверен носителем. Ручная браузерная проверка — за пользователем (чек-лист см. в финальном отчёте сессии).
+
+### Статус на конец продолжения №21
+**Design System V2 D0+D1+D2 — завершены.** `EDUMIND_DESIGN_SYSTEM_V2.md` обновлён (route migration matrix, §28 — детали реализации D2). D3 (Auth-экран: Login/Register/`(auth)/layout`) не начат — ждёт одобрения. Домен-логика (химия/электричество/GeoWorld/AI/backend/progress) нигде в этой части не тронута.

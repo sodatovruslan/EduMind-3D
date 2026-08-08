@@ -3,6 +3,7 @@ import { Hanken_Grotesk, Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
 import { ThemeProvider } from "@/lib/theme-context";
+import { LocaleProvider } from "@/lib/locale-context";
 
 // next/font хостит шрифты локально при сборке — без внешних запросов
 // к Google Fonts в рантайме, та же логика, что и с процедурным HDRI
@@ -13,7 +14,11 @@ const hankenGrotesk = Hanken_Grotesk({
   display: "swap",
 });
 const inter = Inter({
-  subsets: ["latin", "cyrillic"],
+  // "cyrillic-ext" добавлен для D2 (RU/EN/TG) — таджикская кириллица
+  // использует расширенные символы (ӣ, ҷ, қ, ғ, ҳ, ӯ), которых нет в base
+  // "cyrillic" — без этого подмножества эти буквы в теле текста молча
+  // падали бы на fallback-шрифт браузера
+  subsets: ["latin", "cyrillic", "cyrillic-ext"],
   variable: "--font-body",
   display: "swap",
 });
@@ -44,7 +49,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <AuthProvider>
-          <ThemeProvider>{children}</ThemeProvider>
+          <ThemeProvider>
+            <LocaleProvider>{children}</LocaleProvider>
+          </ThemeProvider>
         </AuthProvider>
       </body>
     </html>

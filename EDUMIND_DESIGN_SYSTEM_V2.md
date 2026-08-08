@@ -1,9 +1,8 @@
 # EduMind 3D — Design System V2
 
-Status: **APPROVED — implementation in progress.** Sections 0–18 below are the original presentation-layer architecture (approved). Sections 19+ extend it to the full product (Public → Auth → Student/Teacher) per the 2026-08-08 follow-up brief, with a revised D0–D14 roadmap that supersedes the old D0–D9 table. Currently executing **D0 (this update) + D1 (foundational tokens/primitives)** only — see §27.
+Status: **APPROVED — implementation in progress.** Sections 0–18 below are the original presentation-layer architecture (approved). Sections 19+ extend it to the full product (Public → Auth → Student/Teacher) per the 2026-08-08 follow-up brief, with a revised D0–D14 roadmap that supersedes the old D0–D9 table. **D0 and D1 are done** (foundational tokens/primitives + theme system). **D2 (Public Landing) is done** — see §28. D3 (Auth experience) has not started; waiting for approval before continuing.
 
 ## 0. Why this document exists
-
 Current frontend architecture audit (2026-08-08) found **no prior redesign/design-system document** in the repo. Searched: `*design*.md`, `*redesign*.md`, `*ui*.md`, `*ux*.md`, `*vision*.md`, `*app-shell*.md`, `*design-system*.md`, `*frontend-plan*.md`, `*visual*.md` (none, outside `node_modules`), and `HANDOFF.md` for design/UI/UX/AppShell/layout/theme keywords — every hit is a point-fix changelog entry (autosave badges, fullscreen overflow bug, guided-lab panel tests), not an architectural plan. The `.glass-panel` / `neon-*` utility classes in `tailwind.config.ts` and `globals.css` reference a "дизайн-система Stitch" in their comments — that's the *current* look being replaced, not a document to build on. This file is the first canonical design plan and supersedes nothing.
 
 ## 1. Current-state audit (minimum needed to plan)
@@ -212,7 +211,7 @@ Full inventory of `frontend/app/**/*.tsx` (route/domain-engine files were not re
 
 | Current route | Current purpose | New design destination | Audience | Stage | Status |
 |---|---|---|---|---|---|
-| `/` (`app/page.tsx`) | Client-side redirect only (`user ? /dashboard : /login`), renders nothing | Real public Landing page (navbar, hero, world showcase, how-it-works, AI Teacher, student/teacher sections, CTA, footer). Redirect logic narrows to: authenticated users hitting `/` still bounce to their home; unauthenticated users see the Landing instead of `/login` | Public | D2 | Not started |
+| `/` (`app/page.tsx`) | Client-side redirect only (`user ? /dashboard : /login`), renders nothing | Real public Landing page (navbar, hero, world showcase, how-it-works, AI Teacher, student/teacher sections, CTA, footer). Redirect logic narrows to: authenticated users hitting `/` still bounce to their home; unauthenticated users see the Landing instead of `/login` | Public | D2 | **Done — see §28** (redirect removed entirely; authenticated users see the Landing too, per the D2 brief's explicit instruction, not just a narrower redirect) |
 | `/login` (`(auth)/login/page.tsx`) | Email/password form, `AuthLayout` glass card on gradient-orb background | Redesigned auth panel (visual/spatial side + focused glass or solid form side), same `useAuth().login` contract | Public | D3 | Not started |
 | `/register` (`(auth)/register/page.tsx`) | Registration form | Redesigned auth panel, same `useAuth().register` contract | Public | D3 | Not started |
 | Forgot password | **Does not exist in the app today** — no route, no backend contract found in this pass | Not fabricated. Flagged as future/unavailable; no page will be created for it until a backend contract exists | Public | Out of scope | N/A |
@@ -274,7 +273,7 @@ Glass is a tool for **floating chrome over a visual/3D background**, not a defau
 |---|---|---|---|
 | **D0** | Product/route/design architecture — this update (§19–§26). | — | **Done, this pass** |
 | **D1** | Theme tokens (semantic, light/dark/system) + minimum shared primitives (`Button`, `Surface`, `GlassPanel`, `ThemeToggle`) + `ThemeProvider`/persistence, additive only, zero visual change to existing pages. Visual-proof demo in `(dev)`. | D0 | **In progress, this pass** |
-| **D2** | Public Landing (§21). | D1 | Not started |
+| **D2** | Public Landing (§21). | D1 | **Done — see §28** |
 | **D3** | Auth experience — Login/Register/`(auth)/layout` (§22). | D1, informed by D2 | Not started |
 | **D4** | Authenticated AppShell/navigation — adaptive rail, drop permanent sidebar+navbar on simulation routes (§7–§8 of the original plan, generalized to role-aware shell). | D1 | Not started |
 | **D5** | Student Home + Student Profile (§23). | D4 | Not started |
@@ -290,6 +289,38 @@ Glass is a tool for **floating chrome over a visual/3D background**, not a defau
 
 No stage after D6 should require touching a domain engine, provider, or backend contract file (§16 still holds).
 
+## 28. D2 implementation notes — Public Landing (done)
+
+**Routing.** `app/page.tsx` no longer redirects at all — it renders the Landing unconditionally, for both authenticated and unauthenticated visitors (this is stricter than §21's original "narrower redirect" idea; the 2026-08-08 D2 brief explicitly requires an authenticated user still be able to visit `/`). CTAs adapt instead: `useAuth().user` is read directly in `LandingNavbar`/`Hero`/`FinalCta`/`Footer` and swaps "Get Started"/"Sign In" for "Open Dashboard" → `/dashboard`. No loading gate blocks first paint — during the brief window before `AuthProvider` resolves the session, the page renders the logged-out copy, then swaps if a session turns out to exist (simple, deterministic, no flash-of-loader on a public page). `/` lives outside `app/(app)/layout.tsx`, so the legacy `Sidebar`/`Navbar` shell never mounts on it — confirmed by an explicit test asserting `"Мои симуляции"` (the old dashboard heading) is absent.
+
+**i18n (new, additive infrastructure).** RU/EN/TG multilingual support, added mid-D2 at the user's request, scoped to the Landing + shared public nav per that request:
+- `lib/i18n/locales.ts` — `Locale` union, `DEFAULT_LOCALE = "ru"`, short/long labels.
+- `lib/i18n/dictionaries/{ru,en,tg}.ts` — `ru.ts` is the structural source of truth; `en.ts`/`tg.ts` are typed as `typeof ru`, so a missing or renamed key is a **compile error**, not a silent blank string or fallback.
+- `lib/locale-context.tsx` — `LocaleProvider`/`useLocale()`, same shape as `ThemeProvider`/`QualityProvider` (`localStorage["edumind:locale"]`, default `"ru"`). Mounted globally in `app/layout.tsx` (additive — no visual effect on any page that doesn't call `useLocale()` yet), specifically so **D3+ can migrate Login/Register/Dashboard/Teacher onto the same dictionaries without re-plumbing the provider.**
+- `components/design-system/LocaleSwitcher.tsx` — RU/EN/TG glass pill, same visual pattern as `ThemeToggle`, added to the design-system primitive set (not landing-only).
+- `app/layout.tsx`'s Inter (body font) subset gained `cyrillic-ext` (was `latin`+`cyrillic` only) — Tajik-specific characters (ӣ, ҷ, қ, ғ, ҳ, ӯ) aren't covered by the base `cyrillic` subset and would have silently fallen back to a system font mid-word without it. `Hanken_Grotesk` (headline) already had `cyrillic-ext`.
+- Tajik copy was written natively (not machine-translated) but was **not** reviewed by a native speaker — flagged as a limitation, see final report.
+
+**Theme.** No changes to the D1 theme system itself. Every landing color is a semantic token (`bg-background`, `text-text-primary`, `text-accent-*`, etc.) or the `.ds-glass`/`Surface`/`GlassPanel` primitives — nothing hardcodes a light- or dark-only literal. `MotionConfig reducedMotion="user"` wraps the whole page so every `framer-motion` animation (section reveals, HUD float, mobile menu) respects `prefers-reduced-motion` automatically, with zero per-component motion-guard code.
+
+**Sections implemented** (`components/landing/`): `Navbar` (floating glass, anchor nav, responsive hamburger menu, `LocaleSwitcher`+`ThemeToggle`, auth-aware CTAs) → `Hero` (+ `HeroVisual`: pure CSS/SVG "one universe" composition — gradient core, orbit rings, small circuit/molecule motifs, floating glass HUD chips for the 3 worlds — deliberately **not** a mounted `@react-three/fiber` Canvas, see Performance below) → `WorldsShowcase` (`#worlds`, one accented card per real world) → `HowItWorks` (`#how-it-works`, 3-step flow with a connecting line, not three disconnected cards) → `ForStudents` (`#students`) → `ForTeachers` (`#teachers`) → `AITeacherHighlight` (compact, one `GlassPanel`, not a full section — AI is support, not the identity) → `FinalCta` (restrained radial-gradient transition through the 3 accent colors, not a solid glow block) → `Footer`.
+
+**Real capabilities represented, nothing invented:**
+- *Worlds*: exactly 3 — Electricity Lab, Chemistry World, GeoWorld (`lib/landing-worlds.ts`) — SimLab/Physics intentionally excluded from the Landing per the brief, even though it exists as a route (still gets migrated in D13).
+- *Students*: full 3D drag/connect/pour interaction, guided step-by-step labs (`GuidedLabPanel`/`ElectricityGuidedLabPanel`), XP/level/streak/achievements (`LearningProfile`), AI Teacher.
+- *Teachers*: class overview (`ClassStats`), per-student lab results (`LabResult[]`), and — grounded specifically in fields that exist but are **not yet surfaced anywhere in the UI** (`weak_topics`, `recent_mistakes`, `accuracy` on `LearningProfile`) — "where students actually struggle." No live classroom surveillance, no safety-incident dashboard, no assignment system: none of these exist in the codebase.
+- *AI Teacher*: worded from the real behavior in `ChemistryTeacherChat`/`AITeacherChat` — grounded in current experiment state, answers questions, does not replace the teacher.
+
+**Per-world CTA routing.** No world has a public route to a specific simulation `[id]` — a concrete simulation is only ever chosen from the catalog after auth (`/dashboard` → `SWR` fetch of `/api/simulations/`). So every per-world "Open world" CTA and the Hero/FinalCta primary CTA route to `/register` (unauthenticated) or `/dashboard` (authenticated) — never a guessed `/chemistry_world/<id>`. "Explore Worlds" (Hero/Navbar/FinalCta secondary) is an in-page anchor to `#worlds`, not a route.
+
+**New shared D1 primitive (justified gap, per §15's "may be improved only if a real landing requirement proves a gap"):** `components/design-system/ButtonLink.tsx`. The Landing needed CTA buttons that are real navigational links (correct semantics/accessibility — an `<a>` cannot nest inside a `<button>`), styled identically to `Button`. `Button.tsx` now exports `buttonClassName(variant, className)` as the single source of truth for the visual, consumed by both `Button` (renders `<button>`) and `ButtonLink` (renders `next/link`) — no style duplication, no drift risk.
+
+**Testing.** `app/page.test.tsx` (7 tests): Landing renders instead of redirecting (and the old dashboard heading is absent), logged-out CTA hrefs (`/register`/`/login`), authenticated CTA swap (`/dashboard`), mobile menu open/close (`aria-expanded`), locale switch re-renders copy live + persists to `localStorage`, persisted locale restored on mount, all 3 worlds present in `#worlds`. Uses a real `ThemeProvider`+`LocaleProvider` (not mocked — tests the actual integration) with only `useAuth` mocked (to control auth state deterministically) and a minimal `IntersectionObserver` stub (jsdom doesn't implement it; `framer-motion`'s `whileInView` needs it to mount without throwing). No `@testing-library/jest-dom` in this repo — assertions use plain DOM (`.textContent`, `.getAttribute()`), matching the existing test-suite convention.
+
+**Performance.** No `@react-three/fiber`/`three` import anywhere in the Landing's module graph — `HeroVisual` is gradients/SVG/`GlassPanel` only. `public/textures/earth_*` and `public/models/**/*.glb` (real assets, but built for in-scene WebGL use, wrong shape/weight for flat hero decoration) are untouched and unused here.
+
+**Deferred / not done in D2 (intentionally, out of scope):** `/login`, `/register`, `/dashboard`, `/teacher`, `/profile`, and all 4 simulation scenes are **not** visually touched — same DOM/classes as before D2, still on the old dark-only look, still without `useLocale()`. Tajik copy needs native-speaker review before this is considered production-final. No native-language auto-detection (`navigator.language`) — default is always `ru` until a user explicitly switches, per the brief's "Default locale: Russian."
+
 ---
 
-**Current task scope**: D0 (this document update) + D1 (tokens/primitives/theme + visual proof) only. D2 (Landing) does not begin until this is reviewed and approved.
+**Current task scope**: D2 (Public Landing, done, this pass) — see §28. D3 (Auth experience — Login/Register/`(auth)/layout`) does not begin until this is reviewed and approved.
