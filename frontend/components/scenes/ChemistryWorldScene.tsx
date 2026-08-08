@@ -3530,7 +3530,7 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
           onStoreInCabinet={storeItemInCabinet}
         >
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-            <div className="flex-1 rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">
+            <div className="min-w-0 flex-1 rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">
               <ChemistryCanvas
                 quality={quality}
                 onDrop={handleDrop}
