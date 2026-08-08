@@ -1,7 +1,6 @@
 import { TileCache, disposeIfPossible, type TileCacheEntry } from "./tile-cache";
 import { DEFAULT_LOD_POLICY, selectTiles, type LodPolicy, type SelectedTile, type Vec3 } from "./tile-lod";
 import { tileKey, type TileId } from "./tiling";
-import type { TileData, TileProvider } from "./tile-provider";
 
 export interface TileEngineStats {
   /** Сколько тайлов рендерится в этом кадре (после LOD/видимости). */
@@ -16,29 +15,43 @@ export interface TileEngineStats {
   activeRequestCount: number;
 }
 
-export interface TileEngineFrame {
+export interface TileEngineFrame<T> {
   rendered: SelectedTile[];
   /** Данные готовых тайлов из числа rendered — ключ = SelectedTile.key. */
-  tiles: Map<string, TileData>;
+  tiles: Map<string, T>;
   stats: TileEngineStats;
+}
+
+/**
+ * Минимальный контракт, который требуется от любого провайдера, чтобы им
+ * мог управлять TileEngine — G3 (растровые снимки) и G4 (карта высот)
+ * подставляют СВОЙ тип данных T, не деля между собой ни кэш, ни очередь
+ * запросов (см. GEOWORLD_ROADMAP.md, раздел G4 "Do NOT couple imagery and
+ * elevation providers") — но переиспользуют этот же, уже проверенный,
+ * LOD/кэш/конкурентность/dispose механизм, вместо того чтобы копировать его.
+ */
+export interface TileDataProvider<T> {
+  requestTile(id: TileId, signal: AbortSignal): Promise<T>;
 }
 
 /**
  * Склеивает чистую LOD-логику (tile-lod.ts), провайдера данных и кэш в один
  * тикаемый объект. Единственная точка, которая знает и про "что хотим
  * показать" (LOD-политика), и про "что реально готово" (кэш) — вызывающий
- * React-слой (TileDebugLayer) вызывает tick(cameraPos) раз в
- * тик-интервал и получает готовый к рендеру список.
+ * React-слой вызывает tick(cameraPos) раз в тик-интервал и получает готовый
+ * к рендеру список. Параметризован типом данных тайла (T) — сам движок не
+ * знает и не должен знать, что именно возит: цвет-заглушку (G2), снимок
+ * (G3) или сетку высот (G4).
  */
-export class TileEngine {
-  private cache: TileCache<TileData>;
+export class TileEngine<T> {
+  private cache: TileCache<T>;
   private activeRequestCount = 0;
 
   constructor(
-    private readonly provider: TileProvider,
+    private readonly provider: TileDataProvider<T>,
     private readonly policy: LodPolicy = DEFAULT_LOD_POLICY,
     cacheSize = 200,
-    // Реальная сеть (G3) вносит настоящее давление на конкурентность —
+    // Реальная сеть (G3+) вносит настоящее давление на конкурентность —
     // без лимита резкий зум/поворот мог бы выстрелить десятками
     // одновременных fetch(). 6 — стандартный практический потолок
     // одновременных соединений браузера на один хост, дальше запросы всё
@@ -46,7 +59,7 @@ export class TileEngine {
     // чтобы отдавать приоритет актуальным тайлам, а не FIFO-очереди браузера.
     private readonly maxConcurrentRequests: number = 6
   ) {
-    this.cache = new TileCache<TileData>(cacheSize);
+    this.cache = new TileCache<T>(cacheSize);
   }
 
   private isReady = (key: string): boolean => this.cache.isReady(key);
@@ -57,7 +70,7 @@ export class TileEngine {
     if (this.activeRequestCount >= this.maxConcurrentRequests) return; // лимит — тайл останется в pending и переспросится на следующем тике
 
     const controller = new AbortController();
-    const entry: TileCacheEntry<TileData> = { status: "loading", data: null, controller };
+    const entry: TileCacheEntry<T> = { status: "loading", data: null, controller };
     this.cache.set(key, entry);
     this.activeRequestCount++;
 
@@ -90,11 +103,11 @@ export class TileEngine {
   }
 
   /** Один "тик" движка: решает LOD, запрашивает недостающее (в пределах лимита конкурентности), возвращает кадр для рендера. */
-  tick(cameraPos: Vec3): TileEngineFrame {
+  tick(cameraPos: Vec3): TileEngineFrame<T> {
     const { rendered, pending } = selectTiles(cameraPos, this.isReady, this.policy);
     pending.forEach((id) => this.ensureRequested(id));
 
-    const tiles = new Map<string, TileData>();
+    const tiles = new Map<string, T>();
     let maxActiveLod = 0;
     for (const t of rendered) {
       const entry = this.cache.get(t.key);

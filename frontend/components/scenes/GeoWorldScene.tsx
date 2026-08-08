@@ -12,6 +12,8 @@ import TileDebugLayer from "@/components/geo/TileDebugLayer";
 import type { SelectedTile } from "@/lib/geo/tile-lod";
 import type { TileEngineStats } from "@/lib/geo/tile-engine";
 import { GIBS_ATTRIBUTION } from "@/lib/geo/providers/gibs-provider";
+import { TERRARIUM_ATTRIBUTION } from "@/lib/geo/providers/terrarium-provider";
+import { EXAGGERATION_PRESETS, DEFAULT_EXAGGERATION, type ExaggerationPreset } from "@/lib/geo/elevation-sampling";
 import AIAssistantChat from "@/components/ai/AIAssistantChat";
 import { apiFetch, ApiError } from "@/lib/api";
 import type { Simulation } from "@/lib/types";
@@ -412,6 +414,16 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
     setTileFrame({ rendered, stats });
   }, []);
 
+  // G4 — рельеф. У него СВОЙ движок/кэш/статистика (см. RealEarthTileLayer,
+  // ElevationEngineAdapter) — сознательно не смешан с движком снимков.
+  // exaggeration=0 полностью отключает рельеф (плоские заплатки, как в G3) —
+  // это одновременно и "выключить визуально", и debug-toggle из ТЗ.
+  const [exaggeration, setExaggeration] = useState<number>(DEFAULT_EXAGGERATION);
+  const [terrainStats, setTerrainStats] = useState<TileEngineStats | null>(null);
+  const handleTerrainFrame = useCallback((stats: TileEngineStats) => {
+    setTerrainStats(stats);
+  }, []);
+
   async function handleSelectLayer(layer: LayerKey) {
     setError(null);
     setIsLoadingLayer(true);
@@ -518,24 +530,28 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
             meltProgress={Math.min(1, temperatureAnomaly / CLIMATE_THRESHOLD_C)}
             isSelTriggered={Boolean(climateResult?.triggered)}
           />
-          {/* G3: реальные снимки NASA GIBS поверх базовой NASA-текстуры выше
-              (EarthLayers) — та остаётся низкодетальным fallback, видимым
-              всегда, поэтому пока тайл не готов, дыры быть не может. Не
-              показываем во время разреза слоёв — крust и так прозрачна. */}
-          {!isCutaway && <RealEarthTileLayer onFrame={handleTileFrame} />}
+          {/* G3/G4: реальные снимки NASA GIBS + рельеф (AWS Terrain Tiles) на
+              ТОМ ЖЕ меше, поверх базовой NASA-текстуры выше (EarthLayers) —
+              та остаётся низкодетальным fallback, видимым всегда, поэтому
+              пока тайл не готов, дыры быть не может. Не показываем во время
+              разреза слоёв — крust и так прозрачна. */}
+          {!isCutaway && (
+            <RealEarthTileLayer onFrame={handleTileFrame} onTerrainFrame={handleTerrainFrame} exaggeration={exaggeration} />
+          )}
           {showTileDebug && !isCutaway && tileFrame && <TileDebugLayer tiles={tileFrame.rendered} />}
         </CanvasShell>
 
         <AIAssistantChat simulationId={simulation.id} sceneStateDescription={sceneStateDescription} />
 
-        {/* Атрибуция NASA GIBS — постоянно видима, не прячется за debug-тоггл
-            (см. GEOWORLD_ROADMAP.md, раздел G3 "Атрибуция"). */}
+        {/* Атрибуция NASA GIBS + AWS Terrain Tiles — постоянно видима, не
+            прячется за debug-тоггл (см. GEOWORLD_ROADMAP.md, раздел G3/G4
+            "Атрибуция"). */}
         <div
           data-testid="gibs-attribution"
-          title={GIBS_ATTRIBUTION}
+          title={`${GIBS_ATTRIBUTION}\n\n${TERRARIUM_ATTRIBUTION}`}
           className="pointer-events-none absolute bottom-2 right-2 max-w-[70%] truncate rounded bg-surface-deep/70 px-2 py-1 text-[10px] text-slate-400 backdrop-blur"
         >
-          Imagery: NASA GIBS / BlueMarble (EOSDIS)
+          Imagery: NASA GIBS / BlueMarble (EOSDIS) · Terrain: AWS Open Data
         </div>
 
         {showTileDebug && tileFrame && (
@@ -543,12 +559,22 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
             data-testid="tile-debug-stats"
             className="pointer-events-none absolute bottom-3 left-3 rounded-lg border border-glass-border bg-surface-deep/80 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-slate-300 backdrop-blur"
           >
-            <div>G3 Tile/LOD debug — provider: NASA GIBS</div>
+            <div>G3 imagery — provider: NASA GIBS</div>
             <div>Visible: {tileFrame.stats.visibleCount}</div>
             <div>Cached: {tileFrame.stats.loadedCount}</div>
             <div>Active requests: {tileFrame.stats.activeRequestCount}</div>
             <div>Failed: {tileFrame.stats.failedCount}</div>
             <div>Max LOD: {tileFrame.stats.maxActiveLod}</div>
+            {terrainStats && (
+              <>
+                <div className="mt-1 border-t border-glass-border pt-1">G4 terrain — provider: AWS Terrarium</div>
+                <div>Terrain visible: {terrainStats.visibleCount}</div>
+                <div>Terrain cached: {terrainStats.loadedCount}</div>
+                <div>Terrain active: {terrainStats.activeRequestCount}</div>
+                <div>Terrain failed: {terrainStats.failedCount}</div>
+                <div>Exaggeration: {exaggeration}×</div>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -571,11 +597,39 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
                 ? "border-neon-violet/60 bg-neon-violet/20 text-neon-violet"
                 : "border-glass-border text-slate-400 hover:text-slate-200"
             }`}
-            title="G2: debug-визуализация тайлового/LOD-движка (заглушечные данные)"
+            title="G3: debug-визуализация тайлового/LOD-движка"
           >
             <Layers size={18} />
             {showTileDebug ? "Скрыть Tile/LOD debug" : "Показать Tile/LOD debug"}
           </button>
+
+          <div
+            className="flex items-center gap-1 rounded-full border border-glass-border p-1"
+            title="G4: визуальная экзагерация рельефа — множитель ПОВЕРХ реальных данных высот, не подменяет их"
+            data-testid="terrain-exaggeration-control"
+          >
+            {(Object.entries(EXAGGERATION_PRESETS) as Array<[ExaggerationPreset, number]>).map(([presetName, value]) => (
+              <button
+                key={presetName}
+                onClick={() => setExaggeration(value)}
+                data-testid={`exaggeration-${presetName}`}
+                className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                  exaggeration === value ? "bg-neon-violet/30 text-neon-violet" : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                {value}×
+              </button>
+            ))}
+            <button
+              onClick={() => setExaggeration(0)}
+              data-testid="exaggeration-off"
+              className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                exaggeration === 0 ? "bg-neon-violet/30 text-neon-violet" : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              Рельеф выкл.
+            </button>
+          </div>
         </div>
 
         <div className="sm:col-span-2">
