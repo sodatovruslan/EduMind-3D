@@ -143,4 +143,31 @@ body {
       0 0 0 2px rgb(var(--ds-background)),
       0 0 0 4px rgb(var(--ds-accent) / 0.6);
   }
+
+  /* D3 — shared form input (Login/Register/PasswordField). Autofill rules
+     force the browser's own yellow/white autofill background back to the
+     theme's background+text tokens (via a huge inset box-shadow — the only
+     cross-browser override for `-webkit-autofill` internals) so Light/Dark
+     both stay readable after a password manager fills the field. */
+  .ds-input {
+    width: 100%;
+    border-radius: 0.625rem;
+    border: 1px solid rgb(var(--ds-border) / 0.15);
+    background: rgb(var(--ds-background));
+    padding: 0.5rem 0.75rem;
+    color: rgb(var(--ds-text-primary));
+  }
+
+  .ds-input::placeholder {
+    color: rgb(var(--ds-text-muted));
+  }
+
+  .ds-input:-webkit-autofill,
+  .ds-input:-webkit-autofill:hover,
+  .ds-input:-webkit-autofill:focus {
+    -webkit-text-fill-color: rgb(var(--ds-text-primary));
+    -webkit-box-shadow: 0 0 0px 1000px rgb(var(--ds-background)) inset;
+    box-shadow: 0 0 0px 1000px rgb(var(--ds-background)) inset;
+    transition: background-color 9999s ease-in-out 0s;
+  }
 }

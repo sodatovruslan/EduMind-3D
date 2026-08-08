@@ -109,4 +109,38 @@ export const ru = {
     accountTitle: "Аккаунт",
     rights: "© 2026 EduMind 3D",
   },
+  auth: {
+    common: {
+      backToHome: "EduMind 3D",
+      showPassword: "Показать пароль",
+      hidePassword: "Скрыть пароль",
+    },
+    visual: {
+      title: "Добро пожаловать во вселенную EduMind",
+      subtitle: "Электричество, химия и география — как интерактивные 3D-миры, которые можно исследовать своими руками.",
+    },
+    login: {
+      title: "Вход в EduMind 3D",
+      emailLabel: "Email",
+      passwordLabel: "Пароль",
+      submit: "Войти",
+      submitLoading: "Входим...",
+      noAccount: "Нет аккаунта?",
+      registerLink: "Зарегистрироваться",
+      genericError: "Не удалось войти. Попробуйте еще раз.",
+    },
+    register: {
+      title: "Регистрация в EduMind 3D",
+      nameLabel: "Имя",
+      emailLabel: "Email",
+      passwordLabel: "Пароль",
+      passwordHint: "Не короче 8 символов",
+      passwordTooShortError: "Пароль должен быть не короче 8 символов",
+      submit: "Зарегистрироваться",
+      submitLoading: "Создаем аккаунт...",
+      hasAccount: "Уже есть аккаунт?",
+      loginLink: "Войти",
+      genericError: "Не удалось зарегистрироваться. Попробуйте еще раз.",
+    },
+  },
 };

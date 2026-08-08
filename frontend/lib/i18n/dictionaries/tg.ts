@@ -111,4 +111,38 @@ export const tg: typeof ru = {
     accountTitle: "Ҳисоб",
     rights: "© 2026 EduMind 3D",
   },
+  auth: {
+    common: {
+      backToHome: "EduMind 3D",
+      showPassword: "Нишон додани парол",
+      hidePassword: "Пинҳон кардани парол",
+    },
+    visual: {
+      title: "Хуш омадед ба ҷаҳони EduMind",
+      subtitle: "Барқ, химия ва география — ҳамчун ҷаҳонҳои интерактивии 3D, ки бо дасти худ омӯхта мешаванд.",
+    },
+    login: {
+      title: "Воридшавӣ ба EduMind 3D",
+      emailLabel: "Email",
+      passwordLabel: "Парол",
+      submit: "Ворид шудан",
+      submitLoading: "Воридшавӣ...",
+      noAccount: "Ҳисоб надоред?",
+      registerLink: "Бақайдгирӣ",
+      genericError: "Воридшавӣ ноком шуд. Аз нав кӯшиш кунед.",
+    },
+    register: {
+      title: "Дар EduMind 3D бақайд гиред",
+      nameLabel: "Ном",
+      emailLabel: "Email",
+      passwordLabel: "Парол",
+      passwordHint: "На кӯтоҳтар аз 8 аломат",
+      passwordTooShortError: "Парол бояд на кӯтоҳтар аз 8 аломат бошад",
+      submit: "Бақайд гирифтан",
+      submitLoading: "Ҳисоб сохта мешавад...",
+      hasAccount: "Ҳисоб доред?",
+      loginLink: "Ворид шудан",
+      genericError: "Бақайдгирӣ ноком шуд. Аз нав кӯшиш кунед.",
+    },
+  },
 };

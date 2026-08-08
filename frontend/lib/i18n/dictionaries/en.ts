@@ -111,4 +111,38 @@ export const en: typeof ru = {
     accountTitle: "Account",
     rights: "© 2026 EduMind 3D",
   },
+  auth: {
+    common: {
+      backToHome: "EduMind 3D",
+      showPassword: "Show password",
+      hidePassword: "Hide password",
+    },
+    visual: {
+      title: "Welcome to the EduMind universe",
+      subtitle: "Electricity, chemistry and geography — as interactive 3D worlds you explore with your own hands.",
+    },
+    login: {
+      title: "Sign in to EduMind 3D",
+      emailLabel: "Email",
+      passwordLabel: "Password",
+      submit: "Sign In",
+      submitLoading: "Signing in...",
+      noAccount: "Don't have an account?",
+      registerLink: "Sign up",
+      genericError: "Couldn't sign in. Please try again.",
+    },
+    register: {
+      title: "Create your EduMind 3D account",
+      nameLabel: "Full name",
+      emailLabel: "Email",
+      passwordLabel: "Password",
+      passwordHint: "At least 8 characters",
+      passwordTooShortError: "Password must be at least 8 characters",
+      submit: "Sign Up",
+      submitLoading: "Creating your account...",
+      hasAccount: "Already have an account?",
+      loginLink: "Sign in",
+      genericError: "Couldn't create your account. Please try again.",
+    },
+  },
 };
