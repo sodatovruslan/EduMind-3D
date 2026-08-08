@@ -1,13 +1,29 @@
-import { tileKey, type TileId } from "./tiling";
+import { tileKey, type TileBounds, type TileId } from "./tiling";
 
-// Данные тайла. G2 намеренно генерирует их локально (цвет + подпись), но
-// контракт (Promise<TileData>, отмена через AbortSignal) рассчитан на то,
-// что G3+ подставит сюда реального провайдера (растровая текстура/URL),
-// не меняя ни TileEngine, ни LOD-логику, ни рендер-слой — только реализацию
-// requestTile().
+// Данные тайла. G2 намеренно генерировал их локально (цвет + подпись) —
+// G3 добавляет реальные поля (image/bounds/attribution/dispose) РЯДОМ, не
+// заменяя debug-поля: контракт (Promise<TileData>, отмена через
+// AbortSignal) рассчитан на то, что провайдер может подставить сюда любую
+// комбинацию, не меняя ни TileEngine, ни LOD-логику, ни то, как кэш
+// освобождает ресурсы при вытеснении.
 export interface TileData {
-  color: string;
-  label: string;
+  // Debug-заглушка (G2, DebugTileProvider) — цвет-заполнитель и подпись.
+  color?: string;
+  label?: string;
+  // Реальная растровая картинка (G3, GibsTileProvider) — декодированное
+  // изображение, из которого рендер-слой строит THREE.Texture.
+  image?: ImageBitmap;
+  // Реальные географические границы данных тайла — могут ОТЛИЧАТЬСЯ от
+  // tileBounds(id) нашей внутренней схемы (см. lib/geo/providers/gibs-grid.ts:
+  // сетка провайдера не совпадает с нашей квадротрёх один в один). Рендер
+  // обязан использовать ИМЕННО это поле для геометрии, когда оно есть —
+  // иначе картинка будет растянута/смещена относительно реальной географии.
+  bounds?: TileBounds;
+  attribution?: string;
+  // Освобождение GPU/декодированных ресурсов (например, ImageBitmap.close()).
+  // Вызывается TileCache/TileEngine при вытеснении ГОТОВОЙ записи из кэша.
+  // Отсутствует — нечего освобождать (debug-заглушка это просто примитивы).
+  dispose?: () => void;
 }
 
 export interface TileProvider {

@@ -147,6 +147,43 @@ describe("GeoWorld G2 — TileEngine: связка LOD + провайдер + к
     }
   });
 
+  it("dispose() освобождает ГОТОВЫЕ записи (реальные ресурсы — картинка/текстура), не только отменяет в полёте", async () => {
+    const provider = new ManualTileProvider();
+    const engine = new TileEngine(provider);
+    engine.tick([0, 0, 20]);
+    const key = provider.calls[0];
+    const disposeFn = vi.fn();
+    provider.resolve(key, { color: "#fff", label: key, dispose: disposeFn });
+    await flush();
+    engine.tick([0, 0, 20]); // забирает готовую запись в cache
+    engine.dispose();
+    expect(disposeFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("ограничивает число одновременных запросов — резкий зум не создаёт лавину сетевых вызовов сразу", async () => {
+    const provider = new ManualTileProvider();
+    const engine = new TileEngine(provider, undefined, 200, 2); // maxConcurrentRequests=2
+
+    engine.tick(CLOSE_TO_EAST_ROOT_CENTER); // запрашивает восточный корень (1 запрос)
+    const eastRootKey = "0/1/0";
+    provider.resolve(eastRootKey, { color: "#fff", label: eastRootKey });
+    await flush();
+
+    engine.tick(CLOSE_TO_EAST_ROOT_CENTER); // родитель готов — хочет запросить всех 4 детей разом
+    const childKeys = ["1/2/0", "1/3/0", "1/2/1", "1/3/1"];
+    const requestedChildren = provider.calls.filter((k) => childKeys.includes(k));
+    expect(requestedChildren.length).toBe(2); // лимит=2 — не все 4 сразу
+
+    // Освобождаем "слоты", резолвя уже запущенные — на следующем тике
+    // движок доберёт оставшихся детей из pending (LOD-логика продолжает
+    // хотеть их, раз они ещё не готовы)
+    for (const k of requestedChildren) provider.resolveOldest(k, { color: "#abc", label: k });
+    await flush();
+    engine.tick(CLOSE_TO_EAST_ROOT_CENTER);
+    const requestedChildrenTotal = provider.calls.filter((k) => childKeys.includes(k));
+    expect(requestedChildrenTotal.length).toBe(4); // остальные два добраны следующим тиком
+  });
+
   it("быстрый зум/поворот (несколько тиков подряд с разными позициями) не роняет исполнение", () => {
     const provider = new ManualTileProvider();
     const engine = new TileEngine(provider);

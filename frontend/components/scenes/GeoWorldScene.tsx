@@ -1,14 +1,17 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import { Line, Stars, useTexture } from "@react-three/drei";
 import { Layers } from "lucide-react";
 import CanvasShell from "@/components/scenes/CanvasShell";
 import GlobeControls from "@/components/geo/GlobeControls";
+import RealEarthTileLayer from "@/components/geo/RealEarthTileLayer";
 import TileDebugLayer from "@/components/geo/TileDebugLayer";
+import type { SelectedTile } from "@/lib/geo/tile-lod";
 import type { TileEngineStats } from "@/lib/geo/tile-engine";
+import { GIBS_ATTRIBUTION } from "@/lib/geo/providers/gibs-provider";
 import AIAssistantChat from "@/components/ai/AIAssistantChat";
 import { apiFetch, ApiError } from "@/lib/api";
 import type { Simulation } from "@/lib/types";
@@ -396,12 +399,18 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
   const mountedAtRef = useRef(Date.now());
   const wasAboveThresholdRef = useRef(false);
 
-  // G2 — тайловый/LOD-движок: чисто отладочная визуализация (см.
-  // TileDebugLayer/GEOWORLD_ROADMAP.md), выключена по умолчанию, не
-  // production UI. Не показываем поверх разреза слоёв — там и так занята
-  // прозрачность коры для показа внутренних слоёв.
+  // G3 — RealEarthTileLayer всегда включён (реальные снимки NASA GIBS — это
+  // теперь базовый опыт, не debug-фича). TileDebugLayer (контур+подписи
+  // внутренней сетки LOD-движка) остаётся отдельным, выключенным по
+  // умолчанию оверлеем — см. GEOWORLD_ROADMAP.md. Оба используют ОДИН и тот
+  // же тик движка (frame.rendered/stats приходят из RealEarthTileLayer через
+  // onFrame), а не два параллельных движка с двойным сетевым трафиком. Не
+  // показываем поверх разреза слоёв — там и так занята прозрачность коры.
   const [showTileDebug, setShowTileDebug] = useState(false);
-  const [tileDebugStats, setTileDebugStats] = useState<TileEngineStats | null>(null);
+  const [tileFrame, setTileFrame] = useState<{ rendered: SelectedTile[]; stats: TileEngineStats } | null>(null);
+  const handleTileFrame = useCallback((rendered: SelectedTile[], stats: TileEngineStats) => {
+    setTileFrame({ rendered, stats });
+  }, []);
 
   async function handleSelectLayer(layer: LayerKey) {
     setError(null);
@@ -509,20 +518,37 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
             meltProgress={Math.min(1, temperatureAnomaly / CLIMATE_THRESHOLD_C)}
             isSelTriggered={Boolean(climateResult?.triggered)}
           />
-          {showTileDebug && !isCutaway && <TileDebugLayer onStats={setTileDebugStats} />}
+          {/* G3: реальные снимки NASA GIBS поверх базовой NASA-текстуры выше
+              (EarthLayers) — та остаётся низкодетальным fallback, видимым
+              всегда, поэтому пока тайл не готов, дыры быть не может. Не
+              показываем во время разреза слоёв — крust и так прозрачна. */}
+          {!isCutaway && <RealEarthTileLayer onFrame={handleTileFrame} />}
+          {showTileDebug && !isCutaway && tileFrame && <TileDebugLayer tiles={tileFrame.rendered} />}
         </CanvasShell>
 
         <AIAssistantChat simulationId={simulation.id} sceneStateDescription={sceneStateDescription} />
 
-        {showTileDebug && tileDebugStats && (
+        {/* Атрибуция NASA GIBS — постоянно видима, не прячется за debug-тоггл
+            (см. GEOWORLD_ROADMAP.md, раздел G3 "Атрибуция"). */}
+        <div
+          data-testid="gibs-attribution"
+          title={GIBS_ATTRIBUTION}
+          className="pointer-events-none absolute bottom-2 right-2 max-w-[70%] truncate rounded bg-surface-deep/70 px-2 py-1 text-[10px] text-slate-400 backdrop-blur"
+        >
+          Imagery: NASA GIBS / BlueMarble (EOSDIS)
+        </div>
+
+        {showTileDebug && tileFrame && (
           <div
             data-testid="tile-debug-stats"
             className="pointer-events-none absolute bottom-3 left-3 rounded-lg border border-glass-border bg-surface-deep/80 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-slate-300 backdrop-blur"
           >
-            <div>G2 Tile/LOD debug</div>
-            <div>Visible: {tileDebugStats.visibleCount}</div>
-            <div>Cached: {tileDebugStats.loadedCount}</div>
-            <div>Max LOD: {tileDebugStats.maxActiveLod}</div>
+            <div>G3 Tile/LOD debug — provider: NASA GIBS</div>
+            <div>Visible: {tileFrame.stats.visibleCount}</div>
+            <div>Cached: {tileFrame.stats.loadedCount}</div>
+            <div>Active requests: {tileFrame.stats.activeRequestCount}</div>
+            <div>Failed: {tileFrame.stats.failedCount}</div>
+            <div>Max LOD: {tileFrame.stats.maxActiveLod}</div>
           </div>
         )}
       </div>

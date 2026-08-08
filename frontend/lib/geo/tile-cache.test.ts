@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { TileCache, type TileCacheEntry } from "./tile-cache";
 
 function entry(status: TileCacheEntry<string>["status"] = "ready", data: string | null = "x"): TileCacheEntry<string> {
@@ -65,5 +65,34 @@ describe("GeoWorld G2 — TileCache: ограниченный кэш с LRU-вы
     cache.set("1", done);
     cache.set("2", entry("ready", "done2"));
     expect(done.controller.signal.aborted).toBe(false);
+  });
+});
+
+describe("GeoWorld G3 — TileCache: dispose-контракт для реальных ресурсов (текстуры/декодированные картинки)", () => {
+  interface Resource {
+    dispose: () => void;
+  }
+
+  it("вытеснение ГОТОВОЙ записи вызывает dispose() её данных, если он есть — нет утечки GPU/decoded-ресурса", () => {
+    const cache = new TileCache<Resource>(1);
+    const dispose = vi.fn();
+    cache.set("1", { status: "ready", data: { dispose }, controller: new AbortController() });
+    expect(dispose).not.toHaveBeenCalled();
+    cache.set("2", { status: "ready", data: { dispose: vi.fn() }, controller: new AbortController() }); // вытесняет "1"
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("данные без dispose() (debug-заглушка G2) не вызывают ошибок при вытеснении", () => {
+    const cache = new TileCache<{ color: string }>(1);
+    cache.set("1", { status: "ready", data: { color: "#fff" }, controller: new AbortController() });
+    expect(() => cache.set("2", { status: "ready", data: { color: "#000" }, controller: new AbortController() })).not.toThrow();
+  });
+
+  it("dispose() НЕ вызывается для записей в статусе loading/requested (там нечего освобождать, есть только отмена)", () => {
+    const cache = new TileCache<Resource>(1);
+    const dispose = vi.fn();
+    cache.set("1", { status: "loading", data: { dispose }, controller: new AbortController() });
+    cache.set("2", { status: "ready", data: { dispose: vi.fn() }, controller: new AbortController() });
+    expect(dispose).not.toHaveBeenCalled(); // эта запись была отменена (abort), не "освобождена"
   });
 });

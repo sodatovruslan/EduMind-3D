@@ -1,4 +1,4 @@
-import { TileCache, type TileCacheEntry } from "./tile-cache";
+import { TileCache, disposeIfPossible, type TileCacheEntry } from "./tile-cache";
 import { DEFAULT_LOD_POLICY, selectTiles, type LodPolicy, type SelectedTile, type Vec3 } from "./tile-lod";
 import { tileKey, type TileId } from "./tiling";
 import type { TileData, TileProvider } from "./tile-provider";
@@ -10,6 +10,10 @@ export interface TileEngineStats {
   loadedCount: number;
   /** Максимальный уровень детализации среди отрендеренных тайлов. */
   maxActiveLod: number;
+  /** Сколько тайлов упало с ошибкой (сеть/декодирование) — видно только в debug. */
+  failedCount: number;
+  /** Сколько запросов реально в полёте прямо сейчас (не считая ожидающих своей очереди из-за лимита конкурентности). */
+  activeRequestCount: number;
 }
 
 export interface TileEngineFrame {
@@ -28,11 +32,19 @@ export interface TileEngineFrame {
  */
 export class TileEngine {
   private cache: TileCache<TileData>;
+  private activeRequestCount = 0;
 
   constructor(
     private readonly provider: TileProvider,
     private readonly policy: LodPolicy = DEFAULT_LOD_POLICY,
-    cacheSize = 200
+    cacheSize = 200,
+    // Реальная сеть (G3) вносит настоящее давление на конкурентность —
+    // без лимита резкий зум/поворот мог бы выстрелить десятками
+    // одновременных fetch(). 6 — стандартный практический потолок
+    // одновременных соединений браузера на один хост, дальше запросы всё
+    // равно очередятся самим браузером; ограничиваем на уровне движка,
+    // чтобы отдавать приоритет актуальным тайлам, а не FIFO-очереди браузера.
+    private readonly maxConcurrentRequests: number = 6
   ) {
     this.cache = new TileCache<TileData>(cacheSize);
   }
@@ -42,23 +54,34 @@ export class TileEngine {
   private ensureRequested(id: TileId): void {
     const key = tileKey(id);
     if (this.cache.has(key)) return; // уже запрошен/грузится/готов/упал — не дублируем
+    if (this.activeRequestCount >= this.maxConcurrentRequests) return; // лимит — тайл останется в pending и переспросится на следующем тике
 
     const controller = new AbortController();
     const entry: TileCacheEntry<TileData> = { status: "loading", data: null, controller };
     this.cache.set(key, entry);
+    this.activeRequestCount++;
+
+    const settle = () => {
+      this.activeRequestCount = Math.max(0, this.activeRequestCount - 1);
+    };
 
     this.provider
       .requestTile(id, controller.signal)
       .then((data) => {
+        settle();
         if (controller.signal.aborted) return; // устаревший запрос — результат игнорируем
         const current = this.cache.get(key);
         // Запись могла быть вытеснена и переспрошена заново (другой
         // controller) — применяем результат ТОЛЬКО к "своей" записи.
-        if (!current || current.controller !== controller) return;
+        if (!current || current.controller !== controller) {
+          disposeIfPossible(data); // результат никому не принадлежит — не течём GPU-ресурсом
+          return;
+        }
         current.status = "ready";
         current.data = data;
       })
       .catch(() => {
+        settle();
         if (controller.signal.aborted) return;
         const current = this.cache.get(key);
         if (!current || current.controller !== controller) return;
@@ -66,7 +89,7 @@ export class TileEngine {
       });
   }
 
-  /** Один "тик" движка: решает LOD, запрашивает недостающее, возвращает кадр для рендера. */
+  /** Один "тик" движка: решает LOD, запрашивает недостающее (в пределах лимита конкурентности), возвращает кадр для рендера. */
   tick(cameraPos: Vec3): TileEngineFrame {
     const { rendered, pending } = selectTiles(cameraPos, this.isReady, this.policy);
     pending.forEach((id) => this.ensureRequested(id));
@@ -81,6 +104,11 @@ export class TileEngine {
       maxActiveLod = Math.max(maxActiveLod, t.id.z);
     }
 
+    let failedCount = 0;
+    for (const entry of this.cache.values()) {
+      if (entry.status === "error") failedCount++;
+    }
+
     return {
       rendered,
       tiles,
@@ -88,15 +116,19 @@ export class TileEngine {
         visibleCount: rendered.length,
         loadedCount: this.cache.size(),
         maxActiveLod,
+        failedCount,
+        activeRequestCount: this.activeRequestCount,
       },
     };
   }
 
-  /** Отменяет все запросы в полёте — вызывать при размонтировании владеющего компонента. */
+  /** Отменяет всё в полёте и освобождает ресурсы готовых записей — вызывать при размонтировании владеющего компонента. */
   dispose(): void {
     for (const entry of this.cache.values()) {
       if (entry.status === "loading" || entry.status === "requested") {
         entry.controller.abort();
+      } else if (entry.status === "ready") {
+        disposeIfPossible(entry.data);
       }
     }
   }

@@ -6,6 +6,17 @@ export interface TileCacheEntry<T> {
   controller: AbortController;
 }
 
+// Данные тайла МОГУТ владеть реальным ресурсом, который нужно явно
+// освободить при вытеснении (декодированное изображение, GPU-текстура) —
+// TileCache не знает и не должен знать конкретный тип T (G2 использует
+// TileCache<TileData-заглушка>, G3 — TileCache<TileData-с-картинкой>), поэтому
+// проверяем структурно: если у данных ЕСТЬ метод dispose(), вызываем его.
+export function disposeIfPossible(data: unknown): void {
+  if (data && typeof (data as { dispose?: unknown }).dispose === "function") {
+    (data as { dispose: () => void }).dispose();
+  }
+}
+
 /**
  * Ограниченный по размеру кэш с вытеснением "давно не использовавшихся"
  * записей (LRU). Обязателен по спецификации G2: глубина LOD растёт
@@ -16,7 +27,10 @@ export interface TileCacheEntry<T> {
  * в полёте (loading/requested) — это осознанно безопасно: если тайл настолько
  * давно не использовался, что стал кандидатом на вытеснение, отмена его
  * загрузки не наблюдаема пользователем (он всё равно не смотрит туда), а при
- * повторной необходимости LOD-движок просто перезапросит тайл заново.
+ * повторной необходимости LOD-движок просто перезапросит тайл заново. Если
+ * вытесняемая запись уже ГОТОВА (ready) и её данные владеют ресурсом
+ * (GPU-текстура/декодированная картинка) — вызывается dispose(), иначе
+ * вытеснение "холодных" тайлов реального провайдера в G3+ было бы утечкой.
  */
 export class TileCache<T> {
   private map = new Map<string, TileCacheEntry<T>>();
@@ -61,8 +75,12 @@ export class TileCache<T> {
       const oldestKey = this.map.keys().next().value;
       if (oldestKey === undefined) break;
       const entry = this.map.get(oldestKey);
-      if (entry && (entry.status === "loading" || entry.status === "requested")) {
-        entry.controller.abort();
+      if (entry) {
+        if (entry.status === "loading" || entry.status === "requested") {
+          entry.controller.abort();
+        } else if (entry.status === "ready") {
+          disposeIfPossible(entry.data);
+        }
       }
       this.map.delete(oldestKey);
     }
