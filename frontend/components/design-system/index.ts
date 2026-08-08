@@ -8,3 +8,4 @@ export { default as GlassPanel } from "./GlassPanel";
 export type { GlassPanelProps } from "./GlassPanel";
 export { default as ThemeToggle } from "./ThemeToggle";
 export { default as LocaleSwitcher } from "./LocaleSwitcher";
+export { default as Skeleton } from "./Skeleton";

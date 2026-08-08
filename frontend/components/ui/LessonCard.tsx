@@ -1,6 +1,9 @@
+"use client";
+
 import Link from "next/link";
 import { FlaskConical, Globe, TestTube, Zap } from "lucide-react";
 import type { Simulation } from "@/lib/types";
+import { useLocale } from "@/lib/locale-context";
 
 const MODULE_ICON = {
   simlab: FlaskConical,
@@ -16,40 +19,44 @@ const MODULE_LABEL = {
   chemistry_world: "Chemistry World",
 } as const;
 
-// у каждого модуля свой neon-акцент: SimLab — индиго, GeoWorld — циан,
-// Electricity Lab — фиолетовый, Chemistry World — изумрудный
-const MODULE_ICON_COLOR = {
-  simlab: "text-brand",
-  geo3d: "text-neon-cyan",
-  electricity_lab: "text-neon-violet",
-  chemistry_world: "text-emerald-400",
+// Design V2 module accent system (D2/D5): Electricity → physics
+// (violet-indigo), Chemistry → chemistry (emerald), GeoWorld → geo (cyan).
+// SimLab isn't a promoted world (see lib/landing-worlds.ts) but the card
+// stays generically correct for it (falls back to the base `accent` token)
+// in case it's ever rendered outside the D5 world sections.
+const MODULE_ACCENT_TEXT = {
+  simlab: "text-accent",
+  geo3d: "text-accent-geo",
+  electricity_lab: "text-accent-physics",
+  chemistry_world: "text-accent-chemistry",
 } as const;
 
-const MODULE_BORDER_HOVER = {
-  simlab: "border-brand/40 hover:border-brand/60",
-  geo3d: "border-neon-cyan/40 hover:border-neon-cyan/60",
-  electricity_lab: "border-neon-violet/40 hover:border-neon-violet/60",
-  chemistry_world: "border-emerald-400/40 hover:border-emerald-400/60",
+const MODULE_ACCENT_BORDER = {
+  simlab: "border-accent/30 hover:border-accent/50",
+  geo3d: "border-accent-geo/30 hover:border-accent-geo/50",
+  electricity_lab: "border-accent-physics/30 hover:border-accent-physics/50",
+  chemistry_world: "border-accent-chemistry/30 hover:border-accent-chemistry/50",
 } as const;
 
 // карточка урока для дашборда — рендерим на каждую симуляцию из списка
 export default function LessonCard({ simulation }: { simulation: Simulation }) {
+  const { t } = useLocale();
   const Icon = MODULE_ICON[simulation.module];
 
   return (
     <Link
       href={`/${simulation.module}/${simulation.id}`}
-      className={`glass-panel block rounded-2xl border p-6 transition-all duration-300 hover:-translate-y-1 ${MODULE_BORDER_HOVER[simulation.module]}`}
+      className={`block rounded-ds-panel border bg-surface-elevated p-6 shadow-ds-sm transition-all duration-300 ease-ds-standard hover:-translate-y-1 ${MODULE_ACCENT_BORDER[simulation.module]}`}
     >
-      <div className={`mb-3 flex items-center gap-2 ${MODULE_ICON_COLOR[simulation.module]}`}>
+      <div className={`mb-3 flex items-center gap-2 ${MODULE_ACCENT_TEXT[simulation.module]}`}>
         <Icon size={20} />
-        <span className="font-mono text-xs font-semibold uppercase tracking-widest">
-          {MODULE_LABEL[simulation.module]}
-        </span>
+        <span className="text-ds-caption font-semibold uppercase tracking-widest">{MODULE_LABEL[simulation.module]}</span>
       </div>
-      <h3 className="font-headline font-semibold text-slate-100">{simulation.title}</h3>
-      <p className="mt-1 text-sm text-slate-400">{simulation.subject}</p>
-      <div className="mt-3 font-mono text-xs text-slate-500">Сложность: {simulation.difficulty}/5</div>
+      <h3 className="font-headline font-semibold text-text-primary">{simulation.title}</h3>
+      <p className="mt-1 text-ds-body text-text-secondary">{simulation.subject}</p>
+      <div className="mt-3 text-ds-caption text-text-muted">
+        {t.dashboard.worlds.difficultyLabel}: {simulation.difficulty}/5
+      </div>
     </Link>
   );
 }

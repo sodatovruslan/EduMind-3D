@@ -1,65 +1,56 @@
 "use client";
 
-import { useMemo, useState } from "react";
 import useSWR from "swr";
-import { Search } from "lucide-react";
 import { swrFetcher } from "@/lib/swr-fetcher";
 import type { Simulation } from "@/lib/types";
-import LessonCard from "@/components/ui/LessonCard";
-import Loader from "@/components/ui/Loader";
+import { useAuth } from "@/lib/auth-context";
+import { useLocale } from "@/lib/locale-context";
+import Hero from "@/components/dashboard/Hero";
+import ContinueLearning from "@/components/dashboard/ContinueLearning";
+import WorldSection from "@/components/dashboard/WorldSection";
+import ProgressSnapshot from "@/components/dashboard/ProgressSnapshot";
+import RecentResults from "@/components/dashboard/RecentResults";
+import FocusNext from "@/components/dashboard/FocusNext";
 
+/**
+ * D5 — Student Learning Hub. Replaces the old flat "Мои симуляции"
+ * search+grid (same page, same route, same underlying `/api/simulations/`
+ * fetch — only the presentation changes, see EDUMIND_DESIGN_SYSTEM_V2.md D5
+ * notes for the full real-data audit behind each section).
+ *
+ * Teacher/admin visiting `/dashboard` (still reachable — Rail's "Home"
+ * points here for every role) get a minimal world-browse view instead of
+ * fabricated student identity widgets (no LearningProfile-shaped data
+ * belongs to a teacher) — NOT a Teacher Dashboard redesign, which is a
+ * later stage; this is just avoiding an honesty gap.
+ */
 export default function DashboardPage() {
-  const { data: simulations, error, isLoading } = useSWR<Simulation[]>(
-    "/api/simulations/",
-    swrFetcher
-  );
-  const [query, setQuery] = useState("");
+  const { user } = useAuth();
+  const { t } = useLocale();
+  const { data: simulations, isLoading } = useSWR<Simulation[]>("/api/simulations/", swrFetcher);
 
-  // реальный клиентский фильтр по названию/предмету — список уже загружен целиком,
-  // отдельный backend-эндпоинт под поиск для пары десятков симуляций избыточен
-  const filteredSimulations = useMemo(() => {
-    if (!simulations) return simulations;
-    const q = query.trim().toLowerCase();
-    if (!q) return simulations;
-    return simulations.filter(
-      (s) => s.title.toLowerCase().includes(q) || s.subject.toLowerCase().includes(q)
+  const isStudent = user?.role === "student";
+
+  if (!isStudent) {
+    return (
+      <div className="max-w-6xl space-y-8">
+        <div>
+          <h1 className="text-ds-title text-text-primary">{t.dashboard.teacherFallback.title}</h1>
+          <p className="mt-1 text-ds-body text-text-secondary">{t.dashboard.teacherFallback.subtitle}</p>
+        </div>
+        <WorldSection simulations={simulations} isLoading={isLoading} />
+      </div>
     );
-  }, [simulations, query]);
-
-  if (isLoading) return <Loader />;
-
-  if (error) {
-    return <p className="text-sm text-red-400">Не удалось загрузить симуляции: {error.message}</p>;
   }
 
   return (
-    <div>
-      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="font-headline text-2xl font-bold text-slate-100">Мои симуляции</h1>
-
-        <div className="relative w-full sm:w-64">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Найти симуляцию..."
-            className="w-full rounded-full border border-glass-border bg-surface-container-lowest/60 py-2 pl-9 pr-4 font-mono text-sm text-slate-100 placeholder:text-slate-500 focus:border-neon-cyan focus:outline-none focus:ring-1 focus:ring-neon-cyan"
-          />
-        </div>
-      </div>
-
-      {filteredSimulations && filteredSimulations.length > 0 ? (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filteredSimulations.map((simulation) => (
-            <LessonCard key={simulation.id} simulation={simulation} />
-          ))}
-        </div>
-      ) : (
-        <p className="text-sm text-slate-400">
-          {query ? "Ничего не найдено." : "Пока нет доступных симуляций."}
-        </p>
-      )}
+    <div className="max-w-6xl space-y-10">
+      <Hero />
+      <ContinueLearning simulations={simulations} />
+      <WorldSection simulations={simulations} isLoading={isLoading} />
+      <ProgressSnapshot />
+      <RecentResults />
+      <FocusNext />
     </div>
   );
 }

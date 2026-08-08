@@ -1752,3 +1752,45 @@ D4 — НЕ редизайн дашборда/учителя/профиля/си
 
 ### Статус на конец продолжения №24
 **Design System V2 D4 — завершён.** `EDUMIND_DESIGN_SYSTEM_V2.md` обновлён (§30 — детали D4, route matrix). D5 (Student Home + Student Profile) не начат — ждёт одобрения. Внутренний контент `/dashboard`/`/teacher`/`/profile` и вся 3D-логика симуляций нигде в этой части не тронуты.
+
+---
+
+## Обновление 2026-08-08 (продолжение №25) — Design System V2, D5: Student Home + Student Profile
+
+### Аудит реальных данных (главная часть этой стадии)
+По прямому указанию — только REAL/DERIVABLE/NOT AVAILABLE, ничего не выдумывать. Дошёл до backend-роутеров (только чтение, ни один backend-файл не изменён), нашёл два реальных, но НИКОГДА не вызываемых с фронтенда эндпоинта:
+- **`GET /api/results/me`** (`backend/app/routers/results.py`) — самодоступ к своим `LabResult` для ЛЮБОГО авторизованного пользователя. Раньше с фронтенда вызывались только teacher-only `/api/results/stats` и `/api/results/student/:id`. Добавлен `lib/results-client.ts` — тонкий клиент, ноль изменений backend.
+- **`GET /api/chemistry/saves`** (`backend/app/routers/chemistry_saves.py`) — список ВСЕХ сохранений текущего пользователя по всем экспериментам, сортировка по `updated_at`. `lib/autosave-engine.ts` раньше только POST/PATCH-ил сохранение ТЕКУЩЕГО эксперимента, никогда не листил все. Добавлен `lib/chemistry-saves-client.ts`.
+- **Electricity/GeoWorld/SimLab resume** — подтверждено грепом: у Electricity Lab вообще нет server-side saves-роутера. "Continue Learning" может резюмировать только Chemistry — честно задокументировано, не подделано.
+- **Глобальный AI-чат на дашборде** — не существует (AI-наставник живёт только внутри конкретных сцен с их контекстом) — не изобретён.
+
+### Реализация
+**Student Home** (`app/(app)/dashboard/page.tsx`, тот же роут, тот же `/api/simulations/`-фетч — поменялась только презентация): `Hero` (реальное имя + приветствие по времени суток + level/xp/labs/streak инлайн) → `ContinueLearning` → `WorldSection` (`#worlds`) → `ProgressSnapshot` (4 метрики, не полная стена KPI) → `RecentResults` → `FocusNext`. Учитель на `/dashboard` (Rail's "Home" ведёт туда для всех ролей) видит минимальный fallback — только заголовок+`WorldSection`, без выдуманных студенческих виджетов.
+
+**`ContinueLearning`** — строго по приоритету: (1) активное Chemistry-сохранение → "Незавершённый эксперимент", прямая ссылка на резюм; (2) иначе `last_completed_lab` (реальный `simulation_id`) → "Недавняя работа" (НЕ "незавершённый", это завершённая работа); (3) иначе честный empty-state. Никакого выдуманного "последнего урока".
+
+**`WorldSection`** переиспользует `lib/landing-worlds.ts` (те же 3 мира/акцента, что и D2-лендинг, SimLab не рекламируется) — вместо трёх абстрактных плиток каждый мир группирует РЕАЛЬНЫЕ симуляции этого модуля через рестайленный `LessonCard` (Design V2 акценты `accent-physics`/`accent-chemistry`/`accent-geo`, та же логика роутинга).
+
+**`ProgressSnapshot` (Home) vs `ProgressDashboard` (Profile)** — сознательно разные срезы одних данных, не дубликат: Home — 4 числа (XP/лабораторных/точность/уровень), Profile — полная разбивка (подсказки/попытки/темы/достижения). По ходу рестайла `ProgressDashboard` (только токены+i18n, фетч-логика не тронута) найден и исправлен реальный баг: свежий профиль (все нули, но НЕ ошибка) показывал стену нулей вместо приветливого empty-state — добавлена та же проверка `completed_labs===0 && xp===0`, что уже была в `ProgressSnapshot`.
+
+**`RecentResults`** — до 5 последних `LabResult` (без выдуманных полей — `LabResult` не содержит `module`, поэтому список нейтрально стилизован, а не гадает акцент по названию). **`FocusNext`** — `weak_topics` с той же конструктивной формулировкой ("Стоит повторить"), что уже была в `ProgressDashboard` до D5.
+
+**Student Profile** (`app/(app)/profile/page.tsx`) — карточка личности (инициалы, имя, `shell.role.*`, email read-only, редактируемое имя, дата регистрации) на `Surface`, ниже — `ProgressDashboard`. **Контракт редактирования побайтово тот же**: `PATCH /api/users/{id}` → `refreshUser()`, та же disabled-логика, тот же fallback ошибки. Убран один избыточный вложенный `<ProtectedRoute>` (страница уже была двойно обёрнута ДО D4, `StandardAppShell` теперь и так стоит выше).
+
+**Loading/empty** — новый `components/design-system/Skeleton.tsx` (`animate-pulse`, `motion-reduce:animate-none`) вместо спиннеров/пустых экранов везде, где идёт реальный фетч.
+
+**RU/EN/TG** — новые namespace `dashboard`/`profile` во всех трёх словарях, та же типизация от `ru`.
+
+### Результаты проверок
+| Проверка | Результат |
+|---|---|
+| `npx tsc --noEmit` | **1 ошибка — в `GeoWorldScene.tsx` (чужая, параллельная GeoWorld-сессия сейчас правит G4/рельеф — `git status` подтверждает, файл не тронут этой частью)**. Весь остальной проект чист |
+| `npm run lint` | 0 ошибок, 0 предупреждений |
+| `npx vitest run` (полный) | **787/787 PASSED (89 файлов)** — было 730/82 до этой части (+13 моих тестов: dashboard — реальное имя/приветствие, все 3 мира без SimLab, Continue Learning empty/resume с реальной ссылкой, реальные числа прогресса vs честный empty для нового профиля, реальные результаты vs empty, конструктивная подача weak_topics, учительский fallback без студенческих виджетов; profile — реальная идентичность, отсутствие выдуманных достижений, точный контракт редактирования) |
+| dev-сервер | `/`, `/dashboard`, `/profile`, `/login` — 200, ошибок в HTML нет |
+
+### Честная оговорка
+Нет инструмента браузерной автоматизации — реальная визуальная приёмка (Desktop/Mobile × Light/Dark, "ощущение" хаба, читаемость skeleton-состояний) не проверена визуально, только SSR HTML + логика + typecheck/lint/тесты. Таджикский текст не проверен носителем (тот же открытый пункт с D2). Chemistry — единственный мир с настоящим cross-session resume; для Electricity/GeoWorld/SimLab это архитектурное ограничение backend, не недосмотр фронтенда.
+
+### Статус на конец продолжения №25
+**Design System V2 D5 — завершён.** `EDUMIND_DESIGN_SYSTEM_V2.md` обновлён (§31 — детали D5, route matrix, полная таблица аудита данных). D6 (SimulationShell) не начат — ждёт одобрения. `/teacher`, симуляции и вся домен-логика нигде в этой части не тронуты. GeoWorld-файлы параллельной сессии не тронуты ни строкой.
