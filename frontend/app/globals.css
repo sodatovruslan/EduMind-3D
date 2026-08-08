@@ -2,6 +2,33 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Shared-infrastructure fullscreen-overflow acceptance fix — applies to
+   EVERY page under app/(app) (Chemistry, Electricity, SimLab/Physics,
+   GeoWorld, dashboard — all of it), not just labs with a fullscreen button.
+   Root cause: <html> reserved NO space for the vertical scrollbar, so its
+   available width changed by the scrollbar's own width (~15-17px)
+   whenever the scrollbar appeared/disappeared. That toggle happens on
+   ANY viewport/content-height change — entering/exiting our own
+   `useFullscreen()`-driven fullscreen (the underlying page's real height
+   is not rendered while an element is fullscreen, so it commonly doesn't
+   need a scrollbar; the real, taller page reappears on exit and does),
+   and identically on the browser's OWN native fullscreen (F11), which is
+   why the bug reproduced even on SimLabScene.tsx — a page with ZERO
+   fullscreen code of its own. Percentage/flex-sized content laid out
+   against the wider "no scrollbar" width becomes too wide the instant
+   the scrollbar reappears, producing the observed horizontal scrollbar.
+   Reserving the gutter ALWAYS (whether or not a scrollbar is currently
+   needed) removes the width change entirely — this is not
+   `overflow-x: hidden` hiding real overflow, it prevents the width from
+   ever having a reason to overflow in the first place. `overflow-y:
+   scroll` is kept as a fallback for the (now rare) browser without
+   `scrollbar-gutter` support; normal vertical scrolling is unaffected —
+   it's still `scroll`, just never `hidden`. */
+html {
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+}
+
 body {
   @apply bg-surface-deep text-slate-100 font-sans;
 }
