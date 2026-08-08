@@ -5,7 +5,7 @@
 
 Обновляется по ходу работы.
 
-**Последнее обновление: 2026-08-04** (Stage S-7 v2 S7-V2.1..V2.13 & Chemistry World Critical Heating Bug Fixes полностью ЗАВЕРШЕНЫ).
+**Последнее обновление: 2026-08-08** (см. раздел "Обновление 2026-08-08 (продолжение №16...)" в конце файла — Electricity Lab WASD/E-взаимодействие/fullscreen + два бага Chemistry World fullscreen-scrollbar/stand-proximity).
 
 ---
 
@@ -1253,5 +1253,90 @@ Three.js-рефы, меши, hover/drag/состояние камеры — их
 
 ### Исправленный acceptance scope
 Пункт чеклиста S9.8 "Component interaction (drag/drop): N/A by design, not a gap" отозван и заменён: перетаскивание компонентов теперь реализовано и протестировано. Это НЕ переоткрывает и не изменяет коммиты S9.8 или S9.9 (по прямому указанию) — зафиксировано здесь как отдельная, более поздняя, пост-фриз корректировка acceptance scope, который эти чекпоинты уже подтвердили.
+
+Ничего не закоммичено в этой части до отдельного шага коммита ниже.
+
+---
+
+## Обновление 2026-08-08 (продолжение №16, финальный acceptance-проход перед GeoWorld) — Immersive interaction: Electricity Lab WASD/E + два бага Chemistry World
+
+### Задача чекпоинта
+Последний проход по качеству взаимодействия перед стартом GeoWorld. Две части: (A) поднять Electricity Lab до того же уровня иммерсивности, что и Chemistry World (fullscreen, WASD-локомоция от первого лица, "E — взять" по близости вместо перетаскивания только мышью), переиспользуя существующую инфраструктуру Chemistry, а не строя вторую; (B) два подтверждённых UX-бага Chemistry World — полосу прокрутки после выхода из fullscreen и слишком строгий порог появления подсказки "E — поставить" у штатива. Явное ограничение: НЕ редизайнить модули, НЕ переписывать физику/химию, GeoWorld не начинать.
+
+### Архитектурный аудит (сделан ПЕРЕД реализацией, по прямому указанию)
+Прочитаны реальные системы Chemistry World: `SandboxLocomotionController.tsx` + `sandbox-locomotion.ts` (WASD/мышиный обзор/кинематика — уже полностью общий код, живёт под `chemistry/`, но ничего специфичного для химии не содержит), `CanvasShell.tsx` (уже принимает `cameraMode`/`roomBounds`/`colliders`/`isFullscreen` и безусловно рендерит `SandboxLocomotionController` + `CameraModeController` — Electricity просто никогда не передавал эти пропсы), `SandboxModeOverlay.tsx` (полностью общий UI-оверлей переключения режима/fullscreen), `checkPlayerReach()` (простая, общая, дистанционная — НЕ требует точного угла обзора — проверка достижимости) и более сложная, Chemistry-специфичная `evaluateUnifiedInteraction()` (типизирована под `targetKind: "container"|"bottle"|"tool"|"cabinet"` — намеренно НЕ переиспользована и не расширена под Electricity, чтобы не связывать модуль с чужой типовой моделью и не рисковать поведением Chemistry). Вывод: `CanvasShell.tsx` не требовал изменений логики для WASD (только новый опциональный проп, см. ниже) — всё нужное уже было общим, не найдено ни одного места, где потребовалось бы дублировать код Chemistry.
+
+### Часть A — Electricity Lab: WASD + fullscreen + "E — взять"
+1. **Fullscreen** — переиспользован (не продублирован) хук `useFullscreen()`, вынесенный из Chemistry World в `frontend/lib/useFullscreen.ts`. `ElectricityLabScene.tsx` фуллскринит только обёртку канваса (тот же охват, что и у Chemistry — не всю страницу с панелями/AI-чатом).
+2. **WASD-локомоция** — `ElectricityCanvas` теперь передаёт `cameraMode`/`roomBounds={ELECTRICITY_ROOM_BOUNDS}`/`colliders={[]}` в `CanvasShell`; статичный прямоугольник `{minX:-6,maxX:6,minZ:-4,maxZ:4}` выбран вместо динамического реестра стен Chemistry — у верстака Electricity нет мебели/стен для регистрации, полноценный реестр был бы неоправданной сложностью.
+3. **Приоритет ввода (мышиный драг vs. клавиатурная переноска vs. WASD)** — добавлен новый **общий** (не Electricity-специфичный) проп `CanvasShell`'s `locomotionPaused?: boolean` (по умолчанию `false`, не меняет поведение Chemistry): `SandboxLocomotionController`'s `active` теперь `cameraMode==="sandbox" && !locomotionPaused`. Electricity передаёт `locomotionPaused={mouseDragActive}`, где `mouseDragActive` истинно только для МЫШИНОГО драга провода/компонента — клавиатурная переноска (E) намеренно НЕ ставит WASD на паузу, как и требовалось ("carry while walking").
+4. **"E — взять" по близости** — новый компонент `ElectricityProximityInteraction` (рендерится внутри `CircuitScene`, только когда `cameraMode==="sandbox"`) на каждом кадре ищет ближайший из 7 компонентов стенда через ГОТОВУЮ `checkPlayerReach(playerXZ, targetXZ, cameraMode, 1.8)` — чистая XZ-дистанция, без требования точного угла обзора, ровно как и просилось ("standing slightly left/right or at a small angle" должно показывать подсказку). Показывает HUD-подсказку "E — взять: {имя}" (тот же визуальный класс, что и у Chemistry's `InteractionPrompt`). Нажатие E вызывает `startDrag(id, position, "keyboard")` — **не** новую систему "предмет в руках", а ТУ ЖЕ машину состояний `ComponentDragProvider`, что уже обрабатывает мышиное перетаскивание; во время переноски `previewPosition` обновляется каждый кадр точкой перед камерой (`camera.getWorldDirection()`); повторный E коммитит через `commitDrag()`. Escape отменяет — уже работало глобально в `ComponentDragProvider`, без изменений.
+5. **`ComponentDragProvider.tsx`** получил `dragSource: "mouse"|"keyboard"`. Понадобилось, потому что уже существующий window-level `pointerup`-фолбэк (изначально сделан для восстановления зависшего МЫШИНОГО драга) иначе преждевременно коммитил бы клавиатурную переноску при отпускании ПКМ/СКМ, которыми в FPS-режиме управляют обзором (drag-to-look) — теперь фолбэк коммитит только `dragSource==="mouse"`; Escape остаётся источник-независимым.
+6. **Общие примитивы, вынесенные попутно** (по прямому указанию — переиспользовать, не дублировать): `isTypingTarget()` (было продублировано в 3 местах: `SandboxLocomotionController`, `SandboxModeOverlay`, `ChemistryInteractionProvider`) вынесен в `frontend/lib/dom-input-utils.ts`; все 3 места переключены на импорт. `useFullscreen()` вынесен из Chemistry World в `frontend/lib/useFullscreen.ts` (см. п.1).
+
+### Часть B — два бага Chemistry World
+1. **Баг: полоса прокрутки после выхода из fullscreen.** Корневая причина — ДВЕ независимые: (a) на обёртке fullscreen одновременно висели и `fixed inset-0` (сам по себе уже точно прижимает все 4 края к viewport), и избыточные `h-screen w-screen` (100vh/100vw — в части браузеров считаются ВКЛЮЧАЯ зарезервированное место под скроллбар, конфликтуя с боксом `inset-0`); убраны, оставлен только `fixed inset-0`. (b) гонка по времени CSS-transition: обёртка меняла fullscreen-классы МГНОВЕННО в одном рендере, а внутренний контейнер `CanvasShell.tsx` (за высотой/шириной которого следит `ResizeObserver` из `react-use-measure`, используемый R3F для канваса) имел `transition-all duration-300`, анимируя высоту/ширину 300мс против уже мгновенно изменившегося родителя. Исправлено на `transition-[border-radius,box-shadow] duration-300` — высота/ширина меняются мгновенно (без гонки), только косметические border-radius/shadow остаются анимированными.
+2. **Баг: подсказка "E — поставить" у штатива требует почти идеального выравнивания.** Корневая причина — в `isContainerOnStand()` (`ChemistryWorkspaceProvider.tsx`) был захардкожен буквальный порог `0.25`, при этом шестью строками выше была объявлена, но нигде не использована константа `STAND_PROXIMITY_RADIUS = 0.55` (мёртвый, забытый код) — `0.25` было меньше суммы собственных визуальных радиусов штатива (`0.28`) и колбы (`0.32`) из `FOOTPRINT_RADIUS_BY_KIND`, то есть визуально корректные, "явно предназначенные" размещения проваливали проверку. Исправлено подключением уже существовавшей, но не используемой константы.
+
+### Тесты (26 новых, 624/624 всего)
+- **`ComponentDragProvider.test.tsx`** (+4): клавиатурный захват не коммитится глобальным `pointerup`; Escape по-прежнему отменяет клавиатурный захват; `startDrag` без явного `source` по умолчанию `"mouse"` (обратная совместимость с существующими вызовами из `onPointerDown`).
+- **`frontend/lib/dom-input-utils.test.ts`** (новый, 4 теста): INPUT/TEXTAREA/SELECT/contentEditable → true; обычные элементы/`null`/не-`HTMLElement` → false.
+- **`frontend/lib/useFullscreen.test.ts`** (новый, 4 теста): `toggleFullscreen` вызывает `requestFullscreen`/`exitFullscreen` в зависимости от текущего состояния; `isFullscreen` следует за `fullscreenchange`; слушатель снимается при размонтировании.
+- **`ChemistryWorkspace.integration.test.tsx`** (+2): контейнер, поставленный с оффсетом 0.4м от центра штатива (был бы отклонён при старом пороге 0.25, проходит при исправленном 0.55) считается стоящим на штативе; контейнер, поставленный далеко (оффсет 2м), — нет.
+- Существующая `checkPlayerReach()` в `sandbox-locomotion.test.ts` (тесты №31-33, не изменялись) уже покрывает "forgiving proximity" на уровне переиспользуемого примитива — дистанция считается без учёта угла обзора камеры, то есть требование "не требовать точного прицеливания" выполняется самой природой функции, а не отдельной Electricity-специфичной проверкой.
+
+### Честная оговорка о том, что проверено, а что нет
+В сессии по-прежнему нет инструмента автоматизации браузера. Проверено: `tsc --noEmit` (0 ошибок), полный `vitest run` (624/624, 67 файлов), `npm run lint` (0/0), и компиляция dev-сервера — обе страницы (`/electricity_lab/[id]`, `/chemistry_world/[id]`) собрались без ошибок (2711 и 2825 модулей) и отдали HTTP 200 без оверлея ошибок. НЕ проверено ассистентом: реальное "ощущение" WASD-перемещения по масштабу верстака Electricity, плавность мышиного обзора в fullscreen, визуальное позиционирование HUD-подсказки "E — взять" относительно 3D-объектов, и оба чек-листа Chemistry/Electricity из технического задания — всё это требует реального браузера с WebGL и должно быть пройдено пользователем вручную (чек-лист приведён в ответе ассистента в этом же чекпоинте).
+
+### Результаты проверок
+| Проверка | Результат |
+|---|---|
+| `npx tsc --noEmit` | 0 ошибок |
+| `npx vitest run` (полный) | **624/624 PASSED (67 файлов)**, было 611/65 |
+| `npm run lint` | 0 ошибок, 0 предупреждений |
+| dev-сервер, `/electricity_lab/[id]` | скомпилирован (2711 модулей), HTTP 200, без оверлея ошибок |
+| dev-сервер, `/chemistry_world/[id]` | скомпилирован (2825 модулей), HTTP 200, без оверлея ошибок |
+| Ручная браузерная проверка обоих 14/9-шаговых чек-листов | выполняется пользователем (нет инструмента браузерной автоматизации в этой сессии) |
+
+### Файлы, изменённые/добавленные в этой части
+| Файл | Что изменено |
+|------|-------------|
+| `frontend/lib/dom-input-utils.ts` | новый файл — общий `isTypingTarget()`, вынесен из 3 дублей |
+| `frontend/lib/dom-input-utils.test.ts` | новый файл — 4 юнит-теста |
+| `frontend/lib/useFullscreen.ts` | новый файл — общий fullscreen-хук, вынесен из Chemistry World |
+| `frontend/lib/useFullscreen.test.ts` | новый файл — 4 юнит-теста |
+| `frontend/components/scenes/ChemistryWorldScene.tsx` | переключён на `useFullscreen()`; убраны избыточные `h-screen w-screen` из fullscreen-обёртки (баг B.1) |
+| `frontend/components/scenes/CanvasShell.tsx` | `transition-all` → `transition-[border-radius,box-shadow]` (баг B.1); новый опциональный проп `locomotionPaused?` (по умолчанию `false`, не меняет поведение существующих вызовов) |
+| `frontend/components/core/ChemistryWorkspaceProvider.tsx` | `isContainerOnStand()` использует уже существовавшую `STAND_PROXIMITY_RADIUS=0.55` вместо захардкоженной `0.25` (баг B.2) |
+| `frontend/components/chemistry/sandbox/SandboxModeOverlay.tsx` | локальный `isTypingTarget` заменён на общий импорт |
+| `frontend/components/chemistry/sandbox/SandboxLocomotionController.tsx` | локальный `isTypingTarget` удалён, заменён на общий импорт |
+| `frontend/components/core/ChemistryInteractionProvider.tsx` | локальный `isTypingTarget` удалён, заменён на общий импорт |
+| `frontend/components/core/ComponentDragProvider.tsx` | добавлено поле `dragSource: "mouse"\|"keyboard"`, window-`pointerup`-фолбэк теперь коммитит только мышиный драг |
+| `frontend/components/core/ComponentDragProvider.test.tsx` | +4 юнит-теста на `dragSource` |
+| `frontend/components/core/ChemistryWorkspace.integration.test.tsx` | +2 теста на расширенный порог `isContainerOnStand` |
+| `frontend/components/scenes/ElectricityLabScene.tsx` | fullscreen-обёртка + `SandboxModeOverlay`; `cameraMode`/`roomBounds`/`isFullscreen`/`locomotionPaused` прокинуты в `ElectricityCanvas`→`CanvasShell`; новый компонент `ElectricityProximityInteraction` (E-взаимодействие по близости) |
+
+### Manual browser acceptance checklist (для пользователя — обязательно, автотесты этого не заменяют)
+
+**Electricity Lab** (`/electricity_lab/[id]`):
+1. Войти в fullscreen — макет не скачет, скроллбаров нет, UI остаётся кликабельным.
+2. Переключиться в Sandbox-режим (кнопка в `SandboxModeOverlay`) и походить WASD.
+3. Подойти к батарее чуть сбоку/под углом (не идеально по центру) — должна появиться подсказка "E — взять: Battery".
+4. Нажать E — компонент "берётся" (превью следует за камерой).
+5. Переместиться и разместить/отпустить (повторный E).
+6. Походить снова — управление не залипает.
+7. Подключить провод.
+8. Подвинуть уже подключённый компонент — провод визуально следует за ним.
+9. Проверить Escape во время переноски (клавиатурной и мышиной) — отменяет без применения.
+10. Выйти из fullscreen — макет/скролл страницы в норме.
+11. Убедиться, что печать в поле AI-чата НЕ двигает игрока (WASD игнорируется во время фокуса на текстовом поле).
+12-14. Повторить для остальных 6 компонентов (резистор, лампа, переключатель, амперметр, вольтметр, предохранитель) хотя бы выборочно.
+
+**Chemistry World** (`/chemistry_world/[id]`):
+1. Войти в fullscreen, выйти — убедиться, что горизонтальной полосы прокрутки страницы больше нет.
+2. Взять контейнер/колбу.
+3. Поднести к штативу НЕ идеально точно (немного левее/правее/дальше, чем раньше срабатывало) — зелёная подсказка должна появляться заметно раньше/при более широком допуске, чем до фикса.
+4. Нажать E — подтвердить корректное размещение именно на штативе (не мимо).
+5. Повторить с нескольких углов/дистанций подхода.
 
 Ничего не закоммичено в этой части до отдельного шага коммита ниже.

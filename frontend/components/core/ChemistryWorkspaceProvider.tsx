@@ -111,12 +111,21 @@ const BURNER_HEATING_RATE_C_PER_SEC = 80;
 const BURNER_COOLING_RATE_C_PER_SEC = 18;
 const BURNER_MAX_TEMPERATURE_C = 350;
 
+// Manual-acceptance bug fix (confirmed too-strict prompt): this function
+// hardcoded 0.25 while STAND_PROXIMITY_RADIUS (0.55, declared above) was
+// declared but never referenced anywhere in the repo — a forgotten
+// constant. 0.25m is smaller than the sum of the stand's and a beaker's
+// own footprint radii (0.28 + 0.32, see FOOTPRINT_RADIUS_BY_KIND in
+// placement-surfaces.ts), so a container that visually looks placed next
+// to/on the stand could still fail this check. Wiring in the intended,
+// already-declared, footprint-appropriate radius fixes it at the root
+// (not a fallback/hack) — no new constant invented.
 export function isContainerOnStand(container: ContainerItem, tools: ToolItem[]): boolean {
   const stand = tools.find((t) => t.kind === "stand") ?? tools.find((t) => t.kind === "burner");
   if (!stand) return false;
   const dx = container.position[0] - stand.position[0];
   const dz = container.position[1] - stand.position[1];
-  return Math.sqrt(dx * dx + dz * dz) <= 0.25;
+  return Math.sqrt(dx * dx + dz * dz) <= STAND_PROXIMITY_RADIUS;
 }
 
 export interface ToolItem extends PortableItemSpatialState {

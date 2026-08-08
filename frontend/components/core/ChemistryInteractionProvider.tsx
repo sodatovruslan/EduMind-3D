@@ -9,6 +9,7 @@ import {
 } from "@/lib/interactables";
 import { getCabinet, type CabinetConfig } from "@/lib/cabinets";
 import { observationLogger } from "@/lib/observation-logger";
+import { isTypingTarget } from "@/lib/dom-input-utils";
 
 /**
  * Chemistry World — Interaction Core, Stage S-1 (Focus & Pickup) + Stage S-2
@@ -349,12 +350,6 @@ export function ChemistryInteractionProvider({
   }, []);
 
   useEffect(() => {
-    function isTypingTarget(target: EventTarget | null): boolean {
-      if (!(target instanceof HTMLElement)) return false;
-      const tag = target.tagName;
-      return tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable;
-    }
-
     function handleKeyDown(e: KeyboardEvent) {
       if (e.repeat) return;
       if (isTypingTarget(e.target)) return;

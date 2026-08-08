@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import { useFrame, type ThreeEvent } from "@react-three/fiber";
+import { useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { Html, QuadraticBezierLine, MeshTransmissionMaterial, useGLTF } from "@react-three/drei";
 import { Play, Pause, RotateCcw, AlertTriangle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -28,6 +28,11 @@ import ElectricityResumeModal from "@/components/lab/ElectricityResumeModal";
 import { COMPONENT_INFO } from "@/lib/component-info";
 import { useSimulationClock } from "@/lib/use-simulation-clock";
 import { useQuality, type QualityLevel } from "@/lib/quality-context";
+import { useFullscreen } from "@/lib/useFullscreen";
+import { isTypingTarget } from "@/lib/dom-input-utils";
+import { SandboxModeOverlay } from "@/components/chemistry/sandbox/SandboxModeOverlay";
+import { type CameraMode } from "@/lib/chemistry-lab-modes";
+import { checkPlayerReach, type RoomInteriorBounds } from "@/lib/sandbox-locomotion";
 import { buildAIContext } from "@/lib/ai-context-builder";
 import { solveCircuit, bulbBrightness, type CircuitComponent, type CircuitSolution, type Connection } from "@/lib/circuit-engine";
 import {
@@ -270,6 +275,19 @@ const DEFAULT_COMPONENT_POSITIONS: Record<string, [number, number, number]> = {
   voltmeter: [-1.5, 1.05, 0.9],
   fuse: [1.4, 0.28, -1.6],
 };
+
+// Immersive interaction acceptance fix — комната для WASD-перемещения
+// (Stage S-7 v2 CanvasShell cameraMode="sandbox", уже общая инфраструктура,
+// см. sandbox-locomotion.ts). Статичный прямоугольник с запасом вокруг
+// раскладки стенда по умолчанию — Electricity Lab не регистрирует стены
+// динамически, как Chemistry World, ей это не нужно: стенд компактнее и
+// не переставляется целиком, только отдельные приборы на нём.
+const ELECTRICITY_ROOM_BOUNDS: RoomInteriorBounds = { minX: -6, maxX: 6, minZ: -4, maxZ: 4 };
+
+// дистанция, с которой уже показывается подсказка "E — взять" — переиспользует
+// ту же самую функцию проверки (checkPlayerReach), что и Chemistry World,
+// не изобретает собственную математику расстояния
+const INTERACT_REACH_M = 1.8;
 
 // единая точка "откуда компонент знает свою текущую позицию на верстаке" —
 // committed-значение из ExperimentStateProvider (реальное доменное
@@ -864,14 +882,137 @@ function PendingWirePreview() {
   );
 }
 
+// какие компоненты стенда доступны через E-взаимодействие — те же 7,
+// что уже поддерживают перетаскивание мышью (см. useComponentPlacement)
+const INTERACTABLE_COMPONENT_IDS = ["battery", "resistor", "bulb", "switch", "ammeter", "voltmeter", "fuse"] as const;
+
+// Immersive interaction acceptance fix — FPS-режим ("E — взять") для тех
+// же 7 компонентов, что уже двигаются мышью в orbit-режиме. Переиспользует
+// ГОТОВУЮ, полностью общую checkPlayerReach (та же функция, что и Chemistry
+// World) вместо изобретения собственной математики дистанции, и ГОТОВУЮ
+// машину состояний ComponentDragProvider (startDrag/updatePreviewPosition/
+// commitDrag) вместо параллельной системы "предмет в руках" — как и
+// требовалось: "existing component-movement system handles repositioning".
+// Раздельно от WASD-контроллера (SandboxLocomotionController) — эта модель
+// отвечает только за подсказку/захват/переноску, не за движение камеры.
+function ElectricityProximityInteraction({ cameraMode }: { cameraMode: CameraMode }) {
+  const { camera } = useThree();
+  const { state } = useExperimentState();
+  const { draggingComponentId, dragSource, startDrag, updatePreviewPosition, commitDrag } = useComponentDrag();
+  const [nearestId, setNearestId] = useState<string | null>(null);
+  const nearestIdRef = useRef<string | null>(null);
+  const carryDistance = 1.1;
+
+  function resolvePosition(id: string): [number, number, number] {
+    return state.components.find((c) => c.id === id)?.position ?? DEFAULT_COMPONENT_POSITIONS[id] ?? [0, 0.28, 0];
+  }
+
+  useFrame(() => {
+    if (cameraMode !== "sandbox") {
+      if (nearestIdRef.current !== null) {
+        nearestIdRef.current = null;
+        setNearestId(null);
+      }
+      return;
+    }
+
+    // во время переноски по клавише E — обновлять live-превью позиции
+    // каждый кадр перед камерой (та же проекция взгляда, что и Chemistry
+    // World's held-rig), подсказка "взять" при этом не показывается
+    if (draggingComponentId && dragSource === "keyboard") {
+      const dir = camera.getWorldDirection(new THREE.Vector3());
+      const carryPoint = new THREE.Vector3(
+        camera.position.x + dir.x * carryDistance,
+        0,
+        camera.position.z + dir.z * carryDistance
+      );
+      updatePreviewPosition(carryPoint);
+      if (nearestIdRef.current !== null) {
+        nearestIdRef.current = null;
+        setNearestId(null);
+      }
+      return;
+    }
+
+    // мышиный драг (компонента или провода) активен — подсказка "E — взять"
+    // не должна мешать/конкурировать с уже идущим взаимодействием
+    if (draggingComponentId) {
+      if (nearestIdRef.current !== null) {
+        nearestIdRef.current = null;
+        setNearestId(null);
+      }
+      return;
+    }
+
+    const playerXZ: [number, number] = [camera.position.x, camera.position.z];
+    let closestId: string | null = null;
+    let closestDistance = Infinity;
+    for (const id of INTERACTABLE_COMPONENT_IDS) {
+      const pos = resolvePosition(id);
+      const check = checkPlayerReach(playerXZ, [pos[0], pos[2]], cameraMode, INTERACT_REACH_M);
+      if (check.allowed && check.distance < closestDistance) {
+        closestDistance = check.distance;
+        closestId = id;
+      }
+    }
+    if (closestId !== nearestIdRef.current) {
+      nearestIdRef.current = closestId;
+      setNearestId(closestId);
+    }
+  });
+
+  useEffect(() => {
+    if (cameraMode !== "sandbox") return;
+
+    function handleKeyDown(e: KeyboardEvent) {
+      if (isTypingTarget(e.target)) return;
+      if (e.code !== "KeyE" && e.key !== "e" && e.key !== "E") return;
+
+      if (draggingComponentId && dragSource === "keyboard") {
+        commitDrag();
+        return;
+      }
+      if (draggingComponentId) return; // мышиный драг — E ничего не делает
+      const id = nearestIdRef.current;
+      if (!id) return;
+      startDrag(id, resolvePosition(id), "keyboard");
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraMode, draggingComponentId, dragSource, startDrag, commitDrag]);
+
+  if (cameraMode !== "sandbox") return null;
+
+  const isCarrying = !!draggingComponentId && dragSource === "keyboard";
+  const promptText = isCarrying
+    ? "E — отпустить · Esc — отменить"
+    : nearestId
+      ? `E — взять: ${COMPONENT_INFO[nearestId]?.name ?? nearestId}`
+      : null;
+
+  if (!promptText) return null;
+
+  return (
+    <Html fullscreen style={{ pointerEvents: "none" }}>
+      <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md border border-white/10 bg-slate-900/85 px-3 py-1.5 text-xs text-slate-100">
+        {promptText}
+      </div>
+    </Html>
+  );
+}
+
 function CircuitScene({
   solution,
   timeScale,
   safetyWarnings,
+  cameraMode,
 }: {
   solution: CircuitSolution;
   timeScale: number;
   safetyWarnings: SafetyWarning[];
+  cameraMode: CameraMode;
 }) {
   const { state, updateComponent, logEvent } = useExperimentState();
   const shortLoggedRef = useRef(false);
@@ -976,6 +1117,7 @@ function CircuitScene({
       <PendingWirePreview />
       <WireDragSurface y={0.01} size={12} />
       <ComponentDragSurface y={0.011} size={12} />
+      <ElectricityProximityInteraction cameraMode={cameraMode} />
     </group>
   );
 }
@@ -990,14 +1132,22 @@ function ElectricityCanvas({
   solution,
   timeScale,
   safetyWarnings,
+  cameraMode,
+  isFullscreen,
 }: {
   quality: QualityLevel;
   solution: CircuitSolution;
   timeScale: number;
   safetyWarnings: SafetyWarning[];
+  cameraMode: CameraMode;
+  isFullscreen: boolean;
 }) {
   const { draggingFrom } = useWireDrag();
-  const { draggingComponentId } = useComponentDrag();
+  const { draggingComponentId, dragSource } = useComponentDrag();
+  // локомоция приостанавливается только пока МЫШЬЮ тянут провод/компонент —
+  // клавиатурная переноска (E) намеренно продолжает разрешать WASD-ходьбу
+  // с предметом в руках (см. dragSource в ComponentDragProvider)
+  const mouseDragActive = !!draggingFrom || (!!draggingComponentId && dragSource === "mouse");
   return (
     <CanvasShell
       cameraPosition={[3.4, 2.6, 7.4]}
@@ -1008,8 +1158,13 @@ function ElectricityCanvas({
       orbitEnabled={!draggingFrom && !draggingComponentId}
       minPolarAngle={Math.PI / 6}
       maxPolarAngle={Math.PI / 2.1}
+      cameraMode={cameraMode}
+      roomBounds={ELECTRICITY_ROOM_BOUNDS}
+      colliders={[]}
+      isFullscreen={isFullscreen}
+      locomotionPaused={mouseDragActive}
     >
-      <CircuitScene solution={solution} timeScale={timeScale} safetyWarnings={safetyWarnings} />
+      <CircuitScene solution={solution} timeScale={timeScale} safetyWarnings={safetyWarnings} cameraMode={cameraMode} />
     </CanvasShell>
   );
 }
@@ -1294,11 +1449,47 @@ function CompleteLabSection({
   );
 }
 
+// SandboxModeOverlay переиспользован из Chemistry World без изменений (см.
+// его полностью общий пропс-контракт); отдельный компонент-обёртка нужен
+// только затем, чтобы позвать useComponentDrag() — сам SandboxModeOverlay
+// рендерится ВНУТРИ ComponentDragProvider по дереву JSX, а не в теле
+// ElectricityLabInner (которое рендерит сам Provider как родитель).
+function ElectricitySandboxOverlay({
+  cameraMode,
+  setCameraMode,
+  isFullscreen,
+  toggleFullscreen,
+}: {
+  cameraMode: CameraMode;
+  setCameraMode: (updater: (mode: CameraMode) => CameraMode) => void;
+  isFullscreen: boolean;
+  toggleFullscreen: () => void;
+}) {
+  const { draggingComponentId } = useComponentDrag();
+  return (
+    <SandboxModeOverlay
+      cameraMode={cameraMode}
+      onToggleMode={() => setCameraMode((m) => (m === "orbit" ? "sandbox" : "orbit"))}
+      disabled={!!draggingComponentId}
+      disabledReason="Переключение режимов недоступно во время переноски компонента"
+      isFullscreen={isFullscreen}
+      onToggleFullscreen={toggleFullscreen}
+    />
+  );
+}
+
 function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
   const { state, addConnection, updateComponent, resetExperiment, actionsLog, logEvent } = useExperimentState();
   const { quality, setQuality } = useQuality();
   const clock = useSimulationClock();
   const mountedAtRef = useRef(Date.now());
+  // Immersive interaction acceptance fix — тот же паттерн fullscreen, что и
+  // у Chemistry World (переиспользован через useFullscreen, не переизобретён),
+  // и тот же переключаемый режим камеры CanvasShell уже поддерживал
+  // (cameraMode "orbit"|"sandbox") — просто не был подключён для Electricity.
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const { isFullscreen, toggleFullscreen } = useFullscreen(wrapperRef);
+  const [cameraMode, setCameraMode] = useState<CameraMode>("orbit");
 
   const battery = state.components.find((c) => c.id === "battery");
   const resistor = state.components.find((c) => c.id === "resistor");
@@ -1362,9 +1553,29 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
     <ComponentDragProvider onMove={handleComponentMove}>
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
     <div className="flex-1 rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">
-      <div className="relative">
+      <div
+        ref={wrapperRef}
+        className={
+          isFullscreen
+            ? "fixed inset-0 z-50 bg-slate-950 flex flex-col justify-center select-none"
+            : "relative"
+        }
+      >
+        <ElectricitySandboxOverlay
+          cameraMode={cameraMode}
+          setCameraMode={setCameraMode}
+          isFullscreen={isFullscreen}
+          toggleFullscreen={toggleFullscreen}
+        />
         <WireDragProvider onConnect={handleConnect}>
-          <ElectricityCanvas quality={quality} solution={solution} timeScale={clock.timeScale} safetyWarnings={safetyWarnings} />
+          <ElectricityCanvas
+            quality={quality}
+            solution={solution}
+            timeScale={clock.timeScale}
+            safetyWarnings={safetyWarnings}
+            cameraMode={cameraMode}
+            isFullscreen={isFullscreen}
+          />
         </WireDragProvider>
       </div>
 

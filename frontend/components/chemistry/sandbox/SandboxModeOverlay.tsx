@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import { Maximize, Minimize } from "lucide-react";
 import { CameraMode } from "@/lib/chemistry-lab-modes";
 import { RoomInteriorBounds } from "@/lib/sandbox-locomotion";
+import { isTypingTarget } from "@/lib/dom-input-utils";
 
 export interface WallDiagnosticsInfo {
   wallBoxes?: Record<string, { minX: number; maxX: number; minZ: number; maxZ: number; innerPlane: number }>;
@@ -48,13 +49,7 @@ export function SandboxModeOverlay({
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.code === "F2" && !e.repeat && !disabled) {
-        const target = e.target;
-        if (target instanceof HTMLElement) {
-          const tag = target.tagName;
-          if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable) {
-            return;
-          }
-        }
+        if (isTypingTarget(e.target)) return;
         e.preventDefault();
         onToggleMode();
       }

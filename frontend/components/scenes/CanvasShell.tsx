@@ -43,6 +43,10 @@ interface CanvasShellProps {
   colliders?: RegisteredCollider[];
   onPosUpdate?: (playerPos: [number, number], cameraXZ: [number, number]) => void;
   isFullscreen?: boolean;
+  // приостановить FPS-локомоцию, не переключая cameraMode целиком (нужно,
+  // например, пока идёт МЫШИНЫЙ драг компонента/провода в Electricity Lab —
+  // клавиатурный E-перенос при этом продолжает работать)
+  locomotionPaused?: boolean;
 }
 
 function CameraModeController({ cameraMode, orbitTarget }: { cameraMode: CameraMode; orbitTarget: [number, number, number] }) {
@@ -135,12 +139,22 @@ export default function CanvasShell({
   colliders,
   onPosUpdate,
   isFullscreen = false,
+  locomotionPaused = false,
 }: CanvasShellProps) {
   const preset = QUALITY_PRESETS[quality];
 
   return (
     <div
-      className={`relative w-full overflow-hidden transition-all duration-300 ${
+      // Manual-acceptance bug fix: this container's height is what the R3F
+      // canvas's own ResizeObserver watches. Animating height (`transition-
+      // all` included it) while the ANCESTOR wrapper (in ChemistryWorldScene)
+      // snaps its own fullscreen classes INSTANTLY in the same commit meant
+      // the document was resizing continuously for 300ms against a parent
+      // whose box had already changed shape — a real, verifiable source of a
+      // transient (sometimes sticky) scrollbar right after exiting
+      // fullscreen. Height/width now snap immediately; only the cosmetic
+      // border-radius/shadow still animate, which never affects layout.
+      className={`relative w-full overflow-hidden transition-[border-radius,box-shadow] duration-300 ${
         isFullscreen
           ? "h-full rounded-none border-none shadow-none"
           : "h-[34rem] rounded-2xl border border-white/10 shadow-2xl"
@@ -202,7 +216,7 @@ export default function CanvasShell({
 
         <CameraModeController cameraMode={cameraMode} orbitTarget={target} />
         <SandboxLocomotionController
-          active={cameraMode === "sandbox"}
+          active={cameraMode === "sandbox" && !locomotionPaused}
           roomBounds={roomBounds}
           colliders={colliders}
           onPosUpdate={onPosUpdate}

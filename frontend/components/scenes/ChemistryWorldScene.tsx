@@ -8,6 +8,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { AlertOctagon, Flame, Lock, RotateCcw, RotateCw, Unlock, Volume2, VolumeX } from "lucide-react";
 import CanvasShell from "@/components/scenes/CanvasShell";
 import { CameraMode } from "@/lib/chemistry-lab-modes";
+import { useFullscreen } from "@/lib/useFullscreen";
 import { SandboxModeOverlay } from "@/components/chemistry/sandbox/SandboxModeOverlay";
 import { RoomInteriorBounds, RegisteredCollider, checkPlayerReach, evaluateUnifiedInteraction, DynamicPlacementSurface } from "@/lib/sandbox-locomotion";
 import {
@@ -3007,38 +3008,22 @@ function ChemistryCanvas({
   const [cameraMode, setCameraMode] = useState<CameraMode>("orbit");
   const isInteractionActive = !!draggingId || !!heldId;
 
-  const [isFullscreen, setIsFullscreen] = useState(false);
-
-  useEffect(() => {
-    function handleFullscreenChange() {
-      setIsFullscreen(Boolean(document.fullscreenElement));
-    }
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
-    return () => {
-      document.removeEventListener("fullscreenchange", handleFullscreenChange);
-    };
-  }, []);
-
-  const handleToggleFullscreen = useCallback(() => {
-    if (!wrapperRef.current) return;
-    if (!document.fullscreenElement) {
-      wrapperRef.current.requestFullscreen?.().catch((err) => {
-        console.warn("Fullscreen request error:", err);
-      });
-    } else {
-      document.exitFullscreen?.().catch((err) => {
-        console.warn("Exit fullscreen error:", err);
-      });
-    }
-  }, []);
+  const { isFullscreen, toggleFullscreen: handleToggleFullscreen } = useFullscreen(wrapperRef);
 
   return (
     <SandboxReachContext.Provider value={{ cameraMode, playerXZ, obstacles: colliders, heldId }}>
       <div
         ref={wrapperRef}
         className={
+          // Manual-acceptance bug fix: `inset-0` alone already pins all four
+          // edges to the viewport exactly — the redundant `h-screen w-screen`
+          // (100vh/100vw) was measuring the LAYOUT viewport, which some
+          // browsers compute inclusive of the scrollbar-gutter reservation,
+          // conflicting with `inset-0`'s own (scrollbar-exclusive) box. Two
+          // different width sources on the same element was the first real
+          // contributor to the stray-scrollbar-on-exit bug.
           isFullscreen
-            ? "fixed inset-0 z-50 h-screen w-screen bg-slate-950 flex flex-col justify-center select-none"
+            ? "fixed inset-0 z-50 bg-slate-950 flex flex-col justify-center select-none"
             : "relative w-full"
         }
       >

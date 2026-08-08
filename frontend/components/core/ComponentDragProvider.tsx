@@ -32,10 +32,20 @@ const DRAG_MOVE_THRESHOLD = 0.05;
 // архитектурно недоступна, а не просто клампится)
 export const COMPONENT_DRAG_BOUNDS = { minX: -5, maxX: 5, minZ: -3, maxZ: 3 };
 
+// откуда пришёл текущий захват — мышь (тянем по плоскости стола, как в
+// S9.8) или клавиатура (E-взаимодействие, "несём" перед игроком в FPS-
+// режиме, см. ElectricityProximityInteraction в ElectricityLabScene.tsx).
+// Это не просто метаданные: генерик window-level pointerup fallback ниже
+// обязан коммитить ТОЛЬКО мышиный захват — иначе отпускание правой/средней
+// кнопки мыши для осмотра по сторонам (mouse-look, drag-to-look) во время
+// переноски по клавише E случайно завершало бы перенос раньше времени.
+export type ComponentDragSource = "mouse" | "keyboard";
+
 interface ComponentDragContextValue {
   draggingComponentId: string | null;
+  dragSource: ComponentDragSource | null;
   previewPosition: [number, number, number] | null;
-  startDrag: (componentId: string, currentPosition: [number, number, number]) => void;
+  startDrag: (componentId: string, currentPosition: [number, number, number], source?: ComponentDragSource) => void;
   updatePreviewPosition: (point: THREE.Vector3) => void;
   commitDrag: () => void;
   cancelDrag: () => void;
@@ -56,23 +66,30 @@ export function ComponentDragProvider({
   children: React.ReactNode;
 }) {
   const [draggingComponentId, setDraggingComponentId] = useState<string | null>(null);
+  const [dragSource, setDragSource] = useState<ComponentDragSource | null>(null);
   const [previewPosition, setPreviewPosition] = useState<[number, number, number] | null>(null);
 
   const draggingRef = useRef<string | null>(null);
+  const dragSourceRef = useRef<ComponentDragSource | null>(null);
   const startPositionRef = useRef<[number, number, number] | null>(null);
   const previewRef = useRef<[number, number, number] | null>(null);
   const fixedYRef = useRef(0);
   const justDraggedRef = useRef<Set<string>>(new Set());
 
-  const startDrag = useCallback((componentId: string, currentPosition: [number, number, number]) => {
-    draggingRef.current = componentId;
-    startPositionRef.current = currentPosition;
-    previewRef.current = currentPosition;
-    fixedYRef.current = currentPosition[1];
-    setDraggingComponentId(componentId);
-    setPreviewPosition(currentPosition);
-    document.body.style.cursor = "grabbing";
-  }, []);
+  const startDrag = useCallback(
+    (componentId: string, currentPosition: [number, number, number], source: ComponentDragSource = "mouse") => {
+      draggingRef.current = componentId;
+      dragSourceRef.current = source;
+      startPositionRef.current = currentPosition;
+      previewRef.current = currentPosition;
+      fixedYRef.current = currentPosition[1];
+      setDraggingComponentId(componentId);
+      setDragSource(source);
+      setPreviewPosition(currentPosition);
+      document.body.style.cursor = "grabbing";
+    },
+    []
+  );
 
   const updatePreviewPosition = useCallback((point: THREE.Vector3) => {
     if (!draggingRef.current) return;
@@ -90,9 +107,11 @@ export function ComponentDragProvider({
     const start = startPositionRef.current;
     const preview = previewRef.current;
     draggingRef.current = null;
+    dragSourceRef.current = null;
     startPositionRef.current = null;
     previewRef.current = null;
     setDraggingComponentId(null);
+    setDragSource(null);
     setPreviewPosition(null);
     document.body.style.cursor = "auto";
     if (!id || !preview) return;
@@ -105,9 +124,11 @@ export function ComponentDragProvider({
 
   const cancelDrag = useCallback(() => {
     draggingRef.current = null;
+    dragSourceRef.current = null;
     startPositionRef.current = null;
     previewRef.current = null;
     setDraggingComponentId(null);
+    setDragSource(null);
     setPreviewPosition(null);
     document.body.style.cursor = "auto";
   }, []);
@@ -127,7 +148,10 @@ export function ComponentDragProvider({
   // drag-and-drop; ТОЛЬКО Escape явно отменяет/возвращает исходную позицию.
   useEffect(() => {
     function handleWindowPointerUp() {
-      commitDrag();
+      // клавиатурный захват (E) коммитится ТОЛЬКО повторным E/Escape —
+      // иначе отпускание ПКМ/СКМ для осмотра по сторонам во время переноски
+      // случайно бросало бы предмет раньше времени
+      if (dragSourceRef.current === "mouse") commitDrag();
     }
     function handleWindowKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") cancelDrag();
@@ -141,8 +165,17 @@ export function ComponentDragProvider({
   }, [commitDrag, cancelDrag]);
 
   const value = useMemo<ComponentDragContextValue>(
-    () => ({ draggingComponentId, previewPosition, startDrag, updatePreviewPosition, commitDrag, cancelDrag, consumeJustDragged }),
-    [draggingComponentId, previewPosition, startDrag, updatePreviewPosition, commitDrag, cancelDrag, consumeJustDragged]
+    () => ({
+      draggingComponentId,
+      dragSource,
+      previewPosition,
+      startDrag,
+      updatePreviewPosition,
+      commitDrag,
+      cancelDrag,
+      consumeJustDragged,
+    }),
+    [draggingComponentId, dragSource, previewPosition, startDrag, updatePreviewPosition, commitDrag, cancelDrag, consumeJustDragged]
   );
 
   return <ComponentDragContext.Provider value={value}>{children}</ComponentDragContext.Provider>;
@@ -158,10 +191,11 @@ export function useComponentDrag(): ComponentDragContextValue {
 // отдельный экземпляр (не переиспользуем WireDragSurface напрямую), т.к.
 // это осознанно другая машина состояний с другим набором обработчиков
 export function ComponentDragSurface({ y = 0, size = 12 }: { y?: number; size?: number }) {
-  const { draggingComponentId, updatePreviewPosition, commitDrag } = useComponentDrag();
+  const { draggingComponentId, dragSource, updatePreviewPosition, commitDrag } = useComponentDrag();
+  const isMouseDrag = draggingComponentId !== null && dragSource === "mouse";
 
   function handlePointerMove(e: ThreeEvent<PointerEvent>) {
-    if (!draggingComponentId) return;
+    if (!isMouseDrag) return;
     updatePreviewPosition(e.point.clone());
   }
 
@@ -171,7 +205,7 @@ export function ComponentDragSurface({ y = 0, size = 12 }: { y?: number; size?: 
       rotation={[-Math.PI / 2, 0, 0]}
       onPointerMove={handlePointerMove}
       onPointerUp={() => {
-        if (draggingComponentId) commitDrag();
+        if (isMouseDrag) commitDrag();
       }}
       visible={false}
     >

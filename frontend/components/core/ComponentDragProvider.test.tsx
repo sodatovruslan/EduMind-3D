@@ -144,6 +144,45 @@ describe("ComponentDragProvider — восстановление (тот же п
     expect(result.current.draggingComponentId).toBeNull();
   });
 
+  it("клавиатурный захват (dragSource='keyboard') НЕ коммитится глобальным pointerup — иначе отпускание ПКМ/СКМ для осмотра по сторонам во время переноски по E случайно бросало бы предмет", () => {
+    const onMove = vi.fn();
+    const { result } = renderHook(() => useComponentDrag(), { wrapper: wrapperFor(onMove) });
+
+    act(() => result.current.startDrag("battery", [-3.2, 0.28, 0], "keyboard"));
+    act(() => result.current.updatePreviewPosition(new THREE.Vector3(2, 0, 2)));
+    act(() => {
+      window.dispatchEvent(new PointerEvent("pointerup"));
+    });
+
+    expect(onMove).not.toHaveBeenCalled();
+    expect(result.current.draggingComponentId).toBe("battery");
+    expect(result.current.dragSource).toBe("keyboard");
+  });
+
+  it("Escape по-прежнему отменяет клавиатурный захват (источник-независимая глобальная отмена)", () => {
+    const onMove = vi.fn();
+    const { result } = renderHook(() => useComponentDrag(), { wrapper: wrapperFor(onMove) });
+
+    act(() => result.current.startDrag("battery", [-3.2, 0.28, 0], "keyboard"));
+    act(() => result.current.updatePreviewPosition(new THREE.Vector3(2, 0, 2)));
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+
+    expect(onMove).not.toHaveBeenCalled();
+    expect(result.current.draggingComponentId).toBeNull();
+    expect(result.current.dragSource).toBeNull();
+  });
+
+  it("startDrag без явного source по умолчанию считается мышиным ('mouse') — обратная совместимость с существующими onPointerDown-вызовами", () => {
+    const onMove = vi.fn();
+    const { result } = renderHook(() => useComponentDrag(), { wrapper: wrapperFor(onMove) });
+
+    act(() => result.current.startDrag("battery", [-3.2, 0.28, 0]));
+
+    expect(result.current.dragSource).toBe("mouse");
+  });
+
   it("не оставляет обработчики зарегистрированными после размонтирования (нет утечки слушателей)", () => {
     const onMove = vi.fn();
     const addSpy = vi.spyOn(window, "addEventListener");
