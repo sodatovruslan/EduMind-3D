@@ -7,9 +7,12 @@ import { Line, Stars, useTexture } from "@react-three/drei";
 import { Layers } from "lucide-react";
 import CanvasShell from "@/components/scenes/CanvasShell";
 import GlobeControls from "@/components/geo/GlobeControls";
+import TileDebugLayer from "@/components/geo/TileDebugLayer";
+import type { TileEngineStats } from "@/lib/geo/tile-engine";
 import AIAssistantChat from "@/components/ai/AIAssistantChat";
 import { apiFetch, ApiError } from "@/lib/api";
 import type { Simulation } from "@/lib/types";
+import { latLngToVector3, vector3ToLatLng } from "@/lib/geo/coordinates";
 
 type LayerKey = "crust" | "mantle" | "outer_core" | "inner_core";
 
@@ -44,19 +47,6 @@ const CRUST_R = 1.0;
 const CLIMATE_THRESHOLD_C = 3.0;
 const PAMIR_LAT = 38.5;
 const PAMIR_LNG = 72.0;
-
-// координаты клика (lat/lng) переводятся в 3D-точку на поверхности сферы
-// той же формулой, что и обратное преобразование клика в EarthLayers —
-// см. handleClick ниже
-function latLngToVector3(latDeg: number, lngDeg: number, radius: number): THREE.Vector3 {
-  const latRad = (latDeg * Math.PI) / 180;
-  const phiPositive = ((lngDeg + 180) / 360) * Math.PI * 2;
-  const cosLat = Math.cos(latRad);
-  const y = Math.sin(latRad) * radius;
-  const x = -Math.cos(phiPositive) * cosLat * radius;
-  const z = Math.sin(phiPositive) * cosLat * radius;
-  return new THREE.Vector3(x, y, z);
-}
 
 // реальные спутниковые текстуры (NASA Blue Marble, обработка three.js
 // examples, public domain) — сохранены локально в public/textures,
@@ -293,11 +283,7 @@ function EarthLayers({ isCutaway, onSelectLayer, onSelectContinent, meltProgress
       // локальные координаты вращающейся группы, чтобы widget не зависел
       // от текущего угла вращения глобуса
       const local = groupRef.current ? groupRef.current.worldToLocal(e.point.clone()) : e.point.clone();
-      const v = local.normalize();
-      const lat = Math.asin(v.y) * (180 / Math.PI);
-      let phi = Math.atan2(v.z, -v.x);
-      if (phi < 0) phi += Math.PI * 2;
-      const lng = (phi / (Math.PI * 2)) * 360 - 180;
+      const { lat, lng } = vector3ToLatLng(local);
       schedulePending({ kind: "continent", lat, lng });
       return;
     }
@@ -410,6 +396,13 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
   const mountedAtRef = useRef(Date.now());
   const wasAboveThresholdRef = useRef(false);
 
+  // G2 — тайловый/LOD-движок: чисто отладочная визуализация (см.
+  // TileDebugLayer/GEOWORLD_ROADMAP.md), выключена по умолчанию, не
+  // production UI. Не показываем поверх разреза слоёв — там и так занята
+  // прозрачность коры для показа внутренних слоёв.
+  const [showTileDebug, setShowTileDebug] = useState(false);
+  const [tileDebugStats, setTileDebugStats] = useState<TileEngineStats | null>(null);
+
   async function handleSelectLayer(layer: LayerKey) {
     setError(null);
     setIsLoadingLayer(true);
@@ -516,19 +509,46 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
             meltProgress={Math.min(1, temperatureAnomaly / CLIMATE_THRESHOLD_C)}
             isSelTriggered={Boolean(climateResult?.triggered)}
           />
+          {showTileDebug && !isCutaway && <TileDebugLayer onStats={setTileDebugStats} />}
         </CanvasShell>
 
         <AIAssistantChat simulationId={simulation.id} sceneStateDescription={sceneStateDescription} />
+
+        {showTileDebug && tileDebugStats && (
+          <div
+            data-testid="tile-debug-stats"
+            className="pointer-events-none absolute bottom-3 left-3 rounded-lg border border-glass-border bg-surface-deep/80 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-slate-300 backdrop-blur"
+          >
+            <div>G2 Tile/LOD debug</div>
+            <div>Visible: {tileDebugStats.visibleCount}</div>
+            <div>Cached: {tileDebugStats.loadedCount}</div>
+            <div>Max LOD: {tileDebugStats.maxActiveLod}</div>
+          </div>
+        )}
       </div>
 
       <div className="glass-panel mt-4 grid grid-cols-1 gap-4 rounded-2xl p-4 sm:grid-cols-2">
-        <div className="sm:col-span-2">
+        <div className="sm:col-span-2 flex flex-wrap gap-2">
           <button
             onClick={() => setIsCutaway((prev) => !prev)}
             className="neon-glow-cyan flex items-center gap-2 rounded-full bg-neon-cyan px-4 py-2 text-sm font-medium text-surface-deep transition hover:brightness-110"
           >
             <Layers size={18} />
             {isCutaway ? "Скрыть разрез слоев" : "Показать разрез слоев"}
+          </button>
+
+          <button
+            onClick={() => setShowTileDebug((prev) => !prev)}
+            data-testid="tile-debug-toggle"
+            className={`flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition ${
+              showTileDebug
+                ? "border-neon-violet/60 bg-neon-violet/20 text-neon-violet"
+                : "border-glass-border text-slate-400 hover:text-slate-200"
+            }`}
+            title="G2: debug-визуализация тайлового/LOD-движка (заглушечные данные)"
+          >
+            <Layers size={18} />
+            {showTileDebug ? "Скрыть Tile/LOD debug" : "Показать Tile/LOD debug"}
           </button>
         </div>
 
