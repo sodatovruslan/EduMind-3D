@@ -143,4 +143,28 @@ export const ru = {
       genericError: "Не удалось зарегистрироваться. Попробуйте еще раз.",
     },
   },
+  shell: {
+    nav: {
+      home: "Главная",
+      teacherArea: "Ученики",
+    },
+    role: {
+      student: "Ученик",
+      teacher: "Учитель",
+      admin: "Администратор",
+    },
+    account: {
+      profile: "Профиль",
+      logout: "Выйти",
+      menuLabel: "Меню аккаунта",
+    },
+    rail: {
+      expand: "Развернуть навигацию",
+      collapse: "Свернуть навигацию",
+    },
+    mobile: {
+      openMenu: "Открыть меню",
+      closeMenu: "Закрыть меню",
+    },
+  },
 };

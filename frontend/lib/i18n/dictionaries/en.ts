@@ -145,4 +145,28 @@ export const en: typeof ru = {
       genericError: "Couldn't create your account. Please try again.",
     },
   },
+  shell: {
+    nav: {
+      home: "Home",
+      teacherArea: "Students",
+    },
+    role: {
+      student: "Student",
+      teacher: "Teacher",
+      admin: "Admin",
+    },
+    account: {
+      profile: "Profile",
+      logout: "Log out",
+      menuLabel: "Account menu",
+    },
+    rail: {
+      expand: "Expand navigation",
+      collapse: "Collapse navigation",
+    },
+    mobile: {
+      openMenu: "Open menu",
+      closeMenu: "Close menu",
+    },
+  },
 };

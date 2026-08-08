@@ -145,4 +145,28 @@ export const tg: typeof ru = {
       genericError: "Бақайдгирӣ ноком шуд. Аз нав кӯшиш кунед.",
     },
   },
+  shell: {
+    nav: {
+      home: "Асосӣ",
+      teacherArea: "Хонандагон",
+    },
+    role: {
+      student: "Хонанда",
+      teacher: "Муаллим",
+      admin: "Маъмур",
+    },
+    account: {
+      profile: "Профил",
+      logout: "Баромадан",
+      menuLabel: "Менюи ҳисоб",
+    },
+    rail: {
+      expand: "Кушодани навигатсия",
+      collapse: "Пӯшидани навигатсия",
+    },
+    mobile: {
+      openMenu: "Кушодани меню",
+      closeMenu: "Пӯшидани меню",
+    },
+  },
 };
