@@ -21,13 +21,13 @@ export default function RecentResults() {
   const visible = sorted?.slice(0, MAX_VISIBLE);
 
   return (
-    <section>
+    <section className="flex h-full flex-col">
       <h2 className="mb-3 text-ds-title text-text-primary">{t.dashboard.recentResults.title}</h2>
 
       {isLoading ? (
-        <Skeleton className="h-40 w-full" />
+        <Skeleton className="h-full min-h-[10rem] w-full" />
       ) : visible && visible.length > 0 ? (
-        <Surface elevated className="divide-y divide-border/[0.08]">
+        <Surface elevated className="flex-1 divide-y divide-border/[0.08]">
           {visible.map((result) => (
             <div key={result.id} className="flex items-center justify-between gap-4 p-4">
               <div className="min-w-0">
@@ -47,7 +47,9 @@ export default function RecentResults() {
           ))}
         </Surface>
       ) : (
-        <Surface className="p-4 text-ds-body text-text-muted">{t.dashboard.recentResults.empty}</Surface>
+        <Surface className="flex flex-1 items-center justify-center p-6 text-center text-ds-body text-text-muted">
+          {t.dashboard.recentResults.empty}
+        </Surface>
       )}
     </section>
   );

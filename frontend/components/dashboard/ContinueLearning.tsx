@@ -9,24 +9,23 @@ import type { Simulation } from "@/lib/types";
 import { ButtonLink, Skeleton, Surface } from "@/components/design-system";
 
 /**
- * D5 — "Continue Learning". Honest, in priority order (see
+ * D5.1 — "Continue Learning". Same D5 priority logic (KEPT — see
  * EDUMIND_DESIGN_SYSTEM_V2.md D5 notes for the full audit trail):
  *
- * 1. A real *active* Chemistry World save (`GET /api/chemistry/saves`,
- *    status === "active") — the only module with server-side resumable
- *    state. Framed as "unfinished experiment", links straight back in.
- * 2. Otherwise `LearningProfile.last_completed_lab` (a real simulation_id)
- *    — framed as "recent work", NOT as an unfinished/resumable state,
- *    since it's a completed lab.
- * 3. Otherwise an honest empty state. No fabricated "last lesson".
+ * 1. A real *active* Chemistry World save — the only module with
+ *    server-side resumable state. Framed as "unfinished experiment", now
+ *    also shows the real `updated_at` as "Saved: {date}" (the only
+ *    real progress signal a save actually carries — no fabricated %).
+ * 2. Otherwise `LearningProfile.last_completed_lab` — framed as "recent
+ *    work", not resumable.
+ * 3. Otherwise an honest, visually designed empty state.
  *
- * Electricity Lab/GeoWorld/SimLab have no cross-session resume source
- * reachable from the dashboard (confirmed — no equivalent backend route),
- * so they can only ever appear here via the (2) fallback, never as a true
- * "resume".
+ * Visually reworked to be the dominant half of a 2-column row with
+ * ProgressSnapshot (see dashboard/page.tsx) instead of a thin full-width
+ * strip — larger icon, more padding, real "last saved" context line.
  */
 export default function ContinueLearning({ simulations }: { simulations: Simulation[] | undefined }) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const { data: saves, isLoading: savesLoading } = useSWR("chemistry-saves-me", getMyChemistrySaves);
   const { data: progress, isLoading: progressLoading } = useSWR("progress-me", getMyProgress);
 
@@ -34,9 +33,9 @@ export default function ContinueLearning({ simulations }: { simulations: Simulat
 
   if (isLoading) {
     return (
-      <section>
+      <section className="flex h-full flex-col">
         <h2 className="mb-3 text-ds-title text-text-primary">{t.dashboard.continueLearning.title}</h2>
-        <Skeleton className="h-24 w-full" />
+        <Skeleton className="h-full min-h-[12rem] w-full" />
       </section>
     );
   }
@@ -52,29 +51,36 @@ export default function ContinueLearning({ simulations }: { simulations: Simulat
   const target = activeSaveSimulation ?? recentSimulation;
 
   return (
-    <section>
+    <section className="flex h-full flex-col">
       <h2 className="mb-3 text-ds-title text-text-primary">{t.dashboard.continueLearning.title}</h2>
 
       {target ? (
-        <Surface elevated className="flex flex-col items-start gap-3 p-6 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3">
-            <PlayCircle size={28} className="shrink-0 text-accent" />
-            <div>
+        <Surface elevated className="flex flex-1 flex-col justify-between gap-6 p-6 sm:p-8">
+          <div className="flex items-start gap-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent">
+              <PlayCircle size={26} />
+            </div>
+            <div className="min-w-0">
               <p className="text-ds-caption font-semibold uppercase tracking-widest text-text-muted">
                 {activeSaveSimulation ? t.dashboard.continueLearning.unfinishedLabel : t.dashboard.continueLearning.recentLabel}
               </p>
-              <p className="text-ds-body font-medium text-text-primary">{target.title}</p>
+              <p className="mt-1 text-ds-title text-text-primary">{target.title}</p>
+              {activeSave && activeSaveSimulation && (
+                <p className="mt-1 text-ds-caption text-text-muted">
+                  {t.dashboard.continueLearning.lastSavedLabel}: {new Date(activeSave.updated_at).toLocaleDateString(locale)}
+                </p>
+              )}
             </div>
           </div>
-          <ButtonLink href={`/${target.module}/${target.id}`} variant="primary" className="w-full sm:w-auto">
+          <ButtonLink href={`/${target.module}/${target.id}`} variant="primary" className="w-full sm:w-auto sm:self-start">
             {activeSaveSimulation ? t.dashboard.continueLearning.resumeCta : t.dashboard.continueLearning.recentCta}
             <ArrowRight size={16} />
           </ButtonLink>
         </Surface>
       ) : (
-        <Surface className="p-6 text-center">
-          <p className="text-ds-body font-medium text-text-primary">{t.dashboard.continueLearning.emptyTitle}</p>
-          <p className="mt-1 text-ds-body text-text-secondary">{t.dashboard.continueLearning.emptyBody}</p>
+        <Surface className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
+          <p className="text-ds-title text-text-primary">{t.dashboard.continueLearning.emptyTitle}</p>
+          <p className="text-ds-body text-text-secondary">{t.dashboard.continueLearning.emptyBody}</p>
         </Surface>
       )}
     </section>

@@ -9,9 +9,19 @@ import { ru } from "@/lib/i18n/dictionaries/ru";
 import type { User, Simulation } from "@/lib/types";
 import type { LearningProfile, ProgressHistory } from "@/lib/progress-client";
 
-// jsdom-стаб IntersectionObserver не нужен здесь (dashboard не использует
-// framer-motion whileInView), но next/link + real Link click в WorldSection
-// не кликается в этих тестах — только assert на href/текст.
+// D5.1 — WorldSection теперь использует framer-motion `whileInView`
+// (портал-карточки миров) — jsdom не реализует IntersectionObserver,
+// нужен тот же минимальный стаб, что и в app/page.test.tsx (D2).
+class IntersectionObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+  takeRecords(): IntersectionObserverEntry[] {
+    return [];
+  }
+}
+// @ts-expect-error — минимальный тестовый стаб, не полная реализация DOM-интерфейса
+global.IntersectionObserver = IntersectionObserverStub;
 
 let mockUser: User | null = { id: "u1", email: "s@b.com", full_name: "Айгуль Сатпаева", role: "student", created_at: "2026-01-01" };
 vi.mock("@/lib/auth-context", () => ({
@@ -29,8 +39,9 @@ const SIMULATIONS: Simulation[] = [
   { id: "sim-geo", title: "Строение Земли", module: "geo3d", visibility: "public", subject: "География", config: {}, difficulty: 1, created_at: "2026-01-01" },
 ];
 
+let mockSimulations: Simulation[] = SIMULATIONS;
 vi.mock("@/lib/swr-fetcher", () => ({
-  swrFetcher: vi.fn(() => Promise.resolve(SIMULATIONS)),
+  swrFetcher: vi.fn(() => Promise.resolve(mockSimulations)),
 }));
 
 const EMPTY_PROFILE: LearningProfile = {
@@ -83,6 +94,7 @@ describe("DashboardPage — D5 Student Home", () => {
     mockProgress = { profile: EMPTY_PROFILE, events: [] };
     mockResults = [];
     mockSaves = [];
+    mockSimulations = SIMULATIONS;
   });
 
   afterEach(() => {
@@ -186,5 +198,49 @@ describe("DashboardPage — D5 Student Home", () => {
     expect(screen.queryByText(ru.dashboard.recentResults.title)).toBeNull();
     // но реальные миры для просмотра всё ещё показываются
     expect(await screen.findByText("Простая цепь")).toBeDefined();
+  });
+
+  it("D5.1: does not render the old developer-facing explanatory copy on the teacher fallback", async () => {
+    mockUser = { id: "u2", email: "t@b.com", full_name: "Марат Ержанов", role: "teacher", created_at: "2026-01-01" };
+    renderDashboard();
+
+    await screen.findByText(ru.dashboard.teacherFallback.title);
+    expect(screen.queryByText(ru.dashboard.teacherFallback.subtitle)).toBeNull();
+  });
+
+  it("D5.1: shows an honest 'coming soon' portal state for a world with zero real simulations", async () => {
+    mockSimulations = SIMULATIONS.filter((s) => s.module !== "geo3d");
+    renderDashboard();
+
+    const comingSoonButtons = await screen.findAllByText(ru.dashboard.worlds.comingSoon);
+    expect(comingSoonButtons.length).toBeGreaterThan(0);
+    expect(screen.queryByText("Строение Земли")).toBeNull();
+    // остальные два мира по-прежнему показывают реальные симуляции
+    expect(screen.getByText("Простая цепь")).toBeDefined();
+    expect(screen.getByText("Нейтрализация")).toBeDefined();
+  });
+
+  it("D5.1: shows the real last-saved date for an active Chemistry save, not a fabricated progress percentage", async () => {
+    mockSaves = [
+      {
+        id: "save-1",
+        user_id: "u1",
+        simulation_id: "sim-chem",
+        experiment_id: "exp-1",
+        schema_version: "1.0",
+        revision: 3,
+        status: "active",
+        idempotency_key: null,
+        snapshot: {} as never,
+        created_at: "2026-02-01",
+        updated_at: "2026-02-05",
+        last_autosaved_at: "2026-02-05",
+      },
+    ];
+    renderDashboard();
+
+    const label = await screen.findByText(new RegExp(`^${ru.dashboard.continueLearning.lastSavedLabel}:`));
+    expect(label.textContent).toContain(new Date("2026-02-05").toLocaleDateString("ru"));
+    expect(screen.queryByText(/%$/)).toBeNull();
   });
 });

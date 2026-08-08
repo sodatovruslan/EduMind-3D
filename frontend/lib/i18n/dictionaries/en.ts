@@ -162,6 +162,7 @@ export const en: typeof ru = {
       recentCta: "Open again",
       emptyTitle: "No lessons yet",
       emptyBody: "Choose a world below to start your first experiment.",
+      lastSavedLabel: "Saved",
     },
     worlds: {
       title: "Explore the worlds",
@@ -169,6 +170,8 @@ export const en: typeof ru = {
       empty: "No simulations available in this world yet.",
       enterCta: "Enter",
       difficultyLabel: "Difficulty",
+      availableLabel: "Available",
+      comingSoon: "Coming soon",
     },
     progress: {
       title: "Progress",

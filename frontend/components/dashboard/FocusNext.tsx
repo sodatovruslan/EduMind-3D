@@ -17,19 +17,21 @@ export default function FocusNext() {
   const weakTopics = progress?.profile.weak_topics ?? [];
 
   return (
-    <section>
+    <section className="flex h-full flex-col">
       <h2 className="text-ds-title text-text-primary">{t.dashboard.focusNext.title}</h2>
       <p className="mt-1 text-ds-body text-text-secondary">{t.dashboard.focusNext.subtitle}</p>
 
-      <div className="mt-3">
+      <div className="mt-3 flex-1">
         {isLoading ? (
-          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-full min-h-[10rem] w-full" />
         ) : weakTopics.length > 0 ? (
-          <Surface elevated className="border-warning/30 p-4 text-ds-body text-text-primary">
+          <Surface elevated className="h-full border-warning/30 p-6 text-ds-body text-text-primary">
             {weakTopics.join(", ")}
           </Surface>
         ) : (
-          <Surface className="p-4 text-ds-body text-text-muted">{t.dashboard.focusNext.empty}</Surface>
+          <Surface className="flex h-full min-h-[10rem] items-center justify-center p-6 text-center text-ds-body text-text-muted">
+            {t.dashboard.focusNext.empty}
+          </Surface>
         )}
       </div>
     </section>

@@ -162,6 +162,7 @@ export const tg: typeof ru = {
       recentCta: "Аз нав кушодан",
       emptyTitle: "Ҳанӯз дарсе нест",
       emptyBody: "Барои оғози аввалин таҷриба ҷаҳонеро аз поён интихоб кун.",
+      lastSavedLabel: "Захира шуд",
     },
     worlds: {
       title: "Ҷаҳонҳоро омӯз",
@@ -169,6 +170,8 @@ export const tg: typeof ru = {
       empty: "Дар ин ҷаҳон ҳанӯз симулятсия дастрас нест.",
       enterCta: "Ворид шудан",
       difficultyLabel: "Мураккабӣ",
+      availableLabel: "Дастрас",
+      comingSoon: "Ба зудӣ",
     },
     progress: {
       title: "Пешрафт",

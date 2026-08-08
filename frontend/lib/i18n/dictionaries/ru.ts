@@ -160,6 +160,7 @@ export const ru = {
       recentCta: "Открыть снова",
       emptyTitle: "Пока нет уроков",
       emptyBody: "Выбери мир ниже, чтобы начать первый эксперимент.",
+      lastSavedLabel: "Сохранено",
     },
     worlds: {
       title: "Исследуй миры",
@@ -167,6 +168,8 @@ export const ru = {
       empty: "Пока нет доступных симуляций в этом мире.",
       enterCta: "Войти",
       difficultyLabel: "Сложность",
+      availableLabel: "Доступно",
+      comingSoon: "Скоро",
     },
     progress: {
       title: "Прогресс",
