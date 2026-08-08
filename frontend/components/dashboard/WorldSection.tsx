@@ -93,8 +93,15 @@ export default function WorldSection({ simulations, isLoading }: { simulations: 
 
   return (
     <section id="worlds">
-      <h2 className="text-ds-title text-text-primary">{t.dashboard.worlds.title}</h2>
-      <p className="mt-1 text-ds-body text-text-secondary">{t.dashboard.worlds.subtitle}</p>
+      {/* D5.2 — this section's header is deliberately centered (unlike the
+          other section headings on this page) to give "Explore the Worlds"
+          the centerpiece weight the brief asks for; card content below
+          stays left-aligned for readability, per the same brief's explicit
+          warning against blindly centering every piece of text. */}
+      <div className="mx-auto max-w-2xl text-center">
+        <h2 className="text-ds-title text-text-primary">{t.dashboard.worlds.title}</h2>
+        <p className="mt-1 text-ds-body text-text-secondary">{t.dashboard.worlds.subtitle}</p>
+      </div>
 
       <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-3">
         {LANDING_WORLDS.map((world, index) => (

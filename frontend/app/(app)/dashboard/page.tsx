@@ -22,6 +22,16 @@ import FocusNext from "@/components/dashboard/FocusNext";
  * (Continue Learning + Progress side by side) → Worlds (3 big portals,
  * full width) → (Recent Results + Focus Next side by side).
  *
+ * D5.2 — the content column here (inside StandardAppShell's `<main>`, which
+ * spans the FULL remaining viewport width after the Rail) previously had a
+ * `max-width` with no `mx-auto`, so on wide desktops it sat flush against
+ * the left edge of that column instead of being centered within it — the
+ * root cause of the "left-heavy" composition. `mx-auto` centers it; the
+ * cap moved from `max-w-7xl` (1280px) to `max-w-[90rem]` (1440px) so the
+ * composition reads as a wide command center rather than a narrow column
+ * with large side margins on very wide (1600–1920px) displays, without
+ * stretching individual cards to absurd widths (see D5.2 notes).
+ *
  * Teacher/admin visiting `/dashboard` (Rail's "Home" is role-agnostic)
  * still get a minimal world-browse fallback instead of fabricated student
  * widgets — but the D5 explanatory dev-copy about which panel teachers
@@ -38,7 +48,7 @@ export default function DashboardPage() {
 
   if (!isStudent) {
     return (
-      <div className="max-w-7xl space-y-8">
+      <div className="mx-auto max-w-[90rem] space-y-8">
         <h1 className="text-ds-title text-text-primary">{t.dashboard.teacherFallback.title}</h1>
         <WorldSection simulations={simulations} isLoading={isLoading} />
       </div>
@@ -47,7 +57,7 @@ export default function DashboardPage() {
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="max-w-7xl space-y-10">
+      <div className="mx-auto max-w-[90rem] space-y-10">
         <Hero />
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[2fr_1fr]">
