@@ -71,3 +71,76 @@ body {
 .ai-assistant-pulse {
   animation: pulse-glow 3s infinite ease-in-out;
 }
+
+/* ============================================================
+   Design System V2 (EDUMIND_DESIGN_SYSTEM_V2.md §25-27) — semantic,
+   theme-aware tokens as CSS custom properties. Additive only: nothing
+   above this block is touched, so every existing page (all of which
+   render only with hardcoded surface-deep/brand/neon-* classes, never
+   with a `.dark` class present) keeps rendering byte-identically.
+   Only components/design-system/* and the D1 visual-proof page consume
+   these tokens. Values are "R G B" triples (no `rgb()` wrapper) so
+   Tailwind's `rgb(var(--x) / <alpha-value>)` color pattern can apply
+   per-utility opacity (see tailwind.config.ts).
+   ============================================================ */
+:root {
+  --ds-background: 250 250 249;
+  --ds-surface: 255 255 255;
+  --ds-surface-elevated: 255 255 255;
+  --ds-text-primary: 15 23 42;
+  --ds-text-secondary: 71 85 105;
+  --ds-text-muted: 148 163 184;
+  --ds-border: 15 23 42;
+  --ds-accent: 99 102 241;
+  --ds-success: 16 185 129;
+  --ds-warning: 217 119 6;
+  --ds-danger: 220 38 38;
+  --ds-accent-physics: 99 102 241;
+  --ds-accent-chemistry: 5 150 105;
+  --ds-accent-geo: 8 145 178;
+  --ds-shadow: 15 23 42;
+  --ds-glass-bg-alpha: 0.72;
+  --ds-glass-border-alpha: 0.08;
+}
+
+:root.dark {
+  /* graphite/charcoal, deliberately NOT the legacy navy surface-deep
+     (#020617 = 2 6 23) — see §3/§25: neutral dark, accent carries color */
+  --ds-background: 9 11 15;
+  --ds-surface: 17 20 26;
+  --ds-surface-elevated: 26 30 38;
+  --ds-text-primary: 245 246 248;
+  --ds-text-secondary: 165 173 190;
+  --ds-text-muted: 110 118 135;
+  --ds-border: 255 255 255;
+  --ds-accent: 129 140 248;
+  --ds-success: 52 211 153;
+  --ds-warning: 251 191 36;
+  --ds-danger: 248 113 113;
+  --ds-accent-physics: 129 140 248;
+  --ds-accent-chemistry: 52 211 153;
+  --ds-accent-geo: 34 211 238;
+  --ds-shadow: 0 0 0;
+  --ds-glass-bg-alpha: 0.6;
+  --ds-glass-border-alpha: 0.1;
+}
+
+@layer components {
+  /* Intelligent glassmorphism (§26): floating chrome only, never dense
+     text/data surfaces — see Surface for the solid counterpart. */
+  .ds-glass {
+    background: rgb(var(--ds-surface) / var(--ds-glass-bg-alpha));
+    backdrop-filter: blur(16px);
+    border: 1px solid rgb(var(--ds-border) / var(--ds-glass-border-alpha));
+  }
+
+  .ds-focus-ring {
+    outline: none;
+  }
+
+  .ds-focus-ring:focus-visible {
+    box-shadow:
+      0 0 0 2px rgb(var(--ds-background)),
+      0 0 0 4px rgb(var(--ds-accent) / 0.6);
+  }
+}
