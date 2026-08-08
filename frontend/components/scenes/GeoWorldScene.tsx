@@ -6,6 +6,7 @@ import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import { Line, Stars, useTexture } from "@react-three/drei";
 import { Layers } from "lucide-react";
 import CanvasShell from "@/components/scenes/CanvasShell";
+import GlobeControls from "@/components/geo/GlobeControls";
 import AIAssistantChat from "@/components/ai/AIAssistantChat";
 import { apiFetch, ApiError } from "@/lib/api";
 import type { Simulation } from "@/lib/types";
@@ -229,7 +230,9 @@ function EarthLayers({ isCutaway, onSelectLayer, onSelectContinent, meltProgress
   const { colorMap, normalMap, cloudsMap } = useEarthTextures();
 
   useFrame((_, delta) => {
-    if (!isCutaway && groupRef.current) groupRef.current.rotation.y += delta * 0.1;
+    // Globe group auto-rotation disabled — GlobeControls gives the user
+    // direct camera orbit, and spinning the group under the camera makes
+    // the surface drift mid-interaction. Clouds still spin independently.
     if (cloudsRef.current) cloudsRef.current.rotation.y += delta * (isCutaway ? 0 : 0.16);
 
     const lerpFactor = Math.min(1, delta * 2.5);
@@ -502,8 +505,10 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
           backgroundTop="#1b1140"
           backgroundBottom="#020208"
           bloomIntensity={0.7}
+          orbitEnabled={false}
         >
           <Stars radius={50} depth={30} count={1200} factor={2.5} fade speed={0.4} />
+          <GlobeControls />
           <EarthLayers
             isCutaway={isCutaway}
             onSelectLayer={handleSelectLayer}
