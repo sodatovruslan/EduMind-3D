@@ -8,7 +8,10 @@ import { Layers } from "lucide-react";
 import CanvasShell from "@/components/scenes/CanvasShell";
 import GlobeControls from "@/components/geo/GlobeControls";
 import RealEarthTileLayer from "@/components/geo/RealEarthTileLayer";
+import CountryBordersLayer from "@/components/geo/CountryBordersLayer";
+import CityLabelsLayer from "@/components/geo/CityLabelsLayer";
 import TileDebugLayer from "@/components/geo/TileDebugLayer";
+import { NATURAL_EARTH_ATTRIBUTION } from "@/lib/geo/providers/natural-earth";
 import type { SelectedTile } from "@/lib/geo/tile-lod";
 import type { TileEngineStats } from "@/lib/geo/tile-engine";
 import { GIBS_ATTRIBUTION } from "@/lib/geo/providers/gibs-provider";
@@ -424,6 +427,11 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
     setTerrainStats(stats);
   }, []);
 
+  // G5 — границы стран/подписи городов (Natural Earth). Включены по
+  // умолчанию — это, как и снимки/рельеф, основная возможность, а не
+  // debug-инструмент; выключаются отдельным тоглом, как и остальное.
+  const [showBordersAndLabels, setShowBordersAndLabels] = useState(true);
+
   async function handleSelectLayer(layer: LayerKey) {
     setError(null);
     setIsLoadingLayer(true);
@@ -538,20 +546,29 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
           {!isCutaway && (
             <RealEarthTileLayer onFrame={handleTileFrame} onTerrainFrame={handleTerrainFrame} exaggeration={exaggeration} />
           )}
+          {/* G5: границы стран + подписи городов (Natural Earth) — не тайловая
+              квадротрёх, свой собственный LOD по дистанции камеры (см.
+              lib/geo/geo-vector-lod.ts). */}
+          {!isCutaway && showBordersAndLabels && (
+            <>
+              <CountryBordersLayer />
+              <CityLabelsLayer />
+            </>
+          )}
           {showTileDebug && !isCutaway && tileFrame && <TileDebugLayer tiles={tileFrame.rendered} />}
         </CanvasShell>
 
         <AIAssistantChat simulationId={simulation.id} sceneStateDescription={sceneStateDescription} />
 
-        {/* Атрибуция NASA GIBS + AWS Terrain Tiles — постоянно видима, не
-            прячется за debug-тоггл (см. GEOWORLD_ROADMAP.md, раздел G3/G4
-            "Атрибуция"). */}
+        {/* Атрибуция NASA GIBS + AWS Terrain Tiles + Natural Earth —
+            постоянно видима, не прячется за debug-тоггл (см.
+            GEOWORLD_ROADMAP.md, разделы G3/G4/G5 "Атрибуция"). */}
         <div
           data-testid="gibs-attribution"
-          title={`${GIBS_ATTRIBUTION}\n\n${TERRARIUM_ATTRIBUTION}`}
+          title={`${GIBS_ATTRIBUTION}\n\n${TERRARIUM_ATTRIBUTION}\n\n${NATURAL_EARTH_ATTRIBUTION}`}
           className="pointer-events-none absolute bottom-2 right-2 max-w-[70%] truncate rounded bg-surface-deep/70 px-2 py-1 text-[10px] text-slate-400 backdrop-blur"
         >
-          Imagery: NASA GIBS / BlueMarble (EOSDIS) · Terrain: AWS Open Data
+          Imagery: NASA GIBS / BlueMarble (EOSDIS) · Terrain: AWS Open Data · Borders: Natural Earth
         </div>
 
         {showTileDebug && tileFrame && (
@@ -630,6 +647,20 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
               Рельеф выкл.
             </button>
           </div>
+
+          <button
+            onClick={() => setShowBordersAndLabels((prev) => !prev)}
+            data-testid="borders-toggle"
+            className={`flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition ${
+              showBordersAndLabels
+                ? "border-neon-violet/60 bg-neon-violet/20 text-neon-violet"
+                : "border-glass-border text-slate-400 hover:text-slate-200"
+            }`}
+            title="G5: границы стран и подписи городов (Natural Earth)"
+          >
+            <Layers size={18} />
+            {showBordersAndLabels ? "Скрыть границы/города" : "Показать границы/города"}
+          </button>
         </div>
 
         <div className="sm:col-span-2">
