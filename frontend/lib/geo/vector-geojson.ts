@@ -18,6 +18,11 @@ export interface PointGeometry {
   coordinates: LngLat;
 }
 
+export interface LineStringGeometry {
+  type: "LineString";
+  coordinates: LngLat[];
+}
+
 export interface GeoFeature<G, P> {
   type: "Feature";
   geometry: G;

@@ -10,8 +10,17 @@ import GlobeControls from "@/components/geo/GlobeControls";
 import RealEarthTileLayer from "@/components/geo/RealEarthTileLayer";
 import CountryBordersLayer from "@/components/geo/CountryBordersLayer";
 import CityLabelsLayer from "@/components/geo/CityLabelsLayer";
+import TectonicPlatesLayer from "@/components/geo/TectonicPlatesLayer";
+import VolcanoesLayer from "@/components/geo/VolcanoesLayer";
+import EarthquakesLayer from "@/components/geo/EarthquakesLayer";
+import LayerControlPanel from "@/components/geo/LayerControlPanel";
+import GeoFeatureInfoCard, { type GeoFeatureInfo } from "@/components/geo/GeoFeatureInfoCard";
 import TileDebugLayer from "@/components/geo/TileDebugLayer";
+import { createDefaultLayerVisibility } from "@/lib/geo/layer-registry";
 import { NATURAL_EARTH_ATTRIBUTION } from "@/lib/geo/providers/natural-earth";
+import { TECTONIC_PLATES_ATTRIBUTION } from "@/lib/geo/providers/tectonic-plates";
+import { VOLCANOES_ATTRIBUTION } from "@/lib/geo/providers/volcanoes";
+import { EARTHQUAKES_ATTRIBUTION } from "@/lib/geo/providers/earthquakes";
 import type { SelectedTile } from "@/lib/geo/tile-lod";
 import type { TileEngineStats } from "@/lib/geo/tile-engine";
 import { GIBS_ATTRIBUTION } from "@/lib/geo/providers/gibs-provider";
@@ -427,10 +436,14 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
     setTerrainStats(stats);
   }, []);
 
-  // G5 — границы стран/подписи городов (Natural Earth). Включены по
-  // умолчанию — это, как и снимки/рельеф, основная возможность, а не
-  // debug-инструмент; выключаются отдельным тоглом, как и остальное.
-  const [showBordersAndLabels, setShowBordersAndLabels] = useState(true);
+  // G6 — единый реестр образовательных геослоёв (границы/города из G5 +
+  // новые тектоника/вулканы/землетрясения) вместо отдельного тогла на
+  // каждый слой — см. lib/geo/layer-registry.ts и LayerControlPanel.
+  const [layerVisibility, setLayerVisibility] = useState<Record<string, boolean>>(createDefaultLayerVisibility());
+  const toggleLayer = useCallback((layerId: string) => {
+    setLayerVisibility((prev) => ({ ...prev, [layerId]: !prev[layerId] }));
+  }, []);
+  const [selectedGeoFeature, setSelectedGeoFeature] = useState<GeoFeatureInfo | null>(null);
 
   async function handleSelectLayer(layer: LayerKey) {
     setError(null);
@@ -546,29 +559,38 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
           {!isCutaway && (
             <RealEarthTileLayer onFrame={handleTileFrame} onTerrainFrame={handleTerrainFrame} exaggeration={exaggeration} />
           )}
-          {/* G5: границы стран + подписи городов (Natural Earth) — не тайловая
-              квадротрёх, свой собственный LOD по дистанции камеры (см.
-              lib/geo/geo-vector-lod.ts). */}
-          {!isCutaway && showBordersAndLabels && (
-            <>
-              <CountryBordersLayer />
-              <CityLabelsLayer />
-            </>
+          {/* G5/G6: границы стран + подписи городов (Natural Earth) — не
+              тайловая квадротрёх, свой собственный LOD по дистанции камеры
+              (см. lib/geo/geo-vector-lod.ts). Каждый слой теперь переключается
+              независимо через реестр (lib/geo/layer-registry.ts), а не одним
+              общим тоглом, как в G5. */}
+          {!isCutaway && layerVisibility.borders && <CountryBordersLayer />}
+          {!isCutaway && layerVisibility.cities && <CityLabelsLayer />}
+          {/* G6: образовательные геослои — тектоника/вулканы/землетрясения.
+              Выключены по умолчанию (см. LAYER_DEFINITIONS), клик по объекту
+              открывает GeoFeatureInfoCard (одна карточка на весь GeoWorld). */}
+          {!isCutaway && layerVisibility.plates && <TectonicPlatesLayer onSelect={setSelectedGeoFeature} />}
+          {!isCutaway && layerVisibility.volcanoes && <VolcanoesLayer onSelect={setSelectedGeoFeature} />}
+          {!isCutaway && layerVisibility.earthquakes && <EarthquakesLayer onSelect={setSelectedGeoFeature} />}
+          {selectedGeoFeature && (
+            <GeoFeatureInfoCard info={selectedGeoFeature} onClose={() => setSelectedGeoFeature(null)} />
           )}
           {showTileDebug && !isCutaway && tileFrame && <TileDebugLayer tiles={tileFrame.rendered} />}
         </CanvasShell>
 
+        <LayerControlPanel visibility={layerVisibility} onToggle={toggleLayer} />
+
         <AIAssistantChat simulationId={simulation.id} sceneStateDescription={sceneStateDescription} />
 
-        {/* Атрибуция NASA GIBS + AWS Terrain Tiles + Natural Earth —
-            постоянно видима, не прячется за debug-тоггл (см.
-            GEOWORLD_ROADMAP.md, разделы G3/G4/G5 "Атрибуция"). */}
+        {/* Атрибуция всех внешних источников данных — постоянно видима, не
+            прячется за debug-тоггл (см. GEOWORLD_ROADMAP.md, разделы
+            G3/G4/G5/G6 "Атрибуция"). */}
         <div
           data-testid="gibs-attribution"
-          title={`${GIBS_ATTRIBUTION}\n\n${TERRARIUM_ATTRIBUTION}\n\n${NATURAL_EARTH_ATTRIBUTION}`}
+          title={`${GIBS_ATTRIBUTION}\n\n${TERRARIUM_ATTRIBUTION}\n\n${NATURAL_EARTH_ATTRIBUTION}\n\n${TECTONIC_PLATES_ATTRIBUTION}\n\n${VOLCANOES_ATTRIBUTION}\n\n${EARTHQUAKES_ATTRIBUTION}`}
           className="pointer-events-none absolute bottom-2 right-2 max-w-[70%] truncate rounded bg-surface-deep/70 px-2 py-1 text-[10px] text-slate-400 backdrop-blur"
         >
-          Imagery: NASA GIBS / BlueMarble (EOSDIS) · Terrain: AWS Open Data · Borders: Natural Earth
+          Imagery: NASA GIBS · Terrain: AWS Open Data · Borders/Cities: Natural Earth · Plates: PB2002 · Volcanoes/Quakes: NOAA/USGS
         </div>
 
         {showTileDebug && tileFrame && (
@@ -647,20 +669,6 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
               Рельеф выкл.
             </button>
           </div>
-
-          <button
-            onClick={() => setShowBordersAndLabels((prev) => !prev)}
-            data-testid="borders-toggle"
-            className={`flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition ${
-              showBordersAndLabels
-                ? "border-neon-violet/60 bg-neon-violet/20 text-neon-violet"
-                : "border-glass-border text-slate-400 hover:text-slate-200"
-            }`}
-            title="G5: границы стран и подписи городов (Natural Earth)"
-          >
-            <Layers size={18} />
-            {showBordersAndLabels ? "Скрыть границы/города" : "Показать границы/города"}
-          </button>
         </div>
 
         <div className="sm:col-span-2">

@@ -42,3 +42,28 @@ export function isFacingCamera(lat: number, lng: number, cameraPos: Vec3): boole
   const dot = dir[0] * camDir[0] + dir[1] * camDir[1] + dir[2] * camDir[2];
   return dot >= HORIZON_DOT;
 }
+
+export interface RankedCity {
+  key: string;
+  lat: number;
+  lng: number;
+  scaleRank: number;
+  isCapital: boolean;
+}
+
+/**
+ * Отбор видимых городов: те же принципы, что у отдельных функций выше
+ * (maxVisibleScaleRank + isFacingCamera), плюс приоритет столиц (реальное
+ * поле ADM0CAP датасета, см. providers/natural-earth.ts — НЕ эвристика по
+ * размеру города) и жёсткий потолок числа подписей. Вынесено в чистую
+ * функцию отдельно от CityLabelsLayer.tsx ради тестируемости без R3F/WebGL.
+ */
+export function selectVisibleCities<T extends RankedCity>(cities: T[], cameraDistance: number, cameraPos: Vec3, maxCount: number): T[] {
+  const maxRank = maxVisibleScaleRank(cameraDistance);
+  // Столица небольшой страны допускается на 2 ранга раньше обычного города
+  // того же ранга — но не издалека из космоса, допуск не бесконечный.
+  const passes = (city: T) => city.scaleRank <= maxRank + (city.isCapital ? 2 : 0) && isFacingCamera(city.lat, city.lng, cameraPos);
+  const candidates = cities.filter(passes);
+  candidates.sort((a, b) => Number(b.isCapital) - Number(a.isCapital));
+  return candidates.slice(0, maxCount);
+}

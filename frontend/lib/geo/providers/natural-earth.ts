@@ -37,6 +37,11 @@ export interface CityProperties {
   NAME: string;
   NAME_RU?: string;
   SCALERANK: number;
+  // 1 = столица (Admin-0 capital), 0 — обычный город. Реальное поле
+  // датасета (проверено на Душанбе — ADM0CAP:1), не выведено эвристически
+  // из размера/ранга (по прямому указанию G6: "Do NOT infer capitals from
+  // city size unless dataset explicitly supports it").
+  ADM0CAP: number;
 }
 
 export type CountryFeatureCollection = GeoFeatureCollection<PolygonGeometry | MultiPolygonGeometry, CountryProperties>;

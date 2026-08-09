@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isFacingCamera, maxVisibleScaleRank, pickBorderTier } from "./geo-vector-lod";
+import { isFacingCamera, maxVisibleScaleRank, pickBorderTier, selectVisibleCities, type RankedCity } from "./geo-vector-lod";
 import { latLngToUnitVec3, type Vec3 } from "./tile-lod";
 
 describe("GeoWorld G5 — pickBorderTier: переключение ЦЕЛОГО датасета по дистанции камеры", () => {
@@ -55,5 +55,45 @@ describe("GeoWorld G5 — isFacingCamera: та же идея видимости 
 
   it("не даёт NaN/исключений на нулевом векторе камеры (защита от деления на 0)", () => {
     expect(() => isFacingCamera(0, 0, [0, 0, 0])).not.toThrow();
+  });
+});
+
+describe("GeoWorld G6 — selectVisibleCities: приоритет столиц + жёсткий потолок", () => {
+  function cameraTowards(lat: number, lng: number, distance: number): Vec3 {
+    const [dx, dy, dz] = latLngToUnitVec3(lat, lng);
+    return [dx * distance, dy * distance, dz * distance];
+  }
+
+  it("столица появляется на ~2 ранга раньше обычного города того же ранга", () => {
+    const cam = cameraTowards(0, 0, 2.7); // maxVisibleScaleRank(2.7) === 0
+    const capital: RankedCity = { key: "capital", lat: 0, lng: 0, scaleRank: 2, isCapital: true };
+    const regular: RankedCity = { key: "regular", lat: 0, lng: 0, scaleRank: 2, isCapital: false };
+    const selected = selectVisibleCities([capital, regular], 2.7, cam, 10);
+    expect(selected.map((c) => c.key)).toContain("capital");
+    expect(selected.map((c) => c.key)).not.toContain("regular");
+  });
+
+  it("столицы идут первыми при обрезании по потолку maxCount", () => {
+    const cam = cameraTowards(0, 0, 0.5); // вплотную — maxVisibleScaleRank(0.5) === 10, все проходят по рангу
+    const cities: RankedCity[] = [
+      { key: "regular-1", lat: 0, lng: 0, scaleRank: 1, isCapital: false },
+      { key: "capital-1", lat: 0, lng: 0, scaleRank: 5, isCapital: true },
+      { key: "regular-2", lat: 0, lng: 0, scaleRank: 1, isCapital: false },
+    ];
+    const selected = selectVisibleCities(cities, 0.5, cam, 1);
+    expect(selected).toHaveLength(1);
+    expect(selected[0].key).toBe("capital-1");
+  });
+
+  it("не превышает maxCount даже когда кандидатов больше", () => {
+    const cam = cameraTowards(0, 0, 0.5);
+    const cities: RankedCity[] = Array.from({ length: 20 }, (_, i) => ({ key: `c${i}`, lat: 0, lng: 0, scaleRank: 0, isCapital: false }));
+    expect(selectVisibleCities(cities, 0.5, cam, 5)).toHaveLength(5);
+  });
+
+  it("город на дальней стороне глобуса не попадает в выборку, даже будучи столицей", () => {
+    const cam = cameraTowards(0, 90, 3);
+    const antipodeCapital: RankedCity = { key: "far-capital", lat: 0, lng: -90, scaleRank: 0, isCapital: true };
+    expect(selectVisibleCities([antipodeCapital], 3, cam, 10)).toHaveLength(0);
   });
 });

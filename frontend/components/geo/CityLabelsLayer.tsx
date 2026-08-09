@@ -12,7 +12,7 @@ import { useFrame } from "@react-three/fiber";
 import { Text } from "@react-three/drei";
 import { latLngToVector3 } from "@/lib/geo/coordinates";
 import { createCityLoader, type CityFeatureCollection } from "@/lib/geo/providers/natural-earth";
-import { isFacingCamera, maxVisibleScaleRank, pickBorderTier, type BorderTier } from "@/lib/geo/geo-vector-lod";
+import { pickBorderTier, selectVisibleCities, type BorderTier } from "@/lib/geo/geo-vector-lod";
 import { lngLatToLatLng } from "@/lib/geo/vector-geojson";
 
 const LABEL_RADIUS = 1.01;
@@ -28,6 +28,7 @@ interface CityEntry {
   lat: number;
   lng: number;
   scaleRank: number;
+  isCapital: boolean;
 }
 
 export default function CityLabelsLayer() {
@@ -67,6 +68,7 @@ export default function CityLabelsLayer() {
         lat,
         lng,
         scaleRank: feature.properties.SCALERANK,
+        isCapital: feature.properties.ADM0CAP === 1,
       };
     });
   }, [data]);
@@ -81,17 +83,8 @@ export default function CityLabelsLayer() {
     if (nextTier !== tier) setTier(nextTier);
 
     const cam: [number, number, number] = [camPos.x, camPos.y, camPos.z];
-    const maxRank = maxVisibleScaleRank(distance);
-    const next = new Set<string>();
-    let count = 0;
-    for (const city of cities) {
-      if (count >= MAX_VISIBLE_LABELS) break;
-      if (city.scaleRank > maxRank) continue;
-      if (!isFacingCamera(city.lat, city.lng, cam)) continue;
-      next.add(city.key);
-      count++;
-    }
-    setVisibleKeys(next);
+    const selected = selectVisibleCities(cities, distance, cam, MAX_VISIBLE_LABELS);
+    setVisibleKeys(new Set(selected.map((c) => c.key)));
   });
 
   const visibleCities = cities.filter((c) => visibleKeys.has(c.key));
@@ -101,18 +94,26 @@ export default function CityLabelsLayer() {
       {visibleCities.map((city) => {
         const p = latLngToVector3(city.lat, city.lng, LABEL_RADIUS);
         return (
-          <Text
-            key={city.key}
-            position={[p.x, p.y, p.z]}
-            fontSize={0.018}
-            color="#e2e8f0"
-            anchorX="center"
-            anchorY="middle"
-            outlineWidth={0.0015}
-            outlineColor="#000000"
-          >
-            {city.name}
-          </Text>
+          <group key={city.key}>
+            {city.isCapital && (
+              <mesh position={[p.x, p.y, p.z]}>
+                <sphereGeometry args={[0.006, 8, 8]} />
+                <meshBasicMaterial color="#fbbf24" />
+              </mesh>
+            )}
+            <Text
+              position={[p.x, p.y, p.z]}
+              fontSize={city.isCapital ? 0.024 : 0.018}
+              color={city.isCapital ? "#fbbf24" : "#e2e8f0"}
+              fontWeight={city.isCapital ? "bold" : "normal"}
+              anchorX="center"
+              anchorY="bottom"
+              outlineWidth={0.0015}
+              outlineColor="#000000"
+            >
+              {city.name}
+            </Text>
+          </group>
         );
       })}
     </>
