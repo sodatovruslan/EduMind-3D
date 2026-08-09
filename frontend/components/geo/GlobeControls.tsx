@@ -13,6 +13,12 @@
  *   - touchcancel and a window-level pointerup fallback recover cleanly
  *     from an interrupted gesture (same pattern as ComponentDragProvider/
  *     WireDragProvider) — the camera can never get stuck mid-drag/pinch
+ *   - G6.5: near/far clipping planes are updated every frame based on
+ *     current altitude above the globe — the fixed default near=0.1 used
+ *     to be LARGER than the actual close-approach altitude once minDistance
+ *     was lowered to allow real surface exploration, silently clipping away
+ *     nearby terrain/imagery. See GEOWORLD_ROADMAP.md, G6.5, for the root
+ *     cause writeup.
  *
  * Drop inside a <Canvas> / CanvasShell children and disable the default
  * OrbitControls via orbitEnabled={false}.
@@ -71,6 +77,10 @@ interface State {
 const PHI_EPS = 0.05; // stay ≥0.05 rad from poles
 const VEL_EPS = 1e-5;
 const LERP = 0.12; // per-frame interpolation factor
+// Радиус глобуса в единицах сцены — та же неявная константа, что уже
+// используется в double-click raycast (THREE.Sphere(..., 1.0)) ниже;
+// вынесена в явное имя только для near/far-расчёта, не новый параметр.
+const GLOBE_RADIUS = 1;
 
 // scratch objects reused every frame to avoid GC pressure
 const _sph = new THREE.Spherical();
@@ -80,6 +90,25 @@ const _v3 = new THREE.Vector3();
 
 function clampPhi(p: number): number {
   return Math.max(PHI_EPS, Math.min(Math.PI - PHI_EPS, p));
+}
+
+/**
+ * G6.5 — near/far плоскости отсечения камеры как функция текущей высоты
+ * над глобусом. Раньше near/far были дефолтными Three.js-константами
+ * (near=0.1, far=1000) — при старом minDistance=1.12 near=0.1 был МЕНЬШЕ
+ * дистанции до поверхности (0.12), не мешал; но при близком приближении
+ * (altitude ~0.003-0.02, см. computeSafeMinDistance в elevation-sampling.ts)
+ * near=0.1 оказывается В РАЗЫ БОЛЬШЕ реальной высоты камеры над
+ * поверхностью — всё ближе near-плоскости (включая рельеф прямо под
+ * камерой) отсекается и не рендерится вообще. near масштабируется вместе с
+ * высотой, far — с maxDistance (с запасом, чтобы звёзды/дальняя сторона
+ * глобуса не исчезали).
+ */
+export function computeClipPlanes(distance: number, globeRadius: number, maxDistance: number): { near: number; far: number } {
+  const altitude = Math.max(0, distance - globeRadius);
+  const near = Math.max(0.0005, altitude * 0.3);
+  const far = Math.max(maxDistance * 3, 10);
+  return { near, far };
 }
 
 function touchDist(a: Touch, b: Touch): number {
@@ -372,6 +401,18 @@ export default function GlobeControls({
     _v3.setFromSpherical(_sph);
     camera.position.copy(_v3);
     camera.lookAt(0, 0, 0);
+
+    // 4. G6.5 — dynamic near/far so close approach doesn't clip nearby
+    // terrain/imagery (see computeClipPlanes above for why this matters).
+    if ("isPerspectiveCamera" in camera && camera.isPerspectiveCamera) {
+      const perspective = camera as THREE.PerspectiveCamera;
+      const { near, far } = computeClipPlanes(st.dist, GLOBE_RADIUS, maxDistance);
+      if (Math.abs(perspective.near - near) > 1e-6 || Math.abs(perspective.far - far) > 1e-3) {
+        perspective.near = near;
+        perspective.far = far;
+        perspective.updateProjectionMatrix();
+      }
+    }
   });
 
   return null;

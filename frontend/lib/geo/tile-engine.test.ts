@@ -12,13 +12,13 @@ class ManualTileProvider {
   // запрошен повторно (после вытеснения из кэша), нужно уметь адресно
   // резолвить именно самый старый ещё не отработавший вызов для теста
   // устаревших ответов.
-  private pending: Array<{ key: string; resolve: (d: TileData) => void }> = [];
+  private pending: Array<{ key: string; resolve: (d: TileData) => void; reject: (err: Error) => void }> = [];
 
   requestTile(id: TileId, signal: AbortSignal): Promise<TileData> {
     const key = tileKey(id);
     this.calls.push(key);
     return new Promise<TileData>((resolve, reject) => {
-      this.pending.push({ key, resolve });
+      this.pending.push({ key, resolve, reject });
       signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
     });
   }
@@ -32,6 +32,13 @@ class ManualTileProvider {
     if (idx === -1) return;
     const [record] = this.pending.splice(idx, 1);
     record.resolve(data);
+  }
+
+  rejectOldest(key: string, error: Error): void {
+    const idx = this.pending.findIndex((p) => p.key === key);
+    if (idx === -1) return;
+    const [record] = this.pending.splice(idx, 1);
+    record.reject(error);
   }
 }
 
@@ -198,6 +205,43 @@ describe("GeoWorld G2 — TileEngine: связка LOD + провайдер + к
     for (const pos of positions) {
       expect(() => engine.tick(pos)).not.toThrow();
     }
+  });
+
+  it("G6.5: упавший тайл переспрашивается на следующих тиках (не застревает FAILED навсегда)", async () => {
+    const provider = new ManualTileProvider();
+    const engine = new TileEngine(provider, undefined, 200, 6, 3); // maxRetries=3
+    engine.tick([0, 0, 20]);
+    const key = provider.calls[0];
+    provider.rejectOldest(key, new Error("network blip"));
+    await flush();
+
+    let frame = engine.tick([0, 0, 20]); // должен переспросить
+    expect(provider.calls.filter((k) => k === key)).toHaveLength(2);
+    expect(frame.stats.failedCount).toBe(0); // статус уже "loading" — переспрос начался, "упавших" сейчас нет
+
+    provider.resolveOldest(key, { color: "#fff", label: key });
+    await flush();
+    frame = engine.tick([0, 0, 20]);
+    expect(frame.tiles.get(key)).toEqual({ color: "#fff", label: key }); // успешный переспрос применяется как обычно
+  });
+
+  it("G6.5: после исчерпания лимита попыток тайл окончательно остаётся failed, без бесконечного долбления провайдера", async () => {
+    const provider = new ManualTileProvider();
+    const engine = new TileEngine(provider, undefined, 200, 6, 2); // maxRetries=2 — итого 3 попытки всего (1 исходная + 2 ретрая)
+    engine.tick([0, 0, 20]);
+    const key = provider.calls[0];
+
+    for (let i = 0; i < 3; i++) {
+      provider.rejectOldest(key, new Error("still down"));
+      await flush();
+      engine.tick([0, 0, 20]); // каждый тик после ошибки пробует переспросить, пока не исчерпан лимит
+    }
+
+    const totalAttempts = provider.calls.filter((k) => k === key).length;
+    expect(totalAttempts).toBe(3); // 1 исходная + maxRetries(2) — не больше
+
+    const finalFrame = engine.tick([0, 0, 20]);
+    expect(finalFrame.stats.failedCount).toBe(1); // окончательно "упавший", но ровно один — не растёт бесконтрольно
   });
 });
 

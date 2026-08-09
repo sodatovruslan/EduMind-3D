@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";
-import { Line, Stars, useTexture } from "@react-three/drei";
+import { Stars, useTexture } from "@react-three/drei";
 import { Layers } from "lucide-react";
 import CanvasShell from "@/components/scenes/CanvasShell";
 import GlobeControls from "@/components/geo/GlobeControls";
@@ -25,7 +25,7 @@ import type { SelectedTile } from "@/lib/geo/tile-lod";
 import type { TileEngineStats } from "@/lib/geo/tile-engine";
 import { GIBS_ATTRIBUTION } from "@/lib/geo/providers/gibs-provider";
 import { TERRARIUM_ATTRIBUTION } from "@/lib/geo/providers/terrarium-provider";
-import { EXAGGERATION_PRESETS, DEFAULT_EXAGGERATION, type ExaggerationPreset } from "@/lib/geo/elevation-sampling";
+import { EXAGGERATION_PRESETS, DEFAULT_EXAGGERATION, computeSafeMinDistance, type ExaggerationPreset } from "@/lib/geo/elevation-sampling";
 import AIAssistantChat from "@/components/ai/AIAssistantChat";
 import { apiFetch, ApiError } from "@/lib/api";
 import type { Simulation } from "@/lib/types";
@@ -78,55 +78,40 @@ function useEarthTextures() {
   return { colorMap, normalMap, cloudsMap };
 }
 
-// стилизованные границы тектонических плит — светящиеся дуги поверх коры.
-// Используем drei <Line>, а не сырой JSX-тег <line>: тот конфликтует
-// с SVG-элементом "line" из типов React и не проходит проверку типов.
-function PlateBoundaries({ radius }: { radius: number }) {
-  const boundaries = useMemo(() => {
-    const tilts: Array<[number, number]> = [
-      [0.3, 0],
-      [1.1, 0.6],
-      [2.0, -0.4],
-      [0.9, 2.3],
-    ];
-    return tilts.map(([tiltX, tiltZ]) => {
-      const points: Array<[number, number, number]> = [];
-      const segments = 96;
-      for (let i = 0; i <= segments; i++) {
-        const t = (i / segments) * Math.PI * 2;
-        const p = new THREE.Vector3(Math.cos(t) * radius, 0, Math.sin(t) * radius);
-        p.applyEuler(new THREE.Euler(tiltX, 0, tiltZ));
-        points.push([p.x, p.y, p.z]);
-      }
-      return points;
-    });
-  }, [radius]);
-
-  return (
-    <>
-      {boundaries.map((points, i) => (
-        <Line key={i} points={points} color="#fbbf24" transparent opacity={0.5} lineWidth={1} />
-      ))}
-    </>
-  );
-}
+// G6.5: старый декоративный PlateBoundaries (4 произвольных наклонных
+// окружности, НЕ настоящие тектонические данные) удалён — он рендерился
+// БЕЗУСЛОВНО (всегда поверх глобуса, без единого тоггла) и визуально
+// дублировал/засорял вид теперь, когда есть настоящие данные плит PB2002
+// (см. components/geo/TectonicPlatesLayer.tsx, G6, включаемый через панель
+// "Слои"). См. GEOWORLD_ROADMAP.md, раздел G6.5, "Оранжевые линии".
 
 // полярная шапка льда — плавно уменьшается по мере роста аномалии
-// температуры (0 = нынешний климат, 1 = порог схода селя)
+// температуры (0 = нынешний климат, 1 = порог схода селя).
+// G6.5: раньше это был буквальный шар радиусом 0.16 (16% радиуса Земли!),
+// вложенный на 0.95 и торчащий на 0.11 юнита НАД поверхностью — было
+// незаметно на старой плоской текстуре, но выглядело как гигантский белый
+// нарост поверх настоящих снимков NASA/рельефа (см. GEOWORLD_ROADMAP.md,
+// раздел G6.5, "Белые объекты у полюсов"). Теперь — небольшой сплюснутый
+// купол у самой поверхности, пропорциональный реальному масштабу планеты.
+const ICE_CAP_FLATTEN = 0.4; // сплюснутый купол, не шар — заметно у полюса, но не торчит наружу
+
 function PolarIceCap({ position, meltProgress }: { position: THREE.Vector3; meltProgress: number }) {
   const meshRef = useRef<THREE.Mesh>(null);
+  const currentScaleRef = useRef(1);
 
   useFrame((_, delta) => {
     const mesh = meshRef.current;
     if (!mesh) return;
     const targetScale = THREE.MathUtils.lerp(1, 0.35, meltProgress);
     const lerpFactor = Math.min(1, delta * 2);
-    mesh.scale.setScalar(THREE.MathUtils.lerp(mesh.scale.x, targetScale, lerpFactor));
+    currentScaleRef.current = THREE.MathUtils.lerp(currentScaleRef.current, targetScale, lerpFactor);
+    const s = currentScaleRef.current;
+    mesh.scale.set(s, s * ICE_CAP_FLATTEN, s);
   });
 
   return (
-    <mesh ref={meshRef} position={position}>
-      <sphereGeometry args={[0.16, 24, 24]} />
+    <mesh ref={meshRef} position={position} scale={[1, ICE_CAP_FLATTEN, 1]}>
+      <sphereGeometry args={[0.035, 20, 20]} />
       <meshStandardMaterial color="#f0f9ff" roughness={0.5} transparent opacity={0.9} />
     </mesh>
   );
@@ -224,8 +209,12 @@ type PendingAction = { kind: "layer"; layer: LayerKey } | { kind: "continent"; l
 // X-Ray в анатомии): внешние слои "призрачно" просвечивают, обнажая
 // более глубокие. Честная геометрическая "крышка" среза (clipping planes
 // + stencil-caps) требует отдельного рендер-прохода — за рамки MVP.
-const NORTH_POLE = latLngToVector3(90, 0, CRUST_R * 0.95);
-const SOUTH_POLE = latLngToVector3(-90, 0, CRUST_R * 0.95);
+// G6.5: было CRUST_R*0.95 (купол ВНУТРИ коры, торчащий наружу большим
+// шаром) — теперь чуть ВЫШЕ поверхности снимка/рельефа (как и другие
+// накладываемые слои — облака на 1.015, границы плит на 1.008), чтобы
+// сплюснутый купол лежал НА поверхности, а не протыкал её изнутри.
+const NORTH_POLE = latLngToVector3(90, 0, CRUST_R * 1.006);
+const SOUTH_POLE = latLngToVector3(-90, 0, CRUST_R * 1.006);
 
 function EarthLayers({ isCutaway, onSelectLayer, onSelectContinent, meltProgress, isSelTriggered }: EarthLayersProps) {
   const groupRef = useRef<THREE.Group>(null);
@@ -341,10 +330,6 @@ function EarthLayers({ isCutaway, onSelectLayer, onSelectContinent, meltProgress
         <meshStandardMaterial ref={cloudsMaterialRef} map={cloudsMap} transparent depthWrite={false} />
       </mesh>
 
-      {/* границы плит — поверхностная деталь; в разрезе прячем, чтобы не
-          путались с обнажившимися более глубокими слоями */}
-      {!isCutaway && <PlateBoundaries radius={CRUST_R * 1.003} />}
-
       <mesh onClick={(e) => handleClick(e, "mantle")}>
         <sphereGeometry args={[MANTLE_R, 48, 48]} />
         <meshStandardMaterial
@@ -435,6 +420,14 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
   const handleTerrainFrame = useCallback((stats: TileEngineStats) => {
     setTerrainStats(stats);
   }, []);
+
+  // G6.5 — камера может безопасно подлететь настолько близко, насколько
+  // позволяет ТЕКУЩАЯ визуальная экзагерация рельефа (см. GlobeControls'
+  // старый фиксированный minDistance=1.12 в HANDOFF.md, продолжение №32, —
+  // ни с чем не связанное число, из-за которого приближение к поверхности
+  // было физически невозможно). Ниже "реалистичной" экзагерации камера
+  // может подойти заметно ближе — реальная синергия, не совпадение.
+  const safeMinDistance = useMemo(() => computeSafeMinDistance(exaggeration), [exaggeration]);
 
   // G6 — единый реестр образовательных геослоёв (границы/города из G5 +
   // новые тектоника/вулканы/землетрясения) вместо отдельного тогла на
@@ -543,7 +536,7 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
           orbitEnabled={false}
         >
           <Stars radius={50} depth={30} count={1200} factor={2.5} fade speed={0.4} />
-          <GlobeControls />
+          <GlobeControls minDistance={safeMinDistance} />
           <EarthLayers
             isCutaway={isCutaway}
             onSelectLayer={handleSelectLayer}

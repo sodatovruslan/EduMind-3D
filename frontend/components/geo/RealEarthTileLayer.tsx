@@ -21,7 +21,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import { latLngToVector3 } from "@/lib/geo/coordinates";
 import { GibsTileProvider } from "@/lib/geo/providers/gibs-provider";
 import { TerrariumElevationProvider } from "@/lib/geo/providers/terrarium-provider";
@@ -105,6 +105,7 @@ interface RealTileMeshProps {
 }
 
 function RealTileMesh({ tile, data, elevation, exaggeration }: RealTileMeshProps) {
+  const { gl } = useThree();
   const bounds = useMemo(() => data.bounds ?? tileBounds(tile.id), [data.bounds, tile.id]);
   const geometry = useMemo(
     () => (elevation ? buildTerrainedPatchGeometry(bounds, elevation, exaggeration) : buildFlatPatchGeometry(bounds)),
@@ -114,9 +115,14 @@ function RealTileMesh({ tile, data, elevation, exaggeration }: RealTileMeshProps
     if (!data.image) return null;
     const tex = new THREE.Texture(data.image);
     tex.colorSpace = THREE.SRGBColorSpace;
+    // G6.5: без anisotropy текстура заметно мылится под острым углом
+    // обзора (типичный случай на низкой высоте, глядя к горизонту) —
+    // максимум, поддерживаемый конкретным GPU, дёшево и безопасно всегда
+    // запрашивать (Three.js сам ограничит реальным аппаратным потолком).
+    tex.anisotropy = gl.capabilities.getMaxAnisotropy();
     tex.needsUpdate = true;
     return tex;
-  }, [data.image]);
+  }, [data.image, gl]);
 
   useEffect(() => {
     return () => {

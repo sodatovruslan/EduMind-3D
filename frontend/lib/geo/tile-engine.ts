@@ -46,6 +46,14 @@ export interface TileDataProvider<T> {
 export class TileEngine<T> {
   private cache: TileCache<T>;
   private activeRequestCount = 0;
+  // G6.5: раньше `if (this.cache.has(key)) return;` блокировал ЛЮБОЙ
+  // повторный запрос навсегда, включая статус "error" — упавший однажды
+  // тайл (сетевая заминка, временная недоступность провайдера) оставался
+  // "FAILED" до конца сессии страницы, даже если причина была разовой. Счёт
+  // попыток на тайл — не бесконечный ретрай (не заваливаем провайдера
+  // одним и тем же мёртвым запросом навечно), а разовое право на 3 попытки,
+  // раскиданных по естественным интервалам между тиками (см. tick ниже).
+  private readonly retryAttempts = new Map<string, number>();
 
   constructor(
     private readonly provider: TileDataProvider<T>,
@@ -57,7 +65,8 @@ export class TileEngine<T> {
     // одновременных соединений браузера на один хост, дальше запросы всё
     // равно очередятся самим браузером; ограничиваем на уровне движка,
     // чтобы отдавать приоритет актуальным тайлам, а не FIFO-очереди браузера.
-    private readonly maxConcurrentRequests: number = 6
+    private readonly maxConcurrentRequests: number = 6,
+    private readonly maxRetries: number = 3
   ) {
     this.cache = new TileCache<T>(cacheSize);
   }
@@ -66,7 +75,13 @@ export class TileEngine<T> {
 
   private ensureRequested(id: TileId): void {
     const key = tileKey(id);
-    if (this.cache.has(key)) return; // уже запрошен/грузится/готов/упал — не дублируем
+    const existing = this.cache.get(key);
+    if (existing) {
+      if (existing.status !== "error") return; // уже запрошен/грузится/готов — не дублируем
+      const attempts = this.retryAttempts.get(key) ?? 0;
+      if (attempts >= this.maxRetries) return; // попытки исчерпаны — окончательно "упавший" тайл, не долбим провайдера вечно
+      this.retryAttempts.set(key, attempts + 1);
+    }
     if (this.activeRequestCount >= this.maxConcurrentRequests) return; // лимит — тайл останется в pending и переспросится на следующем тике
 
     const controller = new AbortController();
@@ -92,6 +107,7 @@ export class TileEngine<T> {
         }
         current.status = "ready";
         current.data = data;
+        this.retryAttempts.delete(key); // успех — счётчик попыток больше не нужен
       })
       .catch(() => {
         settle();

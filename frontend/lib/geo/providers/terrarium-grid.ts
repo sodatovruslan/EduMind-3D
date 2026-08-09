@@ -13,7 +13,7 @@ export interface TerrariumTileRef {
   y: number;
 }
 
-const MAX_MERCATOR_LAT = 85.05112878; // стандартный предел Web Mercator — за этим широта уходит в бесконечность проекции
+export const MAX_MERCATOR_LAT = 85.05112878; // стандартный предел Web Mercator — за этим широта уходит в бесконечность проекции
 
 function clampLat(lat: number): number {
   return Math.max(-MAX_MERCATOR_LAT, Math.min(MAX_MERCATOR_LAT, lat));

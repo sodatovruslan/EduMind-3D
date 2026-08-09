@@ -51,6 +51,36 @@ export function elevationToSceneRadius(rawMeters: number, baseRadius: number, ex
   return baseRadius + metersToSceneUnits(exaggerated, baseRadius);
 }
 
+// Эверест (8849м) — консервативный верхний предел реального рельефа Земли.
+// Используется НЕ для рендера конкретной горы, а как безопасный "потолок"
+// при расчёте минимально допустимой дистанции камеры (см.
+// computeSafeMinDistance ниже) — гарантия, что камера не может провалиться
+// СКВОЗЬ террейн НИГДЕ на планете, даже не зная точных данных высот под
+// текущей точкой обзора (GlobeControls не имеет доступа к TileEngine).
+export const MAX_EXPECTED_ELEVATION_METERS = 8849;
+
+/**
+ * G6.5 — безопасная минимальная дистанция камеры от центра планеты.
+ *
+ * До этого G1 использовал фиксированный minDistance=1.12 (≈764км высоты) —
+ * не связанный вообще ни с чем, просто произвольное число, из-за которого
+ * камера физически не могла приблизиться к поверхности. Реальный безопасный
+ * предел зависит от ТЕКУЩЕЙ визуальной экзагерации рельефа (см.
+ * EXAGGERATION_PRESETS) — чем сильнее преувеличены горы, тем выше нужно
+ * держаться, чтобы гарантированно не влететь в самую высокую точку планеты
+ * НИГДЕ, даже если камера сейчас смотрит не на неё (без живого рейкаста
+ * в реальный меш рельефа под камерой — намеренное упрощение, задокументировано
+ * как известное ограничение в GEOWORLD_ROADMAP.md).
+ *
+ * marginMeters — дополнительный запас поверх худшего случая (по умолчанию
+ * ~9.5км) — не даёт камере "тереться" ровно об вершину Эвереста.
+ */
+export function computeSafeMinDistance(exaggeration: number, baseRadius: number = 1, marginMeters: number = 9500): number {
+  const worstCaseBulge = metersToSceneUnits(applyExaggeration(MAX_EXPECTED_ELEVATION_METERS, exaggeration), baseRadius);
+  const margin = metersToSceneUnits(marginMeters, baseRadius);
+  return baseRadius + worstCaseBulge + margin;
+}
+
 /**
  * Билинейная выборка высоты в точке (lat,lng) из сетки данных тайла.
  * Точки за пределами границ сетки зажимаются к краю (clamp), а не

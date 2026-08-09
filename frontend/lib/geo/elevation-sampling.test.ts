@@ -6,6 +6,7 @@ import {
   EXAGGERATION_PRESETS,
   applyExaggeration,
   clampSeaLevel,
+  computeSafeMinDistance,
   elevationToSceneRadius,
   metersToSceneUnits,
   sampleElevation,
@@ -86,5 +87,41 @@ describe("GeoWorld G4 — sampleElevation: билинейная выборка",
     const data = grid(new Array(16).fill(500), 4, 4);
     expect(sampleElevation(data, 3, 3)).toBeCloseTo(500, 5);
     expect(sampleElevation(data, 7, 8)).toBeCloseTo(500, 5);
+  });
+});
+
+describe("GeoWorld G6.5 — computeSafeMinDistance: камера никогда не проваливается сквозь рельеф ГДЕ-ЛИБО на планете", () => {
+  it("при exaggeration=0 (плоский шар) минимальная дистанция — совсем небольшой запас над радиусом", () => {
+    const min = computeSafeMinDistance(0);
+    expect(min).toBeGreaterThan(1);
+    expect(min).toBeLessThan(1.01); // всего запас на пару километров, гор физически нет
+  });
+
+  it("растёт с ростом exaggeration — чем сильнее преувеличены горы, тем выше должна держаться камера", () => {
+    const low = computeSafeMinDistance(EXAGGERATION_PRESETS.realistic);
+    const mid = computeSafeMinDistance(EXAGGERATION_PRESETS.educational);
+    const high = computeSafeMinDistance(EXAGGERATION_PRESETS.enhanced);
+    expect(mid).toBeGreaterThan(low);
+    expect(high).toBeGreaterThan(mid);
+  });
+
+  it("даже на максимальной экзагерации остаётся МНОГОКРАТНО меньше старого фиксированного 1.12 (764км)", () => {
+    const worst = computeSafeMinDistance(EXAGGERATION_PRESETS.enhanced);
+    expect(worst).toBeLessThan(1.12);
+  });
+
+  it("реалистичная (1×) экзагерация позволяет подлететь заметно ближе, чем образовательная (15×) — реальная синергия фикса камеры и слайдера экзагерации", () => {
+    const realistic = computeSafeMinDistance(EXAGGERATION_PRESETS.realistic);
+    const educational = computeSafeMinDistance(EXAGGERATION_PRESETS.educational);
+    const realisticAltitudeKm = (realistic - 1) * (EARTH_RADIUS_METERS / 1000);
+    const educationalAltitudeKm = (educational - 1) * (EARTH_RADIUS_METERS / 1000);
+    expect(realisticAltitudeKm).toBeLessThan(30); // десятки км, не сотни
+    expect(educationalAltitudeKm).toBeGreaterThan(realisticAltitudeKm);
+  });
+
+  it("бóльший запас (marginMeters) даёт бóльшую минимальную дистанцию", () => {
+    const small = computeSafeMinDistance(DEFAULT_EXAGGERATION, 1, 1000);
+    const large = computeSafeMinDistance(DEFAULT_EXAGGERATION, 1, 50000);
+    expect(large).toBeGreaterThan(small);
   });
 });
