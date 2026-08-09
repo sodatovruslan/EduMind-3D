@@ -215,6 +215,14 @@ export const ru = {
     saved: "Изменения сохранены.",
     saveError: "Не удалось сохранить изменения",
   },
+  simulation: {
+    back: "Назад",
+    aiTeacher: {
+      trigger: "ИИ-наставник",
+      expand: "Открыть ИИ-наставника",
+      collapse: "Свернуть ИИ-наставника",
+    },
+  },
   shell: {
     nav: {
       home: "Главная",

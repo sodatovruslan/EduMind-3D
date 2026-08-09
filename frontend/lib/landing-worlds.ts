@@ -1,5 +1,6 @@
 import { FlaskConical, Globe, Zap } from "lucide-react";
 import type { Dictionary } from "@/lib/i18n/dictionaries";
+import type { Simulation } from "@/lib/types";
 
 /**
  * D2 Landing — structural metadata for the three real, working worlds.
@@ -33,6 +34,14 @@ export function worldCopy(t: Dictionary, key: LandingWorld["key"]) {
 
 export function worldHudCopy(t: Dictionary, key: LandingWorld["key"]) {
   return t.heroHud[key];
+}
+
+// D6 — SimulationShell needs to resolve world identity (icon/accent) from a
+// route's real `simulation.module`, not the landing-only `key`. Returns
+// undefined for "simlab" (not a promoted world, see the module doc comment
+// above) — callers fall back to a neutral identity for that route.
+export function getWorldByModule(module: Simulation["module"]): LandingWorld | undefined {
+  return LANDING_WORLDS.find((world) => world.routeBase.slice(1) === module);
 }
 
 export const ACCENT_TEXT_CLASS: Record<WorldAccent, string> = {

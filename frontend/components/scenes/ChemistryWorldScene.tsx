@@ -99,6 +99,7 @@ import ExperimentCatalogBrowser from "@/components/lab/ExperimentCatalogBrowser"
 import GuidedLabPanel from "@/components/lab/GuidedLabPanel";
 import CompletionScreen from "@/components/lab/CompletionScreen";
 import LabNotebookPanel from "@/components/lab/LabNotebookPanel";
+import AITeacherDock from "@/components/simulation/AITeacherDock";
 
 // Stage 5.5 v2 — Hazard Simulation: доступность, без учета prefers-reduced-motion
 // нельзя показывать тряску камеры/агрессивные эффекты
@@ -3171,12 +3172,14 @@ function ChemistryTeacherChatPanel({ simulationId, safetyWarnings }: { simulatio
   // которые не зависят от этой панели.
   if (!context || !modeConfig.showAIExplanations) return null;
   return (
-    <ChemistryTeacherChat
-      simulationId={simulationId}
-      context={context}
-      onMessageSent={recordHintUsed}
-      showFullHints={modeConfig.showFullHints}
-    />
+    <AITeacherDock>
+      <ChemistryTeacherChat
+        simulationId={simulationId}
+        context={context}
+        onMessageSent={recordHintUsed}
+        showFullHints={modeConfig.showFullHints}
+      />
+    </AITeacherDock>
   );
 }
 

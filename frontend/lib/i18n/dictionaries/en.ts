@@ -217,6 +217,14 @@ export const en: typeof ru = {
     saved: "Changes saved.",
     saveError: "Couldn't save changes",
   },
+  simulation: {
+    back: "Back",
+    aiTeacher: {
+      trigger: "AI Teacher",
+      expand: "Open AI Teacher",
+      collapse: "Collapse AI Teacher",
+    },
+  },
   shell: {
     nav: {
       home: "Home",

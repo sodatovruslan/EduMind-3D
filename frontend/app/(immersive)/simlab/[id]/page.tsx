@@ -5,6 +5,7 @@ import { swrFetcher } from "@/lib/swr-fetcher";
 import type { Simulation } from "@/lib/types";
 import Loader from "@/components/ui/Loader";
 import SimLabScene from "@/components/scenes/SimLabScene";
+import SimulationShell from "@/components/simulation/SimulationShell";
 
 export default function SimLabPage({ params }: { params: { id: string } }) {
   const { data: simulation, isLoading } = useSWR<Simulation>(
@@ -16,11 +17,8 @@ export default function SimLabPage({ params }: { params: { id: string } }) {
   if (!simulation) return <p className="text-sm text-slate-400">Симуляция не найдена.</p>;
 
   return (
-    <div>
-      <h1 className="mb-1 font-headline text-2xl font-bold text-slate-100">{simulation.title}</h1>
-      <p className="mb-6 font-mono text-sm uppercase tracking-widest text-brand">{simulation.subject}</p>
-
+    <SimulationShell simulation={simulation}>
       <SimLabScene simulation={simulation} />
-    </div>
+    </SimulationShell>
   );
 }

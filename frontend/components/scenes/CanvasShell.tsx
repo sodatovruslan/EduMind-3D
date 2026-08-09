@@ -154,10 +154,17 @@ export default function CanvasShell({
       // transient (sometimes sticky) scrollbar right after exiting
       // fullscreen. Height/width now snap immediately; only the cosmetic
       // border-radius/shadow still animate, which never affects layout.
+      //
+      // D6 — non-fullscreen height changed from a fixed `h-[34rem]` (544px,
+      // regardless of viewport) to a viewport-relative range so the 3D world
+      // dominates the immersive viewport at rest, not just in fullscreen
+      // (EDUMIND_DESIGN_SYSTEM_V2.md D6 §2). Still a static value (no
+      // `transition` on height/width), same reasoning as above — only the
+      // number changed, not the snap-vs-animate mechanism.
       className={`relative w-full overflow-hidden transition-[border-radius,box-shadow] duration-300 ${
         isFullscreen
           ? "h-full rounded-none border-none shadow-none"
-          : "h-[34rem] rounded-2xl border border-white/10 shadow-2xl"
+          : "h-[75vh] min-h-[28rem] max-h-[48rem] rounded-2xl border border-white/10 shadow-2xl"
       }`}
     >
       <Canvas

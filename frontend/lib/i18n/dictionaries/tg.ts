@@ -217,6 +217,14 @@ export const tg: typeof ru = {
     saved: "Тағйирот захира шуд.",
     saveError: "Захираи тағйирот ноком шуд",
   },
+  simulation: {
+    back: "Бозгашт",
+    aiTeacher: {
+      trigger: "Ёрдамчии ИИ",
+      expand: "Кушодани Ёрдамчии ИИ",
+      collapse: "Пӯшидани Ёрдамчии ИИ",
+    },
+  },
   shell: {
     nav: {
       home: "Асосӣ",

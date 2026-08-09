@@ -25,6 +25,7 @@ import ElectricityGuidedLabPanel from "@/components/lab/ElectricityGuidedLabPane
 import ElectricityLabReportPanel from "@/components/lab/ElectricityLabReportPanel";
 import ElectricityLabNotebookPanel from "@/components/lab/ElectricityLabNotebookPanel";
 import ElectricityResumeModal from "@/components/lab/ElectricityResumeModal";
+import AITeacherDock from "@/components/simulation/AITeacherDock";
 import { COMPONENT_INFO } from "@/lib/component-info";
 import { useSimulationClock } from "@/lib/use-simulation-clock";
 import { useQuality, type QualityLevel } from "@/lib/quality-context";
@@ -1250,15 +1251,17 @@ function TeacherChatPanel({
     ]
   );
   return (
-    <AITeacherChat
-      simulationId={simulationId}
-      context={context}
-      learningProfile={learningProfile}
-      onMessageSent={() => {
-        recordHintUsed();
-        recordLabHintUsed();
-      }}
-    />
+    <AITeacherDock>
+      <AITeacherChat
+        simulationId={simulationId}
+        context={context}
+        learningProfile={learningProfile}
+        onMessageSent={() => {
+          recordHintUsed();
+          recordLabHintUsed();
+        }}
+      />
+    </AITeacherDock>
   );
 }
 
