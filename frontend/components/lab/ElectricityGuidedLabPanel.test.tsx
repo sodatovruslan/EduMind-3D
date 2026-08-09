@@ -6,6 +6,7 @@ import { ExperimentStateProvider, useExperimentState } from "@/components/core/E
 import { ElectricityLabExperienceProvider, useElectricityLabExperience } from "@/components/core/ElectricityLabExperienceProvider";
 import { solveCircuit, type CircuitComponent } from "@/lib/circuit-engine";
 import ElectricityGuidedLabPanel from "./ElectricityGuidedLabPanel";
+import { LocaleProvider } from "@/lib/locale-context";
 
 /**
  * Stage S9.5 — Guided Experiments UI. Renders the REAL panel through the
@@ -72,11 +73,16 @@ function Bridge({ experimentId }: { experimentId: string }) {
   );
 }
 
+// D6.1 — ElectricityGuidedLabPanel now reads its labels from useLocale(),
+// so it needs a LocaleProvider ancestor (default locale is "ru", matching
+// the Russian assertions below — unchanged from before this stage).
 function renderPanel(experimentId: string) {
   return render(
-    <ExperimentStateProvider initialComponents={INITIAL_COMPONENTS}>
-      <Bridge experimentId={experimentId} />
-    </ExperimentStateProvider>
+    <LocaleProvider>
+      <ExperimentStateProvider initialComponents={INITIAL_COMPONENTS}>
+        <Bridge experimentId={experimentId} />
+      </ExperimentStateProvider>
+    </LocaleProvider>
   );
 }
 
@@ -114,6 +120,10 @@ describe("ElectricityGuidedLabPanel — Stage S9.5 educational feedback", () => 
 
     const hint = screen.getByTestId("electricity-guided-lab-locked-hint");
     expect(hint.textContent).toMatch(/шунтирует/);
-    expect(hint.className).toMatch(/amber/);
+    // D6.1 — retuned from the raw `text-amber-*` literal to the semantic
+    // `text-warning` D1 token (same meaning: this is the "here's specific
+    // feedback" caution state), so the assertion now checks for that token
+    // instead of the old literal color name.
+    expect(hint.className).toMatch(/text-warning/);
   });
 });

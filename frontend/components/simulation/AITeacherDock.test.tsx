@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import AITeacherDock from "./AITeacherDock";
 import { LocaleProvider } from "@/lib/locale-context";
 import { ThemeProvider } from "@/lib/theme-context";
+import { ru } from "@/lib/i18n/dictionaries/ru";
+import { en } from "@/lib/i18n/dictionaries/en";
 
 function renderDock() {
   return render(
@@ -52,5 +54,21 @@ describe("AITeacherDock — D6 collapsible floating AI Teacher wrapper", () => {
 
     expect(screen.queryByTestId("chat-contents")).toBeNull();
     expect(screen.getByRole("button", { name: "Открыть ИИ-наставника" })).toBeDefined();
+  });
+
+  it("D6.1 — the collapsed trigger label follows the active locale (RU by default, switches to EN)", async () => {
+    renderDock();
+    await act(async () => {});
+    expect(screen.getByText(ru.simulation.aiTeacher.trigger)).toBeDefined();
+
+    window.localStorage.setItem("edumind:locale", "en");
+    cleanup();
+    renderDock();
+    await act(async () => {});
+
+    expect(screen.getByText(en.simulation.aiTeacher.trigger)).toBeDefined();
+    expect(screen.queryByText(ru.simulation.aiTeacher.trigger)).toBeNull();
+
+    window.localStorage.removeItem("edumind:locale");
   });
 });

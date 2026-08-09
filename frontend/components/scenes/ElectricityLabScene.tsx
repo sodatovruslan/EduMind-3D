@@ -49,6 +49,7 @@ import { ACHIEVEMENTS } from "@/lib/achievements";
 import { explainError } from "@/lib/error-explanations";
 import { submitLabCompleted } from "@/lib/progress-client";
 import type { Simulation } from "@/lib/types";
+import { useLocale } from "@/lib/locale-context";
 
 // Guided Onboarding: наведение курсора в любую точку компонента (не только
 // на клемму) показывает всплывающую подпись с названием — общий хук вместо
@@ -1276,6 +1277,7 @@ function ElectricityResetButton({ onReset }: { onReset: () => void }) {
   // перезаписало бы только что восстановленную дефолтную позицию
   // устаревшим значением из превью
   const { cancelDrag } = useComponentDrag();
+  const { t } = useLocale();
   return (
     <button
       onClick={() => {
@@ -1284,10 +1286,10 @@ function ElectricityResetButton({ onReset }: { onReset: () => void }) {
         resetLabSession();
       }}
       data-testid="reset-button"
-      className="flex items-center gap-2 rounded-full border border-glass-border px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/5"
+      className="ds-focus-ring flex items-center gap-2 rounded-full border border-border/[0.12] px-4 py-2 text-sm font-medium text-text-primary transition-colors hover:bg-text-primary/5"
     >
       <RotateCcw size={16} />
-      Сбросить
+      {t.electricity.hud.reset}
     </button>
   );
 }
@@ -1469,12 +1471,13 @@ function ElectricitySandboxOverlay({
   toggleFullscreen: () => void;
 }) {
   const { draggingComponentId } = useComponentDrag();
+  const { t } = useLocale();
   return (
     <SandboxModeOverlay
       cameraMode={cameraMode}
       onToggleMode={() => setCameraMode((m) => (m === "orbit" ? "sandbox" : "orbit"))}
       disabled={!!draggingComponentId}
-      disabledReason="Переключение режимов недоступно во время переноски компонента"
+      disabledReason={t.electricity.hud.sandboxDisabledDragging}
       isFullscreen={isFullscreen}
       onToggleFullscreen={toggleFullscreen}
     />
@@ -1484,6 +1487,7 @@ function ElectricitySandboxOverlay({
 function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
   const { state, addConnection, updateComponent, resetExperiment, actionsLog, logEvent } = useExperimentState();
   const { quality, setQuality } = useQuality();
+  const { t } = useLocale();
   const clock = useSimulationClock();
   const mountedAtRef = useRef(Date.now());
   // Immersive interaction acceptance fix — тот же паттерн fullscreen, что и
@@ -1555,7 +1559,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
     >
     <ComponentDragProvider onMove={handleComponentMove}>
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-    <div className="min-w-0 flex-1 rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">
+    <div className="min-w-0 flex-1 rounded-ds-panel border border-border/[0.08] bg-surface p-3 sm:p-5">
       <div
         ref={wrapperRef}
         className={
@@ -1582,17 +1586,16 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
         </WireDragProvider>
       </div>
 
-      <div className="glass-panel mt-4 grid grid-cols-1 gap-4 rounded-2xl p-4 sm:grid-cols-2">
-        <div className="flex items-center gap-2 text-xs text-slate-500 sm:col-span-2" data-testid="terminal-legend">
+      <div className="ds-glass mt-4 grid grid-cols-1 gap-4 rounded-ds-panel p-4 sm:grid-cols-2">
+        <div className="flex items-center gap-2 text-ds-caption text-text-muted sm:col-span-2" data-testid="terminal-legend">
           <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: BRASS_COLOR }} />
-          Золотые точки — это клеммы, к которым можно подключать провода. Наведи курсор на компонент, чтобы увидеть его
-          название.
+          {t.electricity.hud.terminalLegend}
         </div>
 
         <TutorialPanel />
         <div>
-          <label htmlFor="voltage-slider" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
-            Напряжение источника: {(battery?.voltageV ?? 0).toFixed(1)} В
+          <label htmlFor="voltage-slider" className="mb-1 block font-mono text-ds-caption uppercase tracking-widest text-text-muted">
+            {t.electricity.hud.voltageLabel}: {(battery?.voltageV ?? 0).toFixed(1)} В
           </label>
           <input
             id="voltage-slider"
@@ -1603,13 +1606,13 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
             value={battery?.voltageV ?? 12}
             onChange={(e) => handleVoltageChange(Number(e.target.value))}
             data-testid="voltage-slider"
-            className="w-full accent-neon-violet"
+            className="w-full accent-accent"
           />
         </div>
 
         <div>
-          <label htmlFor="resistance-slider" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
-            Сопротивление резистора: {(resistor?.resistanceOhm ?? 0).toFixed(1)} Ом
+          <label htmlFor="resistance-slider" className="mb-1 block font-mono text-ds-caption uppercase tracking-widest text-text-muted">
+            {t.electricity.hud.resistanceLabel}: {(resistor?.resistanceOhm ?? 0).toFixed(1)} Ом
           </label>
           <input
             id="resistance-slider"
@@ -1620,7 +1623,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
             value={resistor?.resistanceOhm ?? 4}
             onChange={(e) => handleResistanceChange(Number(e.target.value))}
             data-testid="resistance-slider"
-            className="w-full accent-neon-violet"
+            className="w-full accent-accent"
           />
         </div>
 
@@ -1629,16 +1632,16 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
             <button
               onClick={handleClockToggle}
               data-testid="clock-toggle"
-              title="Управляет только анимацией искр и таймером сессии. Ток и напряжение считаются по закону Ома мгновенно и всегда, независимо от этой кнопки."
-              className="neon-glow-indigo flex items-center gap-2 rounded-full bg-neon-violet px-4 py-2 text-sm font-medium text-white transition hover:brightness-110"
+              title={t.electricity.hud.clockHint}
+              className="ds-focus-ring flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-medium text-white transition-all hover:brightness-110"
             >
               {clock.isRunning ? <Pause size={16} /> : <Play size={16} />}
-              {clock.isRunning ? "Пауза анимации" : "Старт анимации"}
+              {clock.isRunning ? t.electricity.hud.clockPause : t.electricity.hud.clockStart}
             </button>
             <ElectricityResetButton onReset={handleReset} />
           </div>
 
-          <div role="radiogroup" aria-label="Качество рендера" className="flex items-center gap-1 font-mono text-xs text-slate-500">
+          <div role="radiogroup" aria-label={t.electricity.hud.qualityAria} className="flex items-center gap-1 font-mono text-xs text-text-muted">
             {QUALITY_OPTIONS.map((level) => (
               <button
                 key={level}
@@ -1647,10 +1650,10 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
                 aria-checked={quality === level}
                 data-testid={`quality-${level}`}
                 title={QUALITY_LABEL[level]}
-                className={`rounded-full border px-2 py-1 uppercase transition ${
+                className={`ds-focus-ring rounded-full border px-2 py-1 uppercase transition-colors ${
                   quality === level
-                    ? "border-neon-violet text-neon-violet"
-                    : "border-glass-border text-slate-500 hover:text-slate-300"
+                    ? "border-accent text-accent"
+                    : "border-border/[0.12] text-text-muted hover:text-text-primary"
                 }`}
               >
                 {level[0]}
@@ -1664,26 +1667,20 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
           data-active={solution.isCircuitActive}
           data-short={solution.isShortCircuit}
           data-fuse-blown={state.components.find((c) => c.id === "fuse")?.isBlown ?? false}
-          className="rim-light rounded-xl border border-glass-border bg-surface-container-lowest/60 p-3 text-sm text-slate-300 sm:col-span-2"
+          className="rounded-ds-control border border-border/[0.1] bg-surface p-3 text-sm text-text-secondary sm:col-span-2"
         >
-          {!solution.isClosedLoop && (
-            <p className="text-slate-400">
-              Соедини терминалы проводами: потяни от одной точки подключения к другой, чтобы собрать полный контур.
-              Клик по проводу — разрыв соединения.
-            </p>
-          )}
+          {!solution.isClosedLoop && <p className="text-text-muted">{t.electricity.hud.statusConnect}</p>}
           {solution.isClosedLoop && solution.isShortCircuit && (
-            <p className="font-medium text-red-400">
-              ⚠ Короткое замыкание! Сопротивление контура почти нулевое — расчетный ток {solution.currentA.toFixed(1)} А.
-            </p>
+            <p className="font-medium text-danger">{t.electricity.hud.statusShort.replace("{current}", solution.currentA.toFixed(1))}</p>
           )}
           {solution.isClosedLoop && !solution.isShortCircuit && !solution.isCircuitActive && (
-            <p className="text-amber-300">Цепь замкнута, но ток не течет — проверь выключатель и предохранитель.</p>
+            <p className="text-warning">{t.electricity.hud.statusClosedNoCurrent}</p>
           )}
           {solution.isClosedLoop && solution.isCircuitActive && (
-            <p className="text-emerald-300">
-              Ток течет: I = {solution.currentA.toFixed(2)} А (закон Ома: U/R = {(battery?.voltageV ?? 0).toFixed(1)} В /
-              контур).
+            <p className="text-success">
+              {t.electricity.hud.statusActive
+                .replace("{current}", solution.currentA.toFixed(2))
+                .replace("{voltage}", (battery?.voltageV ?? 0).toFixed(1))}
             </p>
           )}
         </div>
@@ -1728,7 +1725,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
         </AnimatePresence>
 
         <div className="sm:col-span-2">
-          <h3 className="mb-2 font-mono text-xs uppercase tracking-widest text-slate-500">Быстрая проверка</h3>
+          <h3 className="mb-2 font-mono text-xs uppercase tracking-widest text-text-muted">{t.electricity.hud.quickCheckHeading}</h3>
           <TaskPanel />
         </div>
 
@@ -1740,7 +1737,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
             измерение/анализ/вывод), автоматический отчёт и Лабораторный
             журнал измерений. */}
         <div className="space-y-4 sm:col-span-2">
-          <h3 className="font-headline text-lg font-semibold text-slate-100">Лабораторные работы</h3>
+          <h3 className="font-headline text-lg font-semibold text-text-primary">{t.electricity.hud.labHeading}</h3>
           <ElectricityLabExperienceSection />
           <ElectricityLabNotebookPanel />
         </div>

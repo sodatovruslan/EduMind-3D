@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import SimulationShell from "./SimulationShell";
 import { LocaleProvider } from "@/lib/locale-context";
@@ -76,5 +76,19 @@ describe("SimulationShell — D6 immersive route chrome", () => {
     await act(async () => {});
 
     expect(screen.getByText("Legacy SimLab")).toBeDefined();
+  });
+
+  it("D6.1 — clicking the Locale switcher updates the shell's own chrome immediately, no reload", async () => {
+    renderShell(makeSimulation());
+    await act(async () => {});
+    expect(screen.getByRole("link", { name: "Назад" })).toBeDefined();
+
+    fireEvent.click(screen.getAllByRole("radio", { name: "English" })[0]);
+    await act(async () => {});
+
+    expect(screen.getByRole("link", { name: "Back" })).toBeDefined();
+    expect(screen.queryByRole("link", { name: "Назад" })).toBeNull();
+    // real simulation title (data, not chrome) never gets "translated"
+    expect(screen.getByText("Нейтрализация")).toBeDefined();
   });
 });

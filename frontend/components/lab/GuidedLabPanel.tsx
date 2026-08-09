@@ -6,11 +6,23 @@ import { useChemistryLabExperience } from "@/components/core/ChemistryLabExperie
 import AutosaveBadge from "@/components/lab/AutosaveBadge";
 import { autosaveEngine } from "@/lib/autosave-engine";
 import { serializeChemistrySave } from "@/lib/chemistry-save-serializer";
+import { useLocale } from "@/lib/locale-context";
 
 /**
  * Chemistry World — Guided Laboratory Mode UI (Stage 5.6 & S-8).
+ *
+ * D6.1 — moved from `.glass-panel`/`slate-*`/`neon-violet` onto D1 tokens
+ * and `useLocale()`/t.chemistry.guidedLab.*. `currentStep.instruction`/
+ * `.objectives`/`.safetyNotes` stay untranslated — they're per-experiment
+ * catalog DATA (lib/chemistry-lab-catalog.ts), not static UI chrome; see
+ * EDUMIND_DESIGN_SYSTEM_V2.md D6.1 notes for why that's a separate,
+ * deferred follow-up rather than a presentation change. The dev-only
+ * "Dev Autosave" block (NODE_ENV-gated) is left in its existing styling
+ * and not localized — it's a developer tool, not product surface.
  */
 export default function GuidedLabPanel() {
+  const { t } = useLocale();
+  const g = t.chemistry.guidedLab;
   const {
     selectedExperiment,
     exitExperiment,
@@ -42,7 +54,7 @@ export default function GuidedLabPanel() {
   const isStepDone = isCurrentStepUnlocked && !isIntroStep;
 
   return (
-    <div className="glass-panel rounded-2xl border border-neon-violet/40 p-4" data-testid="guided-lab-panel">
+    <div className="ds-glass rounded-ds-panel border-accent/40 p-4" data-testid="guided-lab-panel">
       {/* Hidden elements for Playwright / automated tests */}
       <span
         data-testid="chemistry-autosave-state"
@@ -62,9 +74,9 @@ export default function GuidedLabPanel() {
 
       <div className="mb-3 flex items-center justify-between">
         <div>
-          <h3 className="font-headline text-base font-semibold text-slate-100">{selectedExperiment.title}</h3>
-          <p className="font-mono text-xs uppercase tracking-widest text-slate-500" data-testid="guided-lab-progress-label">
-            Шаг {currentStepIndex + 1} / {totalSteps}
+          <h3 className="font-headline text-base font-semibold text-text-primary">{selectedExperiment.title}</h3>
+          <p className="font-mono text-ds-caption uppercase tracking-widest text-text-muted" data-testid="guided-lab-progress-label">
+            {g.stepCounter.replace("{current}", String(currentStepIndex + 1)).replace("{total}", String(totalSteps))}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -73,9 +85,9 @@ export default function GuidedLabPanel() {
             type="button"
             onClick={exitExperiment}
             data-testid="guided-lab-exit"
-            title="Выйти из эксперимента"
-            aria-label="Выйти из эксперимента"
-            className="text-slate-400 hover:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-neon-violet"
+            title={g.exitAria}
+            aria-label={g.exitAria}
+            className="ds-focus-ring rounded-ds-control text-text-muted transition-colors hover:text-text-primary"
           >
             <X size={18} />
           </button>
@@ -83,19 +95,19 @@ export default function GuidedLabPanel() {
       </div>
 
       <div
-        className="mb-3 h-1.5 w-full overflow-hidden rounded-full bg-white/10"
+        className="mb-3 h-1.5 w-full overflow-hidden rounded-full bg-text-primary/10"
         role="progressbar"
         aria-valuenow={progressPct}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-label="Прогресс эксперимента"
+        aria-label={g.progressAria}
       >
-        <div className="h-full rounded-full bg-neon-violet transition-all" style={{ width: `${progressPct}%` }} />
+        <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${progressPct}%` }} />
       </div>
 
       <div className="mb-3">
-        <h4 className="mb-1 font-mono text-xs uppercase tracking-widest text-slate-400">Цели</h4>
-        <ul className="space-y-0.5 text-sm text-slate-300">
+        <h4 className="mb-1 font-mono text-ds-caption uppercase tracking-widest text-text-muted">{g.objectivesHeading}</h4>
+        <ul className="space-y-0.5 text-ds-body text-text-secondary">
           {selectedExperiment.objectives.map((o) => (
             <li key={o}>• {o}</li>
           ))}
@@ -103,9 +115,9 @@ export default function GuidedLabPanel() {
       </div>
 
       {modeConfig.showSafetyReminders && selectedExperiment.safetyNotes.length > 0 && (
-        <div className="mb-3 rounded-xl border border-amber-400/40 bg-amber-500/10 p-3 text-sm text-amber-200" data-testid="guided-lab-safety">
+        <div className="mb-3 rounded-ds-control border border-warning/40 bg-warning/10 p-3 text-ds-body text-warning" data-testid="guided-lab-safety">
           <div className="mb-1 flex items-center gap-1 font-medium">
-            <AlertTriangle size={14} /> Безопасность
+            <AlertTriangle size={14} /> {g.safetyHeading}
           </div>
           <ul className="space-y-0.5">
             {selectedExperiment.safetyNotes.map((n) => (
@@ -117,19 +129,19 @@ export default function GuidedLabPanel() {
 
       {!modeConfig.showObjectivesOnly && currentStep && (
         <div
-          className={`mb-3 rounded-xl border p-3 text-sm transition ${
+          className={`mb-3 rounded-ds-control border p-3 text-ds-body transition-colors ${
             isIntroStep
-              ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-200"
+              ? "border-accent-geo/40 bg-accent-geo/10 text-accent-geo"
               : isStepDone && modeConfig.showStepHighlighting
-              ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200"
-              : "border-glass-border bg-white/5 text-slate-200"
+              ? "border-success/40 bg-success/10 text-success"
+              : "border-border/[0.1] bg-text-primary/5 text-text-primary"
           }`}
           data-testid="guided-lab-current-step"
         >
           {isIntroStep ? (
-            <Target size={14} className="mr-1.5 inline text-cyan-400" />
+            <Target size={14} className="mr-1.5 inline text-accent-geo" />
           ) : isStepDone && modeConfig.showStepHighlighting ? (
-            <CheckCircle2 size={14} className="mr-1.5 inline text-emerald-400" />
+            <CheckCircle2 size={14} className="mr-1.5 inline text-success" />
           ) : null}
           {currentStep.instruction}
         </div>
@@ -137,8 +149,8 @@ export default function GuidedLabPanel() {
 
       {isLastStep && (
         <div className="mb-3">
-          <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400" htmlFor="lab-conclusion">
-            Вывод (Лабораторный журнал)
+          <label className="mb-1 block font-mono text-ds-caption uppercase tracking-widest text-text-muted" htmlFor="lab-conclusion">
+            {g.conclusionLabel}
           </label>
           <textarea
             id="lab-conclusion"
@@ -146,8 +158,8 @@ export default function GuidedLabPanel() {
             onChange={(e) => setConclusionDraft(e.target.value)}
             rows={3}
             data-testid="guided-lab-conclusion"
-            className="w-full rounded-md border border-glass-border bg-white/5 p-2 text-sm text-slate-100 focus:border-neon-violet focus:outline-none"
-            placeholder="Что ты наблюдал и почему это произошло?"
+            className="ds-input ds-focus-ring"
+            placeholder={g.conclusionPlaceholder}
           />
         </div>
       )}
@@ -158,9 +170,9 @@ export default function GuidedLabPanel() {
           onClick={isLastStep ? completeExperiment : advanceStep}
           disabled={!isCurrentStepUnlocked}
           data-testid="guided-lab-advance"
-          className="flex items-center gap-2 rounded-full bg-neon-violet px-4 py-2 text-sm font-medium text-white transition hover:brightness-110 disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+          className="ds-focus-ring flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-ds-body font-medium text-white transition-all hover:brightness-110 disabled:opacity-40"
         >
-          {isLastStep ? "Завершить эксперимент" : "Далее"}
+          {isLastStep ? g.completeButton : g.nextButton}
           <ArrowRight size={16} />
         </button>
 

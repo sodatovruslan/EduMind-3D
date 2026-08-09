@@ -124,8 +124,17 @@ export default function CanvasShell({
   floorY = -1,
   bloomIntensity = 0.55,
   showFloor = true,
-  backgroundTop = "#1e2340",
-  backgroundBottom = "#04050c",
+  // D6.1 — retuned from the legacy saturated indigo-navy (#1e2340/#04050c)
+  // to a neutral graphite-with-a-whisper-of-cool-undertone gradient,
+  // matching Design V2's dark-mode direction (§4 of the D6.1 brief: "not
+  // old dark navy SaaS UI"). This is the WebGL scene's own background
+  // texture (visible above/around room geometry, not UI chrome), so it's
+  // intentionally NOT wired to the Light/Dark theme — the brief explicitly
+  // separates "UI chrome theme" from "physical/scientific environment",
+  // and the scene's lighting/atmosphere stays as designed regardless of
+  // the student's chrome theme choice.
+  backgroundTop = "#1c1f26",
+  backgroundBottom = "#05060a",
   quality = "medium",
   orbitEnabled = true,
   minPolarAngle,
