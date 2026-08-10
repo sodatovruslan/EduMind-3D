@@ -87,15 +87,6 @@ function loadStylesheetOnce(href: string): void {
   document.head.appendChild(link);
 }
 
-// Natural Earth admin-0 countries — грубый центр (среднее по вершинам
-// первого/самого большого кольца) для подписи-текста страны. Не идеальный
-// картографический центроид (для сложных форм типа архипелагов может
-// уехать в сторону) — достаточно для спайка, честно не выдаётся за точную
-// картографию.
-function roughPolygonCenter(Cesium: any, positions: any[]): any {
-  return Cesium.BoundingSphere.fromPoints(positions).center;
-}
-
 export default function GeoWorldEngineSpikePage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<any>(null);
@@ -138,10 +129,23 @@ export default function GeoWorldEngineSpikePage() {
         });
 
         // Диагностика — НЕ маскируем проблему: реальные ошибки загрузки
-        // тайлов видны прямо на странице, не только "синий globe без объяснений".
-        gibsProvider.errorEvent.addEventListener((err: any) => {
-          setImageryStats((s) => ({ ...s, failed: s.failed + 1, lastError: String(err?.message ?? err) }));
-        });
+        // тайлов видны прямо на странице, не только "синий globe без
+        // объяснений". G6.6.1 (второй раунд, после headless-браузерной
+        // проверки): errorEvent один не даёт честного счётчика "сколько
+        // реально загрузилось" (у Cesium нет отдельного "success"-события
+        // на уровне провайдера) — оборачиваем сам requestImage, тот же
+        // приём, которым сама эта ошибка была найдена и диагностирована.
+        const originalRequestImage = gibsProvider.requestImage.bind(gibsProvider);
+        gibsProvider.requestImage = (...args: unknown[]) => {
+          const result = originalRequestImage(...args);
+          if (result && typeof result.then === "function") {
+            result.then(
+              () => setImageryStats((s) => ({ ...s, success: s.success + 1 })),
+              (err: unknown) => setImageryStats((s) => ({ ...s, failed: s.failed + 1, lastError: String((err as Error)?.message ?? err) }))
+            );
+          }
+          return result;
+        };
 
         let terrainProvider = new Cesium.EllipsoidTerrainProvider();
         try {
@@ -158,8 +162,19 @@ export default function GeoWorldEngineSpikePage() {
         }
         if (cancelled) return;
 
+        // G6.6.1 root-cause #2 (найдено headless-браузером, Playwright,
+        // после того как визуальная проверка снова показала синий globe):
+        // конструктор `Viewer`'s `imageryProvider` опция в Cesium 1.136 —
+        // ВЕСТИГИАЛЬНАЯ. Реальный исходник (сверено напрямую, не по
+        // памяти/документации) использует `options.imageryProvider` ТОЛЬКО
+        // чтобы подавить дефолтный base layer — сам провайдер никогда не
+        // добавляется в `viewer.imageryLayers`. Подтверждено runtime-
+        // инспекцией: `viewer.imageryLayers.length === 0` несмотря на
+        // переданный `imageryProvider`. Актуальный способ — `baseLayer:
+        // false` при конструировании + явный `imageryLayers.addImageryProvider()`
+        // после.
         const viewer = new Cesium.Viewer(containerRef.current, {
-          imageryProvider: gibsProvider,
+          baseLayer: false,
           terrainProvider,
           baseLayerPicker: false,
           geocoder: false,
@@ -172,17 +187,8 @@ export default function GeoWorldEngineSpikePage() {
           infoBox: true,
           selectionIndicator: true,
         });
+        viewer.imageryLayers.addImageryProvider(gibsProvider);
         viewerRef.current = viewer;
-
-        // Cesium сам считает успешные тайлы через tileLoadProgressEvent —
-        // используем его вместо ручного подсчёта в каждом обработчике.
-        let successCount = 0;
-        viewer.scene.globe.tileLoadProgressEvent.addEventListener((queued: number) => {
-          if (queued === 0) {
-            successCount += 1;
-            setImageryStats((s) => ({ ...s, success: successCount }));
-          }
-        });
 
         // Cesium сам не даёт камере проходить сквозь настоящий рельеф
         // (enableCollisionDetection, включено по умолчанию) — РЕАЛЬНОЕ,
@@ -205,14 +211,30 @@ export default function GeoWorldEngineSpikePage() {
         // Подписи СТРАН — текстом, не иконками, видны почти всегда
         // (глобальный/региональный масштаб) — 177 стран не создают спама,
         // в отличие от 1000+ городов.
+        //
+        // G6.6.1, найдено ПОВТОРНОЙ визуальной проверкой (даже после фикса
+        // imagery): у Natural Earth admin-0 countries НЕСКОЛЬКО Feature на
+        // одну страну (материк отдельно от заморских территорий/спорных
+        // анклавов и т.п.) — например у Франции их несколько. Наивный "один
+        // label на одну entity" даёт дублирующиеся подписи на одну и ту же
+        // страну. Группируем по имени, оставляем ТОЛЬКО самый большой
+        // полигон (по радиусу bounding sphere) — это основная территория
+        // страны, не мелкий анклав/остров.
+        const bestCountryCandidate = new Map<string, { center: any; radius: number }>();
         for (const entity of borders.entities.values) {
           if (!entity.polygon) continue;
           const hierarchy = entity.polygon.hierarchy?.getValue(Cesium.JulianDate.now());
           const positions = hierarchy?.positions ?? hierarchy;
           if (!positions || !Array.isArray(positions) || positions.length === 0) continue;
-          const center = roughPolygonCenter(Cesium, positions);
           const name = entity.properties?.NAME_RU?.getValue?.() ?? entity.properties?.NAME?.getValue?.() ?? "";
           if (!name) continue;
+          const sphere = Cesium.BoundingSphere.fromPoints(positions);
+          const existing = bestCountryCandidate.get(name);
+          if (!existing || sphere.radius > existing.radius) {
+            bestCountryCandidate.set(name, { center: sphere.center, radius: sphere.radius });
+          }
+        }
+        for (const [name, { center }] of bestCountryCandidate) {
           viewer.entities.add({
             position: center,
             label: {
