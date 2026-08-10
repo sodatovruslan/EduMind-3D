@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { Box, ChevronLeft, ChevronRight } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { useLocale } from "@/lib/locale-context";
-import { getNavItems } from "@/lib/appshell-nav";
+import { getNavItems, isNavItemActive } from "@/lib/appshell-nav";
 
 export const RAIL_WIDTH_EXPANDED = "15rem";
 export const RAIL_WIDTH_COLLAPSED = "4.5rem";
@@ -36,7 +36,7 @@ export default function Rail({ collapsed, onToggleCollapsed }: { collapsed: bool
 
       <nav className="flex-1 space-y-1 px-3 py-2">
         {items.map(({ key, href, icon: Icon }) => {
-          const isActive = pathname?.startsWith(href) ?? false;
+          const isActive = isNavItemActive(pathname, href);
           const label = t.shell.nav[key];
           return (
             <Link

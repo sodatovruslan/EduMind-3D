@@ -7,7 +7,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Box, LogOut, User as UserIcon, X } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { useLocale } from "@/lib/locale-context";
-import { getNavItems } from "@/lib/appshell-nav";
+import { getNavItems, isNavItemActive } from "@/lib/appshell-nav";
 import { LocaleSwitcher, Surface, ThemeToggle } from "@/components/design-system";
 
 /**
@@ -83,7 +83,7 @@ export default function MobileDrawer({ open, onClose }: { open: boolean; onClose
 
               <nav className="flex-1 space-y-1">
                 {items.map(({ key, href, icon: Icon }) => {
-                  const isActive = pathname?.startsWith(href) ?? false;
+                  const isActive = isNavItemActive(pathname, href);
                   return (
                     <Link
                       key={key}

@@ -50,6 +50,7 @@ class ClassroomRead(BaseModel):
     status: ClassroomStatus
     created_at: datetime
     updated_at: datetime
+    student_count: int = 0
 
 
 class MembershipCreate(BaseModel):
@@ -67,3 +68,10 @@ class MembershipRead(BaseModel):
 
 class ClassStudentRead(UserRead):
     membership: MembershipRead
+
+
+class AvailableStudentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    full_name: str
+    email: str

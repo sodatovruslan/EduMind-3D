@@ -1,4 +1,4 @@
-import { LayoutDashboard, Users } from "lucide-react";
+import { GraduationCap, LayoutDashboard, Users } from "lucide-react";
 import type { UserRole } from "@/lib/types";
 
 /**
@@ -9,7 +9,7 @@ import type { UserRole } from "@/lib/types";
  * role gate already enforced inside `teacher/page.tsx`'s own
  * `ProtectedRoute allowedRoles`). No invented destinations.
  */
-export type NavItemKey = "home" | "teacherArea";
+export type NavItemKey = "home" | "teacherArea" | "classes";
 
 export interface NavItem {
   key: NavItemKey;
@@ -20,9 +20,16 @@ export interface NavItem {
 const ALL_NAV_ITEMS: NavItem[] = [
   { key: "home", href: "/dashboard", icon: LayoutDashboard },
   { key: "teacherArea", href: "/teacher", icon: Users },
+  { key: "classes", href: "/teacher/classes", icon: GraduationCap },
 ];
 
 export function getNavItems(role: UserRole | undefined): NavItem[] {
   const isTeacher = role === "teacher" || role === "admin";
-  return ALL_NAV_ITEMS.filter((item) => item.key !== "teacherArea" || isTeacher);
+  return ALL_NAV_ITEMS.filter((item) => !["teacherArea", "classes"].includes(item.key) || isTeacher);
+}
+
+export function isNavItemActive(pathname: string | null, href: string): boolean {
+  if (!pathname) return false;
+  if (href === "/teacher") return pathname === href;
+  return pathname === href || pathname.startsWith(`${href}/`);
 }

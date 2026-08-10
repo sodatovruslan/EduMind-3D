@@ -173,3 +173,39 @@ async def test_reusable_student_scope_is_membership_bound_and_admin_is_global(db
     assert not await teacher_has_student_access(db_session, teacher_a, student_b.id)
     assert await accessible_student_ids(db_session, admin) is None
     assert await teacher_has_student_access(db_session, admin, student_b.id)
+
+
+@pytest.mark.asyncio
+async def test_class_counts_and_available_student_search_are_real_and_bounded(client, db_session):
+    ta, a, tb, b, student_a, sah, student_b, sbh, *_ = await _world(client, db_session)
+    classroom = await _create(client, a)
+    assert classroom["student_count"] == 0
+    search_url = f"/api/classes/{classroom['id']}/available-students?q=Student"
+    candidates = (await client.get(search_url, headers=a)).json()
+    assert {candidate["id"] for candidate in candidates} == {student_a.id, student_b.id}
+    assert set(candidates[0]) == {"id", "full_name", "email"}
+
+    await client.post(f"/api/classes/{classroom['id']}/students", headers=a, json={"student_id": student_a.id})
+    assert (await client.get(f"/api/classes/{classroom['id']}", headers=a)).json()["student_count"] == 1
+    assert (await client.get("/api/classes", headers=a)).json()[0]["student_count"] == 1
+    candidates = (await client.get(search_url, headers=a)).json()
+    assert {candidate["id"] for candidate in candidates} == {student_b.id}
+
+
+@pytest.mark.asyncio
+async def test_available_student_lookup_requires_class_scope_and_teacher_role(client, db_session):
+    ta, a, tb, b, student_a, student_h, *_ = await _world(client, db_session)
+    classroom = await _create(client, b, "Teacher B Class")
+    url = f"/api/classes/{classroom['id']}/available-students?q=Student"
+    assert (await client.get(url, headers=a)).status_code == 404
+    assert (await client.get(url, headers=student_h)).status_code == 403
+    assert (await client.get(f"/api/classes/{classroom['id']}/available-students?q=x", headers=b)).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_admin_can_search_available_students_for_any_teacher_class(client, db_session):
+    ta, a, tb, b, student_a, student_h, student_b, sbh, admin, admin_h = await _world(client, db_session)
+    classroom = await _create(client, b, "Teacher B Class")
+    response = await client.get(f"/api/classes/{classroom['id']}/available-students?q=Student&limit=1", headers=admin_h)
+    assert response.status_code == 200
+    assert len(response.json()) == 1
