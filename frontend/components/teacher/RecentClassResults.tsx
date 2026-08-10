@@ -12,9 +12,9 @@ import { moduleAccentClass, moduleLabel } from "./module-meta";
  * ordered by LabResult.completed_at desc, limited server-side. No fake
  * activity feed — an empty class just shows the honest empty state.
  */
-export default function RecentClassResults() {
+export default function RecentClassResults({ classId }: { classId: string | null }) {
   const { t, locale } = useLocale();
-  const { data: results, isLoading } = useSWR("teacher-recent-results", () => getClassRecentResults(20));
+  const { data: results, isLoading } = useSWR(["teacher-recent-results", classId], () => getClassRecentResults(20, classId));
 
   return (
     <section data-testid="teacher-recent-results">

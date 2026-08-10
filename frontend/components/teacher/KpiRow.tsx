@@ -2,9 +2,8 @@
 
 import useSWR from "swr";
 import { Activity, CheckCircle2, TrendingUp, Users } from "lucide-react";
-import { swrFetcher } from "@/lib/swr-fetcher";
+import { getTeacherStats } from "@/lib/teacher-client";
 import { useLocale } from "@/lib/locale-context";
-import type { ClassStats } from "@/lib/types";
 import { GlassPanel, Skeleton } from "@/components/design-system";
 
 /**
@@ -33,9 +32,9 @@ function KpiCard({ icon: Icon, accentClass, label, value, isLoading }: {
   );
 }
 
-export default function KpiRow() {
+export default function KpiRow({ classId }: { classId: string | null }) {
   const { t } = useLocale();
-  const { data: stats, isLoading } = useSWR<ClassStats>("/api/results/stats", swrFetcher);
+  const { data: stats, isLoading } = useSWR(["teacher-stats", classId], () => getTeacherStats(classId));
 
   return (
     <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">

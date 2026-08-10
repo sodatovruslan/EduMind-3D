@@ -13,11 +13,11 @@ import { GlassPanel, Skeleton, Surface } from "@/components/design-system";
  * topic). No AI risk score. t.teacher.attentionRuleCaption states the rule
  * in the UI itself so it's never a mystery why a student is flagged.
  */
-export default function AttentionList({ onSelect }: { onSelect: (id: string) => void }) {
+export default function AttentionList({ classId, onSelect }: { classId: string | null; onSelect: (id: string) => void }) {
   const { t } = useLocale();
-  const { data: students, isLoading } = useSWR("teacher-students-overview", getStudentsOverview);
+  const { data: students, isLoading } = useSWR(["teacher-attention", classId], () => getStudentsOverview(classId, "", "attention"));
 
-  const flagged = students?.filter((s) => s.needs_attention) ?? [];
+  const flagged = students ?? [];
 
   return (
     <section>

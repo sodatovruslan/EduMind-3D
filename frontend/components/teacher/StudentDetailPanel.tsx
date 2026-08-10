@@ -47,17 +47,19 @@ function TopicTags({ topics, tone }: { topics: string[]; tone: "strong" | "weak"
  */
 export default function StudentDetailPanel({
   studentId,
+  classId,
   onBack,
   className = "",
 }: {
   studentId: string | null;
+  classId: string | null;
   onBack: () => void;
   className?: string;
 }) {
   const { t, locale } = useLocale();
   const { data: student, isLoading } = useSWR(
-    studentId ? ["teacher-student-detail", studentId] : null,
-    () => getStudentDetail(studentId as string)
+    studentId ? ["teacher-student-detail", studentId, classId] : null,
+    () => getStudentDetail(studentId as string, classId)
   );
 
   if (!studentId) {

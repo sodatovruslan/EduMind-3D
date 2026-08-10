@@ -17,6 +17,13 @@ class StudentOverview(BaseModel):
     needs_attention: bool
 
 
+class TeacherStats(BaseModel):
+    average_score: float | None
+    completion_rate: float
+    active_students: int
+    total_students: int
+
+
 class ModuleResultSummary(BaseModel):
     module: str
     average_score: float | None

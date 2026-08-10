@@ -9,6 +9,7 @@ import StudentDirectory from "@/components/teacher/StudentDirectory";
 import StudentDetailPanel from "@/components/teacher/StudentDetailPanel";
 import RecentClassResults from "@/components/teacher/RecentClassResults";
 import ModuleBreakdown from "@/components/teacher/ModuleBreakdown";
+import ClassFilter from "@/components/teacher/ClassFilter";
 
 export default function TeacherPage() {
   return (
@@ -34,28 +35,36 @@ export default function TeacherPage() {
  */
 function TeacherDashboard() {
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+  const [classId, setClassId] = useState<string | null>(null);
+
+  function selectClass(nextClassId: string | null) {
+    setClassId(nextClassId);
+    setSelectedStudentId(null);
+  }
 
   return (
     <div className="mx-auto max-w-[90rem] space-y-8">
       <Hero />
-      <KpiRow />
-      <AttentionList onSelect={setSelectedStudentId} />
+      <ClassFilter value={classId} onChange={selectClass} />
+      <KpiRow classId={classId} />
+      <AttentionList classId={classId} onSelect={setSelectedStudentId} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[22rem_1fr]">
         <div className={selectedStudentId ? "hidden lg:block" : "block"}>
-          <StudentDirectory selectedId={selectedStudentId} onSelect={setSelectedStudentId} className="h-full" />
+          <StudentDirectory classId={classId} selectedId={selectedStudentId} onSelect={setSelectedStudentId} className="h-full" />
         </div>
         <div className={selectedStudentId ? "block" : "hidden lg:block"}>
           <StudentDetailPanel
             studentId={selectedStudentId}
+            classId={classId}
             onBack={() => setSelectedStudentId(null)}
             className="h-full"
           />
         </div>
       </div>
 
-      <RecentClassResults />
-      <ModuleBreakdown />
+      <RecentClassResults classId={classId} />
+      <ModuleBreakdown classId={classId} />
     </div>
   );
 }

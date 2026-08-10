@@ -13,9 +13,9 @@ import { moduleAccentClass, moduleLabel } from "./module-meta";
  * GeoWorld, which has no learning-result data model yet) is simply absent
  * from the response — never rendered with a fabricated 0/—.
  */
-export default function ModuleBreakdown() {
+export default function ModuleBreakdown({ classId }: { classId: string | null }) {
   const { t } = useLocale();
-  const { data: breakdown, isLoading } = useSWR("teacher-module-breakdown", getClassModuleBreakdown);
+  const { data: breakdown, isLoading } = useSWR(["teacher-module-breakdown", classId], () => getClassModuleBreakdown(classId));
 
   return (
     <section>

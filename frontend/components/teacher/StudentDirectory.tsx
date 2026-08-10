@@ -1,11 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { Search } from "lucide-react";
 import { useLocale } from "@/lib/locale-context";
 import { INTL_LOCALE_TAG } from "@/lib/i18n/locales";
-import { getStudentsOverview, type StudentOverview } from "@/lib/teacher-client";
+import { getStudentsOverview } from "@/lib/teacher-client";
 import { Skeleton, Surface } from "@/components/design-system";
 
 type Filter = "all" | "attention" | "active" | "inactive";
@@ -17,43 +17,40 @@ type Sort = "activity" | "name";
  * least one lab ever) — not an invented recency window (e.g. "active in
  * last 7 days"), which the D7 brief explicitly warns against inventing.
  */
-function matchesFilter(student: StudentOverview, filter: Filter): boolean {
-  if (filter === "attention") return student.needs_attention;
-  if (filter === "active") return student.last_activity_at !== null;
-  if (filter === "inactive") return student.last_activity_at === null;
-  return true;
-}
-
 export default function StudentDirectory({
   selectedId,
+  classId,
   onSelect,
   className = "",
 }: {
   selectedId: string | null;
+  classId: string | null;
   onSelect: (id: string) => void;
   className?: string;
 }) {
   const { t, locale } = useLocale();
-  const { data: students, isLoading } = useSWR("teacher-students-overview", getStudentsOverview);
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [sort, setSort] = useState<Sort>("activity");
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+  const { data: students, isLoading } = useSWR(
+    ["teacher-students-overview", classId, debouncedQuery, filter],
+    () => getStudentsOverview(classId, debouncedQuery, filter)
+  );
 
   const visible = useMemo(() => {
     if (!students) return [];
-    const q = query.trim().toLowerCase();
-    const filtered = students.filter(
-      (s) =>
-        matchesFilter(s, filter) &&
-        (q === "" || s.full_name.toLowerCase().includes(q) || s.email.toLowerCase().includes(q))
-    );
-    return [...filtered].sort((a, b) => {
+    return [...students].sort((a, b) => {
       if (sort === "name") return a.full_name.localeCompare(b.full_name);
       const aTime = a.last_activity_at ? new Date(a.last_activity_at).getTime() : 0;
       const bTime = b.last_activity_at ? new Date(b.last_activity_at).getTime() : 0;
       return bTime - aTime;
     });
-  }, [students, query, filter, sort]);
+  }, [students, sort]);
 
   return (
     <section className={`flex h-full flex-col ${className}`}>

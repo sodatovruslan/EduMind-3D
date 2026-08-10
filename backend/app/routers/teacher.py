@@ -12,11 +12,14 @@ least one weak topic — avg mistakes >= progress_service.WEAK_TOPIC_MIN_AVG_MIS
 per attempt on some topic). Both thresholds are the same ones already used
 for the student-facing profile; no separate/ML scoring involved.
 """
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import require_role
+from app.core.classroom_scope import accessible_student_ids
 from app.database import get_db
 from app.models.lab_result import LabResult
 from app.models.learning_event import LearningEvent
@@ -29,12 +32,23 @@ from app.schemas.teacher import (
     RecentResult,
     StudentDetail,
     StudentOverview,
+    TeacherStats,
 )
 from app.services.progress_service import compute_derived_stats
 
 router = APIRouter(prefix="/api/teacher", tags=["teacher"])
 
 _TEACHER_OR_ADMIN = require_role(UserRole.TEACHER, UserRole.ADMIN)
+
+
+async def _analytics_scope(
+    db: AsyncSession, actor: User, classroom_id: str | None
+) -> set[str] | None:
+    return await accessible_student_ids(db, actor, classroom_id)
+
+
+def _apply_id_scope(query, student_ids: set[str] | None, column=User.id):
+    return query if student_ids is None else query.where(column.in_(student_ids))
 
 
 def _needs_attention(events: list[LearningEvent], stats: dict) -> bool:
@@ -68,9 +82,54 @@ async def _latest_activity_by_user(db: AsyncSession, student_ids: list[str]) -> 
     return {user_id: (score, completed_at) for user_id, score, completed_at in result.all()}
 
 
+@router.get("/stats", response_model=TeacherStats)
+async def teacher_stats(
+    class_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(_TEACHER_OR_ADMIN),
+):
+    student_ids = await _analytics_scope(db, actor, class_id)
+    student_query = select(func.count()).select_from(User).where(User.role == UserRole.STUDENT)
+    total_students = (await db.execute(_apply_id_scope(student_query, student_ids))).scalar_one()
+    total_simulations = (await db.execute(select(func.count()).select_from(Simulation))).scalar_one()
+
+    score_query = select(func.avg(LabResult.score)).where(LabResult.score.isnot(None))
+    active_query = select(func.count(func.distinct(LabResult.user_id)))
+    pairs_query = select(LabResult.user_id, LabResult.simulation_id).distinct()
+    score_query = _apply_id_scope(score_query, student_ids, LabResult.user_id)
+    active_query = _apply_id_scope(active_query, student_ids, LabResult.user_id)
+    pairs_query = _apply_id_scope(pairs_query, student_ids, LabResult.user_id)
+    average_score = (await db.execute(score_query)).scalar()
+    active_students = (await db.execute(active_query)).scalar() or 0
+    completed_pairs = (await db.execute(select(func.count()).select_from(pairs_query.subquery()))).scalar_one()
+    possible_pairs = total_students * total_simulations
+    return TeacherStats(
+        average_score=round(average_score, 1) if average_score is not None else None,
+        completion_rate=round((completed_pairs / possible_pairs) * 100, 1) if possible_pairs else 0.0,
+        active_students=active_students,
+        total_students=total_students,
+    )
+
+
 @router.get("/students-overview", response_model=list[StudentOverview])
-async def students_overview(db: AsyncSession = Depends(get_db), _teacher: User = Depends(_TEACHER_OR_ADMIN)):
-    students = (await db.execute(select(User).where(User.role == UserRole.STUDENT))).scalars().all()
+async def students_overview(
+    class_id: str | None = None,
+    q: str | None = Query(default=None, max_length=100),
+    filter: Literal["all", "attention", "active", "inactive"] = "all",
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(_TEACHER_OR_ADMIN),
+):
+    student_ids = await _analytics_scope(db, actor, class_id)
+    query = select(User).where(User.role == UserRole.STUDENT)
+    query = _apply_id_scope(query, student_ids)
+    if q and (term := q.strip()):
+        query = query.where(or_(User.full_name.ilike(f"%{term}%"), User.email.ilike(f"%{term}%")))
+    has_result = exists(select(LabResult.id).where(LabResult.user_id == User.id))
+    if filter == "active":
+        query = query.where(has_result)
+    elif filter == "inactive":
+        query = query.where(~has_result)
+    students = (await db.execute(query.order_by(User.full_name, User.id))).scalars().all()
     if not students:
         return []
     student_ids = [s.id for s in students]
@@ -120,13 +179,21 @@ async def students_overview(db: AsyncSession = Depends(get_db), _teacher: User =
                 needs_attention=_needs_attention(student_events, stats),
             )
         )
+    if filter == "attention":
+        return [student for student in overview if student.needs_attention]
     return overview
 
 
 @router.get("/student/{user_id}", response_model=StudentDetail)
 async def student_detail(
-    user_id: str, db: AsyncSession = Depends(get_db), _teacher: User = Depends(_TEACHER_OR_ADMIN)
+    user_id: str,
+    class_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(_TEACHER_OR_ADMIN),
 ):
+    student_ids = await _analytics_scope(db, actor, class_id)
+    if student_ids is not None and user_id not in student_ids:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found in teacher scope")
     student = (await db.execute(select(User).where(User.id == user_id, User.role == UserRole.STUDENT))).scalar_one_or_none()
     if student is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ученик не найден")
@@ -187,17 +254,23 @@ async def student_detail(
 
 @router.get("/recent-results", response_model=list[RecentResult])
 async def recent_results(
-    limit: int = 20, db: AsyncSession = Depends(get_db), _teacher: User = Depends(_TEACHER_OR_ADMIN)
+    limit: int = 20,
+    class_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(_TEACHER_OR_ADMIN),
 ):
     limit = min(max(limit, 1), 100)
+    student_ids = await _analytics_scope(db, actor, class_id)
+    query = (
+        select(LabResult, User.full_name, Simulation.title, Simulation.module)
+        .join(User, User.id == LabResult.user_id)
+        .join(Simulation, Simulation.id == LabResult.simulation_id)
+        .where(User.role == UserRole.STUDENT)
+    )
+    query = _apply_id_scope(query, student_ids, LabResult.user_id)
     rows = (
         await db.execute(
-            select(LabResult, User.full_name, Simulation.title, Simulation.module)
-            .join(User, User.id == LabResult.user_id)
-            .join(Simulation, Simulation.id == LabResult.simulation_id)
-            .where(User.role == UserRole.STUDENT)
-            .order_by(LabResult.completed_at.desc())
-            .limit(limit)
+            query.order_by(LabResult.completed_at.desc()).limit(limit)
         )
     ).all()
     return [
@@ -217,19 +290,27 @@ async def recent_results(
 
 
 @router.get("/module-breakdown", response_model=list[ClassModuleBreakdown])
-async def module_breakdown(db: AsyncSession = Depends(get_db), _teacher: User = Depends(_TEACHER_OR_ADMIN)):
+async def module_breakdown(
+    class_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(_TEACHER_OR_ADMIN),
+):
+    student_ids = await _analytics_scope(db, actor, class_id)
+    query = (
+        select(
+            Simulation.module,
+            func.avg(LabResult.score),
+            func.count(LabResult.id),
+            func.count(func.distinct(LabResult.user_id)),
+        )
+        .join(Simulation, Simulation.id == LabResult.simulation_id)
+        .join(User, User.id == LabResult.user_id)
+        .where(User.role == UserRole.STUDENT)
+    )
+    query = _apply_id_scope(query, student_ids, LabResult.user_id)
     rows = (
         await db.execute(
-            select(
-                Simulation.module,
-                func.avg(LabResult.score),
-                func.count(LabResult.id),
-                func.count(func.distinct(LabResult.user_id)),
-            )
-            .join(Simulation, Simulation.id == LabResult.simulation_id)
-            .join(User, User.id == LabResult.user_id)
-            .where(User.role == UserRole.STUDENT)
-            .group_by(Simulation.module)
+            query.group_by(Simulation.module)
         )
     ).all()
     return [

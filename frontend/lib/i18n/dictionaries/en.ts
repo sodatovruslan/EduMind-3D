@@ -575,6 +575,10 @@ export const en: typeof ru = {
   teacher: {
     pageTitle: "Class Analytics",
     pageSubtitle: "How the class is doing, who needs help, and what's happening in the labs — all in one place.",
+    classFilter: {
+      label: "Analytics scope",
+      all: "All my classes",
+    },
     classes: {
       title: "Classes",
       subtitle: "Create classes and manage their student rosters.",

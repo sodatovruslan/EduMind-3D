@@ -23,16 +23,31 @@ async def get_accessible_classroom(db: AsyncSession, user: User, classroom_id: s
     return classroom
 
 
-async def accessible_student_ids(db: AsyncSession, user: User) -> set[str] | None:
-    """Return active student IDs for a teacher; None denotes an admin's global scope."""
+async def accessible_student_ids(
+    db: AsyncSession, user: User, classroom_id: str | None = None
+) -> set[str] | None:
+    """Return active-member IDs in scope; None denotes unfiltered admin scope.
+
+    A class filter is authorized through the same classroom ownership helper
+    used by class management. Archived classrooms remain readable in T2/T3,
+    so their non-removed memberships remain an analytics scope as well.
+    """
     require_class_manager(user)
-    if user.role == UserRole.ADMIN:
+    if classroom_id is None and user.role == UserRole.ADMIN:
         return None
-    rows = await db.execute(
+    if classroom_id is not None:
+        await get_accessible_classroom(db, user, classroom_id)
+    query = (
         select(ClassMembership.student_id)
         .join(Classroom, Classroom.id == ClassMembership.class_id)
-        .where(Classroom.teacher_id == user.id, ClassMembership.removed_at.is_(None))
+        .where(ClassMembership.removed_at.is_(None))
+        .distinct()
     )
+    if classroom_id is not None:
+        query = query.where(ClassMembership.class_id == classroom_id)
+    elif user.role != UserRole.ADMIN:
+        query = query.where(Classroom.teacher_id == user.id)
+    rows = await db.execute(query)
     return set(rows.scalars().all())
 
 

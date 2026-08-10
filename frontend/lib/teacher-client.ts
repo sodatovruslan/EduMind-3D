@@ -69,18 +69,38 @@ export interface ClassModuleBreakdown {
   active_students: number;
 }
 
-export function getStudentsOverview(): Promise<StudentOverview[]> {
-  return apiFetch<StudentOverview[]>("/api/teacher/students-overview");
+export interface TeacherStats {
+  average_score: number | null;
+  completion_rate: number;
+  active_students: number;
+  total_students: number;
 }
 
-export function getStudentDetail(userId: string): Promise<StudentDetail> {
-  return apiFetch<StudentDetail>(`/api/teacher/student/${userId}`);
+export type StudentDirectoryFilter = "all" | "attention" | "active" | "inactive";
+
+function scopedQuery(classId?: string | null, extra: Record<string, string> = {}): string {
+  const params = new URLSearchParams(extra);
+  if (classId) params.set("class_id", classId);
+  const query = params.toString();
+  return query ? `?${query}` : "";
 }
 
-export function getClassRecentResults(limit = 20): Promise<RecentClassResult[]> {
-  return apiFetch<RecentClassResult[]>(`/api/teacher/recent-results?limit=${limit}`);
+export function getTeacherStats(classId?: string | null): Promise<TeacherStats> {
+  return apiFetch<TeacherStats>(`/api/teacher/stats${scopedQuery(classId)}`);
 }
 
-export function getClassModuleBreakdown(): Promise<ClassModuleBreakdown[]> {
-  return apiFetch<ClassModuleBreakdown[]>("/api/teacher/module-breakdown");
+export function getStudentsOverview(classId?: string | null, query = "", filter: StudentDirectoryFilter = "all"): Promise<StudentOverview[]> {
+  return apiFetch<StudentOverview[]>(`/api/teacher/students-overview${scopedQuery(classId, { q: query, filter })}`);
+}
+
+export function getStudentDetail(userId: string, classId?: string | null): Promise<StudentDetail> {
+  return apiFetch<StudentDetail>(`/api/teacher/student/${userId}${scopedQuery(classId)}`);
+}
+
+export function getClassRecentResults(limit = 20, classId?: string | null): Promise<RecentClassResult[]> {
+  return apiFetch<RecentClassResult[]>(`/api/teacher/recent-results${scopedQuery(classId, { limit: String(limit) })}`);
+}
+
+export function getClassModuleBreakdown(classId?: string | null): Promise<ClassModuleBreakdown[]> {
+  return apiFetch<ClassModuleBreakdown[]>(`/api/teacher/module-breakdown${scopedQuery(classId)}`);
 }

@@ -9,6 +9,7 @@ import { ru } from "@/lib/i18n/dictionaries/ru";
 import { en } from "@/lib/i18n/dictionaries/en";
 import type { User, ClassStats } from "@/lib/types";
 import type { StudentOverview, StudentDetail, RecentClassResult, ClassModuleBreakdown } from "@/lib/teacher-client";
+import * as teacherClient from "@/lib/teacher-client";
 
 let mockUser: User | null = { id: "t1", email: "teacher@b.com", full_name: "Марат Ержанов", role: "teacher", created_at: "2026-01-01" };
 vi.mock("@/lib/auth-context", () => ({
@@ -95,10 +96,24 @@ let mockModuleBreakdown: ClassModuleBreakdown[] = [
 ];
 
 vi.mock("@/lib/teacher-client", () => ({
-  getStudentsOverview: vi.fn(() => Promise.resolve(mockOverview)),
+  getTeacherStats: vi.fn(() => Promise.resolve(mockStats)),
+  getStudentsOverview: vi.fn((_classId: string | null, query = "", filter = "all") => {
+    const q = query.toLowerCase();
+    return Promise.resolve(mockOverview.filter((student) =>
+      (filter !== "attention" || student.needs_attention) &&
+      (!q || student.full_name.toLowerCase().includes(q) || student.email.toLowerCase().includes(q))
+    ));
+  }),
   getStudentDetail: vi.fn(() => Promise.resolve(mockDetail)),
   getClassRecentResults: vi.fn(() => Promise.resolve(mockRecentResults)),
   getClassModuleBreakdown: vi.fn(() => Promise.resolve(mockModuleBreakdown)),
+}));
+
+vi.mock("@/lib/classes-client", () => ({
+  listClasses: vi.fn(() => Promise.resolve([
+    { id: "c1", teacher_id: "t1", name: "Physics 10A", status: "active", created_at: "2026-01-01", updated_at: "2026-01-01", student_count: 2 },
+    { id: "c2", teacher_id: "t1", name: "Physics 10B", status: "archived", created_at: "2026-01-01", updated_at: "2026-01-01", student_count: 1 },
+  ])),
 }));
 
 function renderTeacherPage() {
@@ -176,7 +191,17 @@ describe("TeacherPage — D7 Teacher Learning Analytics Center", () => {
     fireEvent.change(search, { target: { value: "Фарход" } });
 
     expect(await screen.findByTestId("teacher-student-row-s-struggling")).toBeDefined();
-    expect(screen.queryByTestId("teacher-student-row-s-healthy")).toBeNull();
+    await vi.waitFor(() => expect(screen.queryByTestId("teacher-student-row-s-healthy")).toBeNull());
+  });
+
+  it("re-fetches every analytics section for the selected classroom", async () => {
+    renderTeacherPage();
+    const classFilter = await screen.findByTestId("teacher-class-filter");
+    fireEvent.change(classFilter, { target: { value: "c1" } });
+    await vi.waitFor(() => expect(teacherClient.getTeacherStats).toHaveBeenCalledWith("c1"));
+    expect(teacherClient.getStudentsOverview).toHaveBeenCalledWith("c1", "", "attention");
+    expect(teacherClient.getClassRecentResults).toHaveBeenCalledWith(20, "c1");
+    expect(teacherClient.getClassModuleBreakdown).toHaveBeenCalledWith("c1");
   });
 
   it("shows real analytics for the selected student, including weak topics and module breakdown", async () => {
