@@ -220,9 +220,20 @@ export default function GeoWorldEngineSpikePage() {
         // страну. Группируем по имени, оставляем ТОЛЬКО самый большой
         // полигон (по радиусу bounding sphere) — это основная территория
         // страны, не мелкий анклав/остров.
+        // G6.6.1, найдено ТРЕТЬЕЙ визуальной проверкой (реальный краш в
+        // браузере пользователя, не косметика): "RangeError: Too many
+        // properties to enumerate" в computeRhumbLineSubdivision — известный
+        // баг CesiumJS (issue CesiumGS/cesium#8599 и соседние), срабатывает
+        // на полигонах с вершинами вплотную к полюсу (Антарктида — ровно тот
+        // случай, воспроизведено при повороте камеры к южному полюсу,
+        // GeoJsonDataSource по умолчанию строит контур через RHUMB-дугу).
+        // Фикс — не патчить координаты конкретной страны (хрупко, зависит
+        // от датасета), а переключить ВСЕ контуры на GEODESIC-дугу — другой,
+        // не ломающийся на этом крайнем случае алгоритм подразбиения.
         const bestCountryCandidate = new Map<string, { center: any; radius: number }>();
         for (const entity of borders.entities.values) {
           if (!entity.polygon) continue;
+          entity.polygon.arcType = Cesium.ArcType.GEODESIC;
           const hierarchy = entity.polygon.hierarchy?.getValue(Cesium.JulianDate.now());
           const positions = hierarchy?.positions ?? hierarchy;
           if (!positions || !Array.isArray(positions) || positions.length === 0) continue;
