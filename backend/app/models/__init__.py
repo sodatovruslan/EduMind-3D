@@ -5,4 +5,4 @@ from app.models.ai_log import AILog  # noqa: F401
 from app.models.learning_profile import LearningProfile  # noqa: F401
 from app.models.learning_event import LearningEvent  # noqa: F401
 from app.models.chemistry_save import ChemistrySave  # noqa: F401
-
+from app.models.classroom import Classroom, ClassMembership  # noqa: F401

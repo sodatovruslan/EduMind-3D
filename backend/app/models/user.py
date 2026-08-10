@@ -39,4 +39,9 @@ class User(Base):
     )
     learning_events = relationship("LearningEvent", back_populates="user", cascade="all, delete-orphan")
     chemistry_saves = relationship("ChemistrySave", back_populates="user", cascade="all, delete-orphan")
-
+    owned_classrooms = relationship(
+        "Classroom", back_populates="teacher", foreign_keys="Classroom.teacher_id"
+    )
+    class_memberships = relationship(
+        "ClassMembership", back_populates="student", foreign_keys="ClassMembership.student_id"
+    )
