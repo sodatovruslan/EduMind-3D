@@ -2,6 +2,8 @@
 
 import { Clock, Play, RefreshCw } from "lucide-react";
 import type { ElectricitySaveSnapshotV1 } from "@/lib/electricity-save-schema";
+import { useLocale } from "@/lib/locale-context";
+import { INTL_LOCALE_TAG } from "@/lib/i18n/locales";
 
 interface ElectricityResumeModalProps {
   experimentTitle: string;
@@ -17,38 +19,46 @@ interface ElectricityResumeModalProps {
  * Не модальное окно поверх сцены, а карточка на месте каталога работ (нет
  * отдельного onCancel — пока не выбрано ни одно из двух действий, каталог
  * просто не показывается, ровно как и раньше при selectedExperiment).
+ *
+ * D6.2 — same D1-token + useLocale() treatment as its Chemistry sibling.
  */
 export default function ElectricityResumeModal({ experimentTitle, snapshot, onContinue, onStartOver }: ElectricityResumeModalProps) {
-  const formattedDate = new Date(snapshot.updatedAt).toLocaleString("ru-RU", {
+  const { t, locale } = useLocale();
+  const r = t.electricity.resume;
+
+  const formattedDate = new Date(snapshot.updatedAt).toLocaleString(INTL_LOCALE_TAG[locale], {
     day: "2-digit",
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
   });
   const stepNumber = snapshot.experiment.currentStepIndex + 1;
+  const [bodyBefore, bodyAfter] = r.body.split("{title}");
 
   return (
-    <div className="glass-panel rounded-2xl border border-neon-violet/50 p-5" data-testid="electricity-resume-modal">
+    <div className="rounded-ds-panel border border-accent/40 bg-surface-elevated p-5" data-testid="electricity-resume-modal">
       <div className="mb-3 flex items-center gap-2">
-        <Clock className="text-neon-violet" size={20} />
-        <h3 className="font-headline text-base font-semibold text-slate-100">Найдено незавершённое сохранение</h3>
+        <Clock className="text-accent" size={20} />
+        <h3 className="font-headline text-base font-semibold text-text-primary">{r.heading}</h3>
       </div>
 
-      <p className="mb-3 text-sm text-slate-300">
-        У тебя есть сохранённый прогресс по работе <strong className="text-slate-100">{experimentTitle}</strong>.
+      <p className="mb-3 text-sm text-text-secondary">
+        {bodyBefore}
+        <strong className="text-text-primary">{experimentTitle}</strong>
+        {bodyAfter}
       </p>
 
-      <div className="mb-4 space-y-1.5 rounded-xl border border-glass-border bg-white/5 p-3 font-mono text-xs text-slate-300">
+      <div className="mb-4 space-y-1.5 rounded-ds-control border border-border/[0.08] bg-surface p-3 font-mono text-xs text-text-secondary">
         <div className="flex items-center justify-between">
-          <span className="text-slate-400">Последнее сохранение:</span>
-          <span className="text-neon-violet">{formattedDate}</span>
+          <span className="text-text-muted">{r.lastSaveLabel}</span>
+          <span className="text-accent">{formattedDate}</span>
         </div>
         <div className="flex items-center justify-between">
-          <span className="text-slate-400">Прогресс:</span>
-          <span className="text-emerald-400">Шаг {stepNumber}</span>
+          <span className="text-text-muted">{r.progressLabel}</span>
+          <span className="text-success">{r.stepValue.replace("{step}", String(stepNumber))}</span>
         </div>
         <div className="flex items-center justify-between">
-          <span className="text-slate-400">Ревизия:</span>
+          <span className="text-text-muted">{r.revisionLabel}</span>
           <span>#{snapshot.revision}</span>
         </div>
       </div>
@@ -58,19 +68,19 @@ export default function ElectricityResumeModal({ experimentTitle, snapshot, onCo
           type="button"
           onClick={onStartOver}
           data-testid="electricity-resume-restart"
-          className="flex items-center justify-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm font-medium text-amber-200 hover:bg-amber-500/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+          className="ds-focus-ring flex items-center justify-center gap-1.5 rounded-full border border-warning/40 bg-warning/10 px-4 py-2 text-sm font-medium text-warning transition-colors hover:bg-warning/20"
         >
           <RefreshCw size={15} />
-          Начать заново
+          {r.restartButton}
         </button>
         <button
           type="button"
           onClick={onContinue}
           data-testid="electricity-resume-continue"
-          className="flex items-center justify-center gap-1.5 rounded-full bg-neon-violet px-5 py-2 text-sm font-medium text-white shadow-lg hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+          className="ds-focus-ring flex items-center justify-center gap-1.5 rounded-full bg-accent px-5 py-2 text-sm font-medium text-white shadow-ds-sm transition-all hover:brightness-110"
         >
           <Play size={15} className="fill-white" />
-          Продолжить
+          {r.continueButton}
         </button>
       </div>
     </div>

@@ -1330,6 +1330,7 @@ function ElectricityLabExperienceSection() {
 // на основании реальной истории) и заметку о повторяющейся ошибке (backend
 // реально нашел 3 одинаковых кода ошибки подряд в LearningEvent).
 function ProgressBanners() {
+  const { t } = useLocale();
   const { newAchievements, clearNewAchievements, repeatedMistakeCode, dismissRepeatedMistake } = useTaskProgress();
 
   if (newAchievements.length === 0 && !repeatedMistakeCode) return null;
@@ -1337,24 +1338,22 @@ function ProgressBanners() {
   return (
     <div className="flex flex-col gap-2 sm:col-span-2">
       {newAchievements.length > 0 && (
-        <div className="flex items-center justify-between rounded-xl border border-amber-400/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+        <div className="flex items-center justify-between rounded-ds-control border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
           <span>
             {newAchievements
               .map((code) => `${ACHIEVEMENTS[code]?.emoji ?? "🏆"} ${ACHIEVEMENTS[code]?.title ?? code}`)
               .join(", ")}{" "}
-            — новое достижение!
+            {t.electricity.hud.newAchievementSuffix}
           </span>
-          <button onClick={clearNewAchievements} className="text-amber-300/70 hover:text-amber-100">
+          <button onClick={clearNewAchievements} className="ds-focus-ring rounded-ds-control text-warning/70 transition-colors hover:text-warning">
             ×
           </button>
         </div>
       )}
       {repeatedMistakeCode && (
-        <div className="flex items-center justify-between rounded-xl border border-sky-400/40 bg-sky-500/10 p-3 text-sm text-sky-200">
-          <span>
-            Я заметил, что ты уже несколько раз повторяешь одну и ту же ошибку: {explainError(repeatedMistakeCode, repeatedMistakeCode)}
-          </span>
-          <button onClick={dismissRepeatedMistake} className="ml-2 shrink-0 text-sky-300/70 hover:text-sky-100">
+        <div className="flex items-center justify-between rounded-ds-control border border-accent-geo/40 bg-accent-geo/10 p-3 text-sm text-accent-geo">
+          <span>{t.electricity.hud.repeatedMistakeMessage.replace("{mistake}", explainError(repeatedMistakeCode, repeatedMistakeCode))}</span>
+          <button onClick={dismissRepeatedMistake} className="ds-focus-ring ml-2 shrink-0 rounded-ds-control text-accent-geo/70 transition-colors hover:text-accent-geo">
             ×
           </button>
         </div>
@@ -1378,6 +1377,7 @@ function CompleteLabSection({
   actionsLog: Record<string, unknown>[];
   mountedAtRef: React.MutableRefObject<number>;
 }) {
+  const { t } = useLocale();
   const { state } = useExperimentState();
   const { sessionTotals } = useTaskProgress();
   const [error, setError] = useState<string | null>(null);
@@ -1411,40 +1411,40 @@ function CompleteLabSection({
         achievements: labResult.new_achievements,
       });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Не удалось завершить попытку");
+      setError(err instanceof ApiError ? err.message : t.electricity.hud.completeAttemptError);
     }
   }
 
   return (
     <div className="flex flex-col gap-3 sm:col-span-2">
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
 
       <div className="flex items-center gap-3">
         <button
           onClick={handleComplete}
           disabled={state.connections.length === 0}
           data-testid="complete-button"
-          className="rounded-full border border-glass-border px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/5 disabled:opacity-50"
+          className="ds-focus-ring rounded-full border border-border/[0.12] px-4 py-2 text-sm font-medium text-text-primary transition-colors hover:bg-text-primary/5 disabled:opacity-50"
         >
-          Завершить попытку
+          {t.electricity.hud.completeAttempt}
         </button>
         {completionScore !== null && (
-          <span className="font-mono text-sm font-medium text-slate-100">Оценка: {completionScore}/100</span>
+          <span className="font-mono text-sm font-medium text-text-primary">{t.electricity.hud.scoreLabel.replace("{score}", String(completionScore))}</span>
         )}
       </div>
 
       {labSummary && (
         <div
-          className="rounded-xl border border-neon-violet/40 bg-neon-violet/10 p-4 text-sm text-slate-200"
+          className="rounded-ds-control border border-accent/40 bg-accent/10 p-4 text-sm text-text-primary"
           data-testid="lab-summary"
         >
           <p className="whitespace-pre-wrap">{labSummary.summary}</p>
           {labSummary.recommendedNext && (
-            <p className="mt-2 text-neon-violet">Следующий шаг: {labSummary.recommendedNext}</p>
+            <p className="mt-2 text-accent">{t.electricity.hud.nextStepLabel} {labSummary.recommendedNext}</p>
           )}
           {labSummary.achievements.length > 0 && (
-            <p className="mt-2 text-amber-300">
-              Новые достижения:{" "}
+            <p className="mt-2 text-warning">
+              {t.electricity.hud.newAchievementsLabel}{" "}
               {labSummary.achievements.map((code) => ACHIEVEMENTS[code]?.title ?? code).join(", ")}
             </p>
           )}

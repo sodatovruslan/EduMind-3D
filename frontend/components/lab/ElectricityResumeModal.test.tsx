@@ -3,8 +3,16 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import ElectricityResumeModal from "./ElectricityResumeModal";
 import type { ElectricitySaveSnapshotV1 } from "@/lib/electricity-save-schema";
+import { LocaleProvider } from "@/lib/locale-context";
 
 afterEach(cleanup);
+
+// D6.2 — ElectricityResumeModal now reads copy from useLocale(), so every
+// render needs a LocaleProvider ancestor (default locale "ru" keeps the
+// expected strings below unchanged from before this stage).
+function renderModal(ui: React.ReactElement) {
+  return render(<LocaleProvider>{ui}</LocaleProvider>);
+}
 
 function sampleSnapshot(overrides: Partial<ElectricitySaveSnapshotV1> = {}): ElectricitySaveSnapshotV1 {
   return {
@@ -45,7 +53,7 @@ function sampleSnapshot(overrides: Partial<ElectricitySaveSnapshotV1> = {}): Ele
 
 describe("ElectricityResumeModal — Stage S9.7 UI", () => {
   it("рендерит название работы, номер шага (currentStepIndex+1) и ревизию", () => {
-    render(
+    renderModal(
       <ElectricityResumeModal experimentTitle="Измерение тока" snapshot={sampleSnapshot()} onContinue={() => {}} onStartOver={() => {}} />
     );
     expect(screen.getByTestId("electricity-resume-modal")).toBeTruthy();
@@ -57,7 +65,7 @@ describe("ElectricityResumeModal — Stage S9.7 UI", () => {
   it("Продолжить вызывает onContinue, Начать заново вызывает onStartOver", () => {
     const onContinue = vi.fn();
     const onStartOver = vi.fn();
-    render(
+    renderModal(
       <ElectricityResumeModal experimentTitle="Измерение тока" snapshot={sampleSnapshot()} onContinue={onContinue} onStartOver={onStartOver} />
     );
 

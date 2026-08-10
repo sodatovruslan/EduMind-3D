@@ -25,3 +25,11 @@ export const LOCALE_SHORT_LABELS: Record<Locale, string> = {
 export function isLocale(value: string | null): value is Locale {
   return value !== null && (LOCALES as readonly string[]).includes(value);
 }
+
+// D6.2 — BCP-47 tags for Intl.DateTimeFormat/toLocaleString() calls that
+// were hardcoded to "ru-RU" throughout the lab notebook/report/resume UI.
+export const INTL_LOCALE_TAG: Record<Locale, string> = {
+  ru: "ru-RU",
+  en: "en-US",
+  tg: "tg-TJ",
+};

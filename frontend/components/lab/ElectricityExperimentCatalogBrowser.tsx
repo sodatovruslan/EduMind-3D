@@ -5,6 +5,7 @@ import { Lock, Search } from "lucide-react";
 import { useElectricityLabExperience } from "@/components/core/ElectricityLabExperienceProvider";
 import { searchElectricityExperiments, type LabDifficulty } from "@/lib/electricity-lab-catalog";
 import { bestElectricityScoreForExperiment, electricityAttemptsForExperiment } from "@/lib/electricity-notebook";
+import { useLocale } from "@/lib/locale-context";
 
 /**
  * Electricity Lab — Laboratory Experiment Catalog UI (Stage E-2, Task 8).
@@ -12,22 +13,27 @@ import { bestElectricityScoreForExperiment, electricityAttemptsForExperiment } f
  * catalog.ts) — ничего не решает про разблокировку сама, всё берёт из
  * useElectricityLabExperience() (isExperimentUnlockedFor — реальная
  * проверка по фактическому прогрессу).
+ *
+ * D6.2 — same Light Mode fix and i18n treatment as its Chemistry sibling
+ * (ExperimentCatalogBrowser.tsx) — see that file's header comment and the
+ * D6.2 notes in EDUMIND_DESIGN_SYSTEM_V2.md for why `bg-white/5` broke
+ * Light Mode. `exp.title`/`.description` stay untranslated (catalog data).
  */
-const DIFFICULTY_LABEL: Record<LabDifficulty, string> = {
-  beginner: "Начальный",
-  intermediate: "Средний",
-  advanced: "Продвинутый",
-};
-
 const DIFFICULTY_FILTERS: ("all" | LabDifficulty)[] = ["all", "beginner", "intermediate", "advanced"];
 
-const UNLOCK_HINT: Record<LabDifficulty, string | null> = {
-  beginner: null,
-  intermediate: "Заверши любую работу уровня «Начальный», чтобы открыть",
-  advanced: "Заверши любую работу уровня «Средний», чтобы открыть",
-};
-
 export default function ElectricityExperimentCatalogBrowser() {
+  const { t } = useLocale();
+  const c = t.electricity.catalog;
+  const DIFFICULTY_LABEL: Record<LabDifficulty, string> = {
+    beginner: c.difficultyBeginner,
+    intermediate: c.difficultyIntermediate,
+    advanced: c.difficultyAdvanced,
+  };
+  const UNLOCK_HINT: Record<LabDifficulty, string | null> = {
+    beginner: null,
+    intermediate: c.unlockHintIntermediate,
+    advanced: c.unlockHintAdvanced,
+  };
   const { completedExperimentIds, notebookEntries, selectExperiment, isExperimentUnlockedFor } = useElectricityLabExperience();
   const [query, setQuery] = useState("");
   const [difficultyFilter, setDifficultyFilter] = useState<"all" | LabDifficulty>("all");
@@ -38,34 +44,34 @@ export default function ElectricityExperimentCatalogBrowser() {
   }, [query, difficultyFilter]);
 
   return (
-    <div className="glass-panel rounded-2xl p-4" data-testid="electricity-experiment-catalog-browser">
-      <h3 className="mb-3 font-headline text-lg font-semibold text-slate-100">Каталог лабораторных работ</h3>
+    <div className="rounded-ds-panel border border-border/[0.08] bg-surface p-4" data-testid="electricity-experiment-catalog-browser">
+      <h3 className="mb-3 font-headline text-lg font-semibold text-text-primary">{c.heading}</h3>
 
       <div className="mb-4 flex flex-col gap-2 sm:flex-row">
         <label className="relative flex-1">
-          <span className="sr-only">Поиск лабораторных работ</span>
-          <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+          <span className="sr-only">{c.searchLabel}</span>
+          <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
           <input
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Поиск по названию или цели..."
+            placeholder={c.searchPlaceholder}
             data-testid="electricity-catalog-search"
-            className="w-full rounded-full border border-glass-border bg-white/5 py-2 pl-9 pr-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-neon-violet focus:outline-none"
+            className="ds-input ds-focus-ring rounded-full py-2 pl-9 pr-3"
           />
         </label>
 
         <label>
-          <span className="sr-only">Фильтр по сложности</span>
+          <span className="sr-only">{c.filterLabel}</span>
           <select
             value={difficultyFilter}
             onChange={(e) => setDifficultyFilter(e.target.value as "all" | LabDifficulty)}
             data-testid="electricity-catalog-difficulty-filter"
-            className="rounded-full border border-glass-border bg-white/5 px-3 py-2 text-sm text-slate-200 focus:border-neon-violet focus:outline-none"
+            className="ds-input ds-focus-ring rounded-full py-2"
           >
             {DIFFICULTY_FILTERS.map((d) => (
               <option key={d} value={d}>
-                {d === "all" ? "Все уровни" : DIFFICULTY_LABEL[d]}
+                {d === "all" ? c.allLevels : DIFFICULTY_LABEL[d]}
               </option>
             ))}
           </select>
@@ -85,38 +91,38 @@ export default function ElectricityExperimentCatalogBrowser() {
                 onClick={() => unlocked && selectExperiment(exp.id)}
                 disabled={!unlocked}
                 data-testid={`electricity-catalog-item-${exp.id}`}
-                className={`flex w-full flex-col gap-1 rounded-xl border p-3 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-neon-violet ${
+                className={`ds-focus-ring flex w-full flex-col gap-1 rounded-ds-control border p-3 text-left transition-colors ${
                   unlocked
-                    ? "border-glass-border hover:border-neon-violet/60 hover:bg-white/5"
-                    : "cursor-not-allowed border-glass-border/50 opacity-50"
+                    ? "border-border/[0.1] bg-surface-elevated hover:border-accent/60"
+                    : "cursor-not-allowed border-border/[0.06] bg-surface-elevated opacity-50"
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-slate-100">{exp.title}</span>
-                  {!unlocked && <Lock size={14} className="shrink-0 text-slate-500" aria-label="Заблокировано" />}
+                  <span className="font-medium text-text-primary">{exp.title}</span>
+                  {!unlocked && <Lock size={14} className="shrink-0 text-text-muted" aria-label={c.lockedAria} />}
                 </div>
-                <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-slate-500">
+                <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-text-muted">
                   <span>{DIFFICULTY_LABEL[exp.difficulty]}</span>
                   <span>·</span>
-                  <span>{exp.estimatedMinutes} мин</span>
+                  <span>{exp.estimatedMinutes} {c.minutesSuffix}</span>
                   <span>·</span>
-                  <span>{exp.xpReward} XP</span>
-                  {completed && <span className="text-emerald-400">· пройдено</span>}
+                  <span>{exp.xpReward} {c.xpSuffix}</span>
+                  {completed && <span className="text-success">· {c.completedSuffix}</span>}
                 </div>
-                <p className="text-xs text-slate-400">{exp.description}</p>
+                <p className="text-xs text-text-secondary">{exp.description}</p>
                 {!unlocked && UNLOCK_HINT[exp.difficulty] && (
-                  <p className="mt-1 text-[11px] italic text-slate-500">{UNLOCK_HINT[exp.difficulty]}</p>
+                  <p className="mt-1 text-[11px] italic text-text-muted">{UNLOCK_HINT[exp.difficulty]}</p>
                 )}
                 {best !== null && (
-                  <div className="mt-1 font-mono text-[10px] text-neon-violet">
-                    Лучший результат: {best}/100 · попыток: {attempts}
+                  <div className="mt-1 font-mono text-[10px] text-accent">
+                    {c.bestScore.replace("{best}", String(best)).replace("{attempts}", String(attempts))}
                   </div>
                 )}
               </button>
             </li>
           );
         })}
-        {results.length === 0 && <li className="text-sm text-slate-500 sm:col-span-2">Ничего не найдено.</li>}
+        {results.length === 0 && <li className="text-sm text-text-muted sm:col-span-2">{c.empty}</li>}
       </ul>
     </div>
   );

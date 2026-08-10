@@ -3,6 +3,14 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import ResumeExperimentModal from "./ResumeExperimentModal";
 import type { ChemistrySaveSnapshotV1 } from "@/lib/chemistry-save-schema";
+import { LocaleProvider } from "@/lib/locale-context";
+
+// D6.2 — ResumeExperimentModal now reads copy from useLocale(), so every
+// render needs a LocaleProvider ancestor (default locale "ru" keeps the
+// expected strings below unchanged from before this stage).
+function renderModal(ui: React.ReactElement) {
+  return render(<LocaleProvider>{ui}</LocaleProvider>);
+}
 
 describe("Stage S-8.4 — Resume Experiment Modal UI Tests", () => {
   afterEach(() => {
@@ -34,7 +42,7 @@ describe("Stage S-8.4 — Resume Experiment Modal UI Tests", () => {
   };
 
   it("1. Modal does NOT render when isOpen is false or snapshot is null", () => {
-    const { container } = render(
+    const { container } = renderModal(
       <ResumeExperimentModal
         isOpen={false}
         experimentTitle="Нагрев воды"
@@ -48,7 +56,7 @@ describe("Stage S-8.4 — Resume Experiment Modal UI Tests", () => {
   });
 
   it("2. Modal renders title, step number (4), formatted date and action buttons when open", () => {
-    render(
+    renderModal(
       <ResumeExperimentModal
         isOpen={true}
         experimentTitle="Нагрев воды"
@@ -69,7 +77,7 @@ describe("Stage S-8.4 — Resume Experiment Modal UI Tests", () => {
 
   it("3. Clicking Continue triggers onResume callback", () => {
     const onResume = vi.fn();
-    render(
+    renderModal(
       <ResumeExperimentModal
         isOpen={true}
         experimentTitle="Нагрев воды"
@@ -86,7 +94,7 @@ describe("Stage S-8.4 — Resume Experiment Modal UI Tests", () => {
 
   it("4. Clicking Restart triggers onRestart callback", () => {
     const onRestart = vi.fn();
-    render(
+    renderModal(
       <ResumeExperimentModal
         isOpen={true}
         experimentTitle="Нагрев воды"
@@ -103,7 +111,7 @@ describe("Stage S-8.4 — Resume Experiment Modal UI Tests", () => {
 
   it("5. Clicking Cancel triggers onCancel callback", () => {
     const onCancel = vi.fn();
-    render(
+    renderModal(
       <ResumeExperimentModal
         isOpen={true}
         experimentTitle="Нагрев воды"
