@@ -1,75 +1,98 @@
-// G6.6 spike — портирован (TypeScript, тот же алгоритм 1:1) из ОФИЦИАЛЬНОГО
-// примера NASA GIBS для CesiumJS:
-// https://github.com/nasa-gibs/web-examples/blob/main/examples/cesium/gibs.js
-// (Apache License 2.0, "Copyright United States Government as represented
-// by the Administrator of NASA"). Не выдумано — реальный, официальный
-// референс NASA под наш собственный движок.
+// G6.6.1 — пересмотрено после того, как визуальная проверка в браузере
+// показала "почти однотонный синий globe" (imagery не рендерится).
 //
-// ВАЖНАЯ НАХОДКА спайка: сетка НИЖЕ 1:1 совпадает с той, что мы САМИ вывели
-// эмпирически в G3 (см. frontend/lib/geo/providers/gibs-grid.ts,
-// GIBS_500M_LEVELS) — 2×1 → 3×2 → 5×3 → 10×5 → ... — независимое
-// подтверждение корректности нашей собственной работы. Это ЗНАЧИТ, что
-// переход на Cesium НЕ убирает необходимость custom-адаптера под реальную
-// (нерегулярную) сетку GIBS — она нужна ЛЮБОМУ движку, это свойство самого
-// GIBS, не недостаток нашей текущей архитектуры.
+// РАССЛЕДОВАНИЕ (G6.6.1): первая версия этого файла портировала таблицу
+// `resolution` из официального примера NASA
+// (github.com/nasa-gibs/web-examples/blob/main/examples/cesium/gibs.js).
+// Независимая числовая проверка (без браузера, чистый Node) вскрыла, что
+// эта таблица при tilePixels=512 даёт ГЕОМЕТРИЧЕСКИ НЕВОЗМОЖНЫЙ результат
+// для уровня 0: ширина тайла = 288° при 2 тайлах на уровне (итого 576° —
+// больше, чем целых 360° планеты). Проверено: 0.009817477042468103 × 512
+// = 5.0265... рад = 288°, а не положенные 180°. Обратный подсчёт показал,
+// что эта таблица самосогласована только при tilePixels=320 (π/0.00981747...
+// = ровно 320), тогда как сам файл NASA использует захардкоженные 512 в
+// той же формуле — внутреннее расхождение в стороннем демо-файле (либо
+// таблица посчитана для другого сценария использования, который не удалось
+// подтвердить без живого браузера).
 //
-// Типы — `any`/window.Cesium: этот спайк намеренно грузит Cesium через CDN
-// (см. page.tsx), не через npm-пакет — не трогаем package.json/next.config.js
-// для изолированного dev-only маршрута. Реальная миграция потребовала бы
-// `npm install cesium` + webpack static-asset copy, либо тот же CDN-подход
-// в продакшне (оба варианта официально поддерживаются Cesium).
+// РЕШЕНИЕ: не гадать дальше с чужой непроверяемой константой — вместо
+// этого использовать ТУ ЖЕ формулу, что уже эмпирически подтверждена и
+// покрыта тестами в lib/geo/providers/gibs-grid.ts (G3): границы тайла =
+// 360°/matrixWidth(level) по долготе, 180°/matrixHeight(level) по широте,
+// от угла (-180°, 90°). Список width/height по уровням — тот же самый,
+// что и в gibs-grid.ts (совпадает и с официальным примером NASA, это НЕ
+// вызывало сомнений — расхождение было именно в таблице resolution, не в
+// width/height).
 
 export interface GibsLevel {
   width: number;
   height: number;
-  /** Радиан на пиксель. */
-  resolution: number;
 }
 
-// Те же уровни, что у NASA (500m-профиль, до z=7/160×80) — используем ту
-// же 500m-урезку, что и наш собственный gibs-grid.ts (см. G3), не
-// углубляемся до 250m/z=8, тот же осознанный выбор объёма загрузки.
+// Совпадает 1:1 с GIBS_500M_LEVELS в lib/geo/providers/gibs-grid.ts (G3,
+// эмпирически снято с реального GetCapabilities) — сознательно не
+// импортируется напрямую (тот модуль тянет THREE.js типы через tiling.ts,
+// спайк изолирован от production-кода по прямому указанию).
 export const GIBS_CESIUM_LEVELS: GibsLevel[] = [
-  { width: 2, height: 1, resolution: 0.009817477042468103 },
-  { width: 3, height: 2, resolution: 0.004908738521234052 },
-  { width: 5, height: 3, resolution: 0.002454369260617026 },
-  { width: 10, height: 5, resolution: 0.001227184630308513 },
-  { width: 20, height: 10, resolution: 0.0006135923151542565 },
-  { width: 40, height: 20, resolution: 0.00030679615757712823 },
-  { width: 80, height: 40, resolution: 0.00015339807878856412 },
-  { width: 160, height: 80, resolution: 0.00007669903939428206 },
+  { width: 2, height: 1 },
+  { width: 3, height: 2 },
+  { width: 5, height: 3 },
+  { width: 10, height: 5 },
+  { width: 20, height: 10 },
+  { width: 40, height: 20 },
+  { width: 80, height: 40 },
+  { width: 160, height: 80 },
 ];
-
-const TILE_PIXELS = 512; // подтверждено эмпирически в G3 (реальный GetCapabilities), не 256 из устаревшего примера
 
 /**
  * Создаёт Cesium TilingScheme, покрывающий РЕАЛЬНУЮ (нерегулярную) сетку
- * GIBS — прямой порт официального `gibs.GeographicTilingScheme` под наш
- * TypeScript-код. `CesiumNS` передаётся явно (не импортом — Cesium грузится
- * через CDN в рантайме, см. page.tsx).
+ * GIBS — те же width/height по уровням, что подтверждены в G3, но
+ * геометрия тайла считается напрямую (360°/180° per matrix), без
+ * непроверяемой таблицы "resolution" из стороннего примера.
+ * `CesiumNS` передаётся явно (Cesium грузится через CDN в рантайме).
  */
 export function createGibsTilingScheme(CesiumNS: any): any {
   const self = new CesiumNS.GeographicTilingScheme();
-  const rectangle = CesiumNS.Rectangle.MAX_VALUE;
+  const rectangle = CesiumNS.Rectangle.MAX_VALUE; // west=-π, east=π, south=-π/2, north=π/2
 
   self.getNumberOfXTilesAtLevel = (level: number) => GIBS_CESIUM_LEVELS[level].width;
   self.getNumberOfYTilesAtLevel = (level: number) => GIBS_CESIUM_LEVELS[level].height;
 
   self.tileXYToRectangle = (x: number, y: number, level: number, result?: any) => {
-    const { resolution } = GIBS_CESIUM_LEVELS[level];
-    const xTileWidth = resolution * TILE_PIXELS;
-    const yTileHeight = resolution * TILE_PIXELS;
+    const { width, height } = GIBS_CESIUM_LEVELS[level];
+    const lngSpan = (rectangle.east - rectangle.west) / width;
+    const latSpan = (rectangle.north - rectangle.south) / height;
 
-    const west = x * xTileWidth + rectangle.west;
-    const east = (x + 1) * xTileWidth + rectangle.west;
-    const north = rectangle.north - y * yTileHeight;
-    const south = rectangle.north - (y + 1) * yTileHeight;
+    const west = rectangle.west + x * lngSpan;
+    const east = west + lngSpan;
+    const north = rectangle.north - y * latSpan;
+    const south = north - latSpan;
 
     const out = result ?? new CesiumNS.Rectangle(0, 0, 0, 0);
     out.west = west;
     out.south = south;
     out.east = east;
     out.north = north;
+    return out;
+  };
+
+  self.positionToTileXY = (position: any, level: number, result?: any) => {
+    if (!CesiumNS.Rectangle.contains(rectangle, position)) return undefined;
+    const { width, height } = GIBS_CESIUM_LEVELS[level];
+    const lngSpan = (rectangle.east - rectangle.west) / width;
+    const latSpan = (rectangle.north - rectangle.south) / height;
+
+    let longitude = position.longitude;
+    if (rectangle.east < rectangle.west) longitude += CesiumNS.Math.TWO_PI;
+
+    let xTile = Math.floor((longitude - rectangle.west) / lngSpan);
+    if (xTile >= width) xTile = width - 1;
+    let yTile = Math.floor((rectangle.north - position.latitude) / latSpan);
+    if (yTile >= height) yTile = height - 1;
+
+    const out = result ?? new CesiumNS.Cartesian2(0, 0);
+    out.x = xTile;
+    out.y = yTile;
     return out;
   };
 
