@@ -1,6 +1,6 @@
 # EduMind 3D — Design System V2
 
-Status: **APPROVED — implementation in progress.** Sections 0–18 below are the original presentation-layer architecture (approved). Sections 19+ extend it to the full product (Public → Auth → Student/Teacher) per the 2026-08-08 follow-up brief, with a revised D0–D14 roadmap that supersedes the old D0–D9 table. **D0–D4 are done** (foundational tokens/primitives + theme system + Public Landing + Auth experience + authenticated AppShell, §28–§30). **D5 (Student Home + Student Profile) is done** (§31), **D5.1** and **D5.2** (Student Dashboard visual rework + centered composition, both visually approved) are done — see §32–§33. **D6 (Immersive SimulationShell + Floating Glass HUD) is done** (§34, accepted as a baseline pending the D6.1 corrections below). **D6.1 (Immersive Visual Polish + Theme + Full RU/EN/TG Integration) is done** — see §35. **D6.2 (Remaining Lab UI Theme/i18n Cleanup — corrective stage, based on a real Light Mode Chemistry catalog screenshot) is done, code-verified, awaiting manual visual approval** — see §36. D7 has not started.
+Status: **APPROVED — implementation in progress.** Sections 0–18 below are the original presentation-layer architecture (approved). Sections 19+ extend it to the full product (Public → Auth → Student/Teacher) per the 2026-08-08 follow-up brief, with a revised D0–D14 roadmap that supersedes the old D0–D9 table. **D0–D4 are done** (foundational tokens/primitives + theme system + Public Landing + Auth experience + authenticated AppShell, §28–§30). **D5 (Student Home + Student Profile) is done** (§31), **D5.1** and **D5.2** (Student Dashboard visual rework + centered composition, both visually approved) are done — see §32–§33. **D6 (Immersive SimulationShell + Floating Glass HUD) is done** (§34, accepted as a baseline pending the D6.1 corrections below). **D6.1 (Immersive Visual Polish + Theme + Full RU/EN/TG Integration) is done** — see §35. **D6.2 (Remaining Lab UI Theme/i18n Cleanup) is done, approved.** **D7 (Teacher Learning Analytics Center + test-data cleanup — redefined by the user at D7 time; supersedes §27's original "Chemistry World visual migration" plan for this slot) is done, code-verified, awaiting manual visual approval** — see §37. D8 has not started.
 
 ## 0. Why this document exists
 Current frontend architecture audit (2026-08-08) found **no prior redesign/design-system document** in the repo. Searched: `*design*.md`, `*redesign*.md`, `*ui*.md`, `*ux*.md`, `*vision*.md`, `*app-shell*.md`, `*design-system*.md`, `*frontend-plan*.md`, `*visual*.md` (none, outside `node_modules`), and `HANDOFF.md` for design/UI/UX/AppShell/layout/theme keywords — every hit is a point-fix changelog entry (autosave badges, fullscreen overflow bug, guided-lab panel tests), not an architectural plan. The `.glass-panel` / `neon-*` utility classes in `tailwind.config.ts` and `globals.css` reference a "дизайн-система Stitch" in their comments — that's the *current* look being replaced, not a document to build on. This file is the first canonical design plan and supersedes nothing.
@@ -278,11 +278,11 @@ Glass is a tool for **floating chrome over a visual/3D background**, not a defau
 | **D4** | Authenticated AppShell/navigation — adaptive rail, drop permanent sidebar+navbar on simulation routes (§7–§8 of the original plan, generalized to role-aware shell). | D1 | **Done — see §30** |
 | **D5** | Student Home + Student Profile (§23). | D4 | **Done — see §31** |
 | **D6** | SimulationShell — generic floating TopBar/panel-docking shell (§9 of the original plan), proved on one module. | D1, D4 | **Done, see §34 — code-verified, awaiting manual visual approval** |
-| **D7** | Chemistry World visual migration onto SimulationShell. | D6 | Not started |
-| **D8** | Electricity Lab visual migration onto SimulationShell. | D6, informed by D7 | Not started |
+| **D7** | ~~Chemistry World visual migration onto SimulationShell~~ — **superseded at D7 time**: the user redirected this slot to the Teacher Learning Analytics Center + test-data cleanup (§37) instead, since a manual review of `/teacher` found it unacceptably weak and the dev DB had accumulated 409 junk E2E accounts. Chemistry/Electricity/GeoWorld were already migrated onto Design V2 directly in D6/D6.1/D6.2 without a dedicated SimulationShell-migration stage, so this slot's original scope was largely moot. | D6 | **Done, see §37 — code-verified, awaiting manual visual approval** |
+| **D8** | Electricity Lab visual migration onto SimulationShell — same note as D7: largely already covered by D6.1/D6.2. | D6, informed by D7 | Not started |
 | **D9** | GeoWorld visual migration onto SimulationShell. | D6 | Not started |
-| **D10** | Teacher Home (§24). | D4 | Not started |
-| **D11** | Teacher → Classes/Students/Student-Detail analytics, new student-detail route (§20, §24). | D10 | Not started |
+| **D10** | Teacher Home (§24) — **delivered early, as part of D7** (§37) at the user's explicit request. | D4 | **Done, see §37** |
+| **D11** | Teacher → Classes/Students/Student-Detail analytics, new student-detail route (§20, §24) — **student-detail analytics delivered early as part of D7** (§37); a separate `Classroom`/`ClassMembership` model + `/api/classes/*` CRUD (teacher-scoped class rosters) was also added directly to `main` by the user in a concurrent commit (`c59f706`, outside this D-stage's scope) — see §37's "Concurrent work" note for how the two relate and what's still open. | D10 | **Partially done — see §37** |
 | **D12** | Teacher Profile/Settings (§24). | D4, D5 (shares `/profile` shell) | Not started |
 | **D13** | Remaining existing pages — SimLab visual migration onto SimulationShell, any leftover shells. | D6 | Not started |
 | **D14** | Responsive + accessibility + performance + final cross-module consistency audit; remove now-unused old `.glass-panel`/neon utility classes (§15). | D2–D13 | Not started |
@@ -619,6 +619,61 @@ Two pre-existing test files broke and were fixed — not pre-existing failures, 
 - The dev-only F3 diagnostics panel (`SandboxModeOverlay.tsx`) and "Dev Autosave" block (`GuidedLabPanel.tsx`) remain unstyled/unlocalized by design (developer tooling, not product surface).
 - Electricity finish-step misleading-completion-copy bug (D6.1 §557) remains open, unaddressed, by explicit instruction.
 
+## 37. D7 implementation notes — Teacher Learning Analytics Center + test-data cleanup (code-verified, awaiting manual visual approval)
+
+D7 diverged from §27's original plan (which had this slot as a SimulationShell visual migration) at the user's explicit direction, after a manual review of `/teacher` found it unacceptably weak (four KPI cards + a raw student list + an empty detail panel) and the dev database had accumulated 409 junk E2E-test student accounts. Two independent halves: **(A)** a one-time, audited, allowlist-based database cleanup, and **(B)** a real Teacher Learning Analytics Center rebuild.
+
+### A. Student data cleanup
+
+**Data model audit first** (backend is SQLAlchemy, not Prisma — `backend/app/models/*.py`): `User.role` (`student`/`teacher`/`admin`) with five `cascade="all, delete-orphan"` relationships (`lab_results`, `ai_logs`, `learning_profile`, `learning_events`, `chemistry_saves`) — no separate `Class`/`Student` entity existed at the time (confirmed via `results.py`'s own `# TODO: фильтр по классу, когда появится сущность Class` comment). No DB-level `ON DELETE CASCADE` on the foreign keys, so cleanup had to go through the ORM (`session.delete(user)` per row, not a raw bulk `DELETE`) for the cascades to fire correctly.
+
+**Audit query** (read-only, run against the real dev Postgres DB via `DATABASE_URL`) found: **411 total users** — 409 students, 2 teachers, 0 admins. Of the 4 allowlist emails, only `sodatovjr@gmail.com` and `sodatovvv@gmail.com` existed (`sodatovruslan14@gmail.com` and `sodatovjr21@gmail.com` were absent — reported as absent, not created). Domain histogram across all 409 student rows: **407 were `@example.com`, 2 were `gmail.com`** (the two keep-list matches) — zero ambiguous domains, zero real-looking accounts outside the keep-list. Breakdown of the 407: 330 `e2e_*`, 72 `user_a_/user_b_/concurrency_*`, 5 one-off ad-hoc emails (`capability_*`, `catalog_check@`) whose originating script is no longer present in the tracked repo (likely a manual/ad-hoc run, not a committed spec).
+
+**Source of the leak**: every Playwright spec under `frontend/e2e/**` that needs an authenticated session (`chemistry-isolated.ts`, `chemistry-water-pouring*.spec.ts`, `electricity-*.spec.ts`, `dashboard-catalog.spec.ts`) calls `POST /api/auth/register` against the real dev backend with a throwaway `@example.com` address and never deletes it. Backend pytest tests were already correctly isolated (in-memory SQLite per test, `tests/conftest.py`) — the leak was 100% from E2E, not from the pytest suite.
+
+**Cleanup execution**: a dry-run (flush + rollback, no commit) was run first and printed exact before/after counts and the cascaded row totals, then the same query was re-run with `--commit`. Result: **407 student rows deleted** (0 lab_results, 0 ai_logs, 2 learning_events, 120 chemistry_saves, 2 learning_profiles cascaded with them), **2 keep-list students and both teacher accounts untouched**. Post-cleanup DB: 4 users (2 students, 2 teachers).
+
+**Stopping future accumulation**: added `POST /api/auth/dev/cleanup-test-users` (`backend/app/routers/auth.py` + `cleanup_test_students()` in `auth_service.py`) — 404s outside `ENVIRONMENT=development` so it's not an attack surface in prod; deletes `role=student AND email LIKE '%@example.com'` via the same ORM-cascade pattern (domain-based, not prefix-based, so it doesn't need updating every time a new spec introduces a new test-email prefix). Wired into `frontend/playwright.config.ts` as `globalTeardown` (`e2e/global-teardown.ts`), which calls that endpoint once after the full Playwright run. Verified end-to-end live (register → 5 users → call endpoint → back to 4) before wiring it into the config.
+
+### B. Teacher Learning Analytics Center
+
+**Real data audit** (backend routers/services, not guessed): classified every candidate widget —
+
+| Data | Classification | Source |
+|---|---|---|
+| total/active students, average score, completion rate | REAL NOW | existing `GET /api/results/stats` (unchanged) |
+| per-student level/XP/completed labs/accuracy/weak topics/recent mistakes/streak/achievements | REAL NOW, but only exposed for `me` before D7 | `progress_service.compute_derived_stats` — same function, new teacher-facing endpoint |
+| "needs attention" | DERIVABLE, deterministic | new: `completed >=1 task AND (accuracy < 50% OR has a weak topic)` — same thresholds already used by the student's own profile, no AI score |
+| per-student/class world (module) breakdown | DERIVABLE | `LabResult` joined to `Simulation.module`, grouped; a module with zero results is omitted, never fabricated (this is how GeoWorld — which has no learning-result data yet — naturally disappears instead of showing a fake 0) |
+| recent class activity | REAL NOW | `LabResult` + `User` + `Simulation` join, ordered by `completed_at desc` |
+| "active"/"inactive" directory filter | DERIVABLE, not invented | same definition `ClassStats.active_students` already uses (has ≥1 `LabResult` ever) — deliberately **not** an invented recency window (e.g. "active in last 7 days"), which the brief explicitly warned against |
+
+New backend: `backend/app/routers/teacher.py` (`GET /api/teacher/students-overview`, `/student/{id}`, `/recent-results`, `/module-breakdown`, all `require_role(TEACHER, ADMIN)`) + `backend/app/schemas/teacher.py`. Added a `module` field to `LabResultRead`/`LabResult` (mirrors the existing `simulation_title` computed property) so results can be grouped by world without a second query. No change to `progress_service.py`, no new scoring model, no AI risk score.
+
+New frontend: `lib/teacher-client.ts` (typed client, same convention as `lib/progress-client.ts`), `components/teacher/{Hero,KpiRow,AttentionList,StudentDirectory,StudentDetailPanel,RecentClassResults,ModuleBreakdown,module-meta}.tsx`, full rewrite of `app/(app)/teacher/page.tsx` as the orchestrator (owns `selectedStudentId`, composes the sections in the brief's order: Hero → KPIs → Needs Attention → Directory+Detail → Recent Results → World Breakdown). Directory has search + a real filter set (`all`/`needs attention`/`active`/`inactive`) + sort (`activity`/`name`). Mobile: directory and detail never sit side by side — selecting a student swaps the directory out for a detail view with a "back" control (`lg:hidden`/`hidden lg:block` pair), per the brief's explicit mobile requirement. All new components use only D1 semantic tokens (`bg-surface`/`bg-surface-elevated`/`text-text-*`/`.ds-glass`/`.ds-input`) and a new `t.teacher.*` i18n namespace (RU/EN/TG) — glass for the floating KPI/attention chrome, solid `Surface` for the directory list and recent-results table, per the existing glass-vs-solid rule (§26).
+
+### Concurrent work note — `Classroom`/`ClassMembership` (commit `c59f706`)
+
+While this stage was in progress, a separate commit (`c59f706 feat(teacher): add classroom authorization foundation`, same author, not part of this D7 pass) landed on the branch adding a `Classroom`/`ClassMembership` model, an Alembic migration, `app/core/classroom_scope.py` (per-teacher student-access scoping helpers), and `/api/classes/*` CRUD — a real foundation for "a teacher only sees their own class's students." **D7's new `/api/teacher/*` endpoints do not use this scoping** — they follow the same MVP "one teacher sees all students" model the pre-existing `/api/users/` and `/api/results/stats` endpoints already use (documented as the deliberate MVP scope in `results.py`'s own comment, predating both D7 and `c59f706`). With only 2 real students and 2 real teachers in the DB today this has no visible effect, but it is a real, deliberate scope gap: if multiple teachers are meant to see only their own class's students, `/api/teacher/*` needs to be retrofitted with `classroom_scope.accessible_student_ids()` the same way `/api/classes/*` already uses it. Flagging this explicitly rather than either silently building around it or silently duplicating it — recommend a dedicated follow-up stage once the classroom feature itself is reviewed/approved.
+
+### GeoWorld boundary
+
+Untouched — confirmed via `git status` before staging; zero `components/geo/`, `lib/geo/`, `GeoWorldScene.tsx` changes. `frontend/app/(dev)/geoworld-engine-spike/page.tsx` also appeared modified in `git status` during this stage (the parallel session's own work) and was deliberately excluded from D7's `git add`.
+
+### Domain logic
+
+Zero changes to physics/chemistry engines, safety systems, experiment/task validators, scoring, drag/pour/wire logic, or `progress_service.py`'s XP/accuracy/weak-topic math — the new teacher endpoints call the same functions the student-facing `/api/progress/me` already used.
+
+### Testing
+
+Backend: `backend/tests/test_teacher.py` (5 new tests — role protection, real level/XP/needs-attention values, 404 for unknown student, module breakdown, recent-results/module-breakdown correctly omitting modules with zero data). Full backend suite: **80/80 passing** (includes the concurrent `c59f706`'s own 11 classroom tests — confirmed compatible together). Frontend: `app/(app)/teacher/page.test.tsx` (11 new tests — role protection, real KPIs, attention flagging + honest empty state, directory search, selected-student analytics, empty detail state, recent results + empty state, module-breakdown omission, EN locale rendering). Full frontend suite: **102 files / 885 tests passing**. `tsc --noEmit` and `next lint` both clean.
+
+### Known limitations
+
+- No browser automation was available in this session to visually confirm the layout; all checks are `tsc`/`lint`/`vitest`/`pytest` plus manual reasoning from the same token system already proven correct on other pages. Code/tests passing is not visual approval.
+- `/api/teacher/*` is not yet classroom-scoped (see the concurrent-work note above) — every teacher currently sees every student, same as the pre-existing `/api/users/`.
+- The known Electricity finish-step completion-copy bug (D6.1 §557) remains open, unaddressed, unrelated to this stage.
+
 ---
 
-**Current task scope**: D6.2 (Remaining Lab UI Theme/i18n Cleanup, done, this pass) — see §36. **Code/tests passing is not visual approval** — D7 does not begin until Electricity, Chemistry and GeoWorld are manually inspected in the browser (Light/Dark × RU/EN/TG, with specific attention to the Catalog Browser) and approved.
+**Current task scope**: D7 (Teacher Learning Analytics Center + test-data cleanup, done, this pass) — see §37. **Code/tests passing is not visual approval** — D8 does not begin until `/teacher` is manually inspected in the browser (student count, Light/Dark × RU/EN/TG, search/filter, selected-student analytics, mobile behavior) and approved.
