@@ -2360,3 +2360,42 @@ D6.1 сознательно отложил "менее частые" экран�
 
 ### Статус на конец продолжения №35
 **Design System V2 D7 (Teacher Learning Analytics Center + очистка тестовых данных) — завершён, код верифицирован, ждёт ручного визуального одобрения.** `EDUMIND_DESIGN_SYSTEM_V2.md` обновлён (§37, роадмап §27 переразмечен). D8 не начат. GeoWorld-файлы параллельной сессии не тронуты ни строкой.
+
+---
+
+## Обновление 2026-08-11 (продолжение №36) — GeoWorld G6.7: MapLibre GL JS Engine Spike
+
+### Задача
+Владелец продукта запросил ВТОРОЙ изолированный движковый спайк — `/geoworld-maplibre-spike`, на MapLibre GL JS, параллельно уже существующему Cesium-спайку (G6.6.1). Цель — максимально качественный бесплатный 3D-глобус без Google Maps Platform/billing, с обязательной проверкой Таджикистана/Душанбе/Памира (рельеф Памира должен читаться как горы), несколькими исследованными открытыми источниками DEM/imagery (не первый попавшийся), MapTiler Free — только как необязательное сравнение без billing, БЕЗ спама маркеров, с fly-to Earth→Tajikistan→Dushanbe→Pamir, БЕЗ финальной миграции — только отчёт и ожидание визуальной проверки владельцем продукта. Полный текст задания и все константы — см. `GEOWORLD_ROADMAP.md`, раздел G6.7.
+
+### Исследование (эмпирическое, до единой строчки кода)
+- `maplibre-gl` — BSD-3-Clause; закреплена v5.24.0 (последняя с UMD-сборкой, CDN `<script>`-паттерн как у Cesium — v6.x только ESM). Globe projection с 5.0.0.
+- NASA GIBS EPSG:3857 разобран напрямую из `WMTSCapabilities.xml` (curl, 5.7 МБ) — `BlueMarble_NextGeneration` на `GoogleMapsCompatible_Level8` (maxzoom 8, стандартная XYZ-сетка) — подключается родным MapLibre `raster`-источником БЕЗ кастомного tiling adapter (в отличие от Cesium/EPSG:4326, где адаптер понадобился и стал источником реального бага в G6.6.1).
+- Террейн — переиспользован ТОТ ЖЕ AWS `elevation-tiles-prod` (Terrarium), что уже в production `terrarium-grid.ts`; MapLibre `raster-dem` поддерживает `encoding:"terrarium"` нативно, урл идентичен production.
+- MapTiler Free подтверждён без карты/биллинга (100k запросов/мес) — НЕ подключён живым кодом (требует личный аккаунт владельца продукта), сравнение только по документации.
+
+### Реализация
+`frontend/app/(dev)/geoworld-maplibre-spike/page.tsx` — полностью изолирован. Globe projection + sky/atmosphere + light заданы в JSON стиля. LOD городов/стран — MapLibre-нативные механизмы (встроенное collision detection у symbol-слоёв + zoom-based `filter` по SCALERANK), не ручной per-frame код. Та же дедупликация подписей стран, что в Cesium-спайке (несколько Feature на страну у Natural Earth — оставляется крупнейший полигон). Hillshade-слой поверх террейн-источника — MapLibre-специфичное усиление читаемости рельефа.
+
+### Реальный баг, найденный headless-браузером
+`setStatus("ready")` изначально стоял ПОСЛЕ `await fetch()` границ/городов БЕЗ таймаута — при медленном GitHub raw-запросе весь экран навсегда оставался за оверлеем загрузки, хотя глобус с реальными GIBS-имиджами уже корректно рендерился за оверлеем (подтверждено скриншотом headless-браузера). Исправлено: статус переведён на `map.once("render")` (первый реальный кадр) + 8с страховочный таймаут, `fetch()` границ/городов получил собственный `AbortController`-таймаут и больше не блокирует UI.
+
+### Честная оговорка по self-проверке
+В отличие от Cesium-спайка (CDN `cesium.com` был недостижим из headless-браузера в этой песочнице), в этот раз `unpkg.com`/`gibs.earthdata.nasa.gov`/`s3.amazonaws.com` оказались достижимы — получилось реально отрендерить глобус, подтвердить скриншотом (реальный снимок Земли, day/night terminator) и честными счётчиками (23 успешных GIBS-запроса, 5 Terrarium-запросов в одном из прогонов, 0 ошибок в консоли). Но: `page.screenshot()` для вида "Памир" зависает на этапе чтения WebGL-канваса (тот же класс операции, что предупреждения `GPU stall due to ReadPixels` в консоли) — ограничение слабого/программного GPU именно этой песочницы, НЕ сетевая блокировка (прямой `fetch()` всех трёх доменов в изоляции — мгновенный успех). Визуальная приёмка Памира (главный критический пункт ТЗ) остаётся за владельцем продукта.
+
+### Performance
+Bundle `maplibre-gl.js` — 275 КБ gzip по сети (реальный замер), CDN `<script>`-тег, ноль влияния на production webpack-бандл. Для сравнения Cesium.js — ≥950 КБ gzip (замер прерван таймаутом, значит это нижняя граница). Полный сравнительный отчёт (MapLibre vs Cesium-спайк vs Google Photorealistic 3D Tiles, по visual/terrain/imagery/Памир-покрытию/deep zoom/performance/cost/licensing/production risk) — таблица в `GEOWORLD_ROADMAP.md`, раздел G6.7.
+
+### Результаты проверок
+| Проверка | Результат |
+|---|---|
+| `npx tsc --noEmit` (frontend) | 0 ошибок |
+| `npx eslint` (новый файл) | 0 ошибок |
+| dev-server | запускается чисто, `/geoworld-maplibre-spike` и все проверенные production-роуты (`/`, `/dashboard`, `/teacher/classes`, `/design-preview`, `/sandbox-prototype`, `/geoworld-engine-spike`) — HTTP 200 |
+| GeoWorld boundary | production `/geo3d/[id]` и Cesium-спайк `/geoworld-engine-spike` не тронуты ни строкой |
+
+### GeoWorld boundary / параллельная сессия
+Проверено `git status` перед документированием — ничего из файлов параллельной Design System V2/Teacher-сессии в эту работу не попало.
+
+### Статус на конец продолжения №36
+**GeoWorld G6.7 (MapLibre GL JS Engine Spike) — реализован, задокументирован, изолированный коммит подготовлен.** Никакой миграции не выполнено — по прямому указанию задания. G7 по-прежнему заблокирован до решения владельца продукта (KEEP CURRENT vs CESIUM vs MAPLIBRE) — решение принимается только после его собственной визуальной проверки `/geoworld-maplibre-spike` в браузере, особенно рельефа Памира.
