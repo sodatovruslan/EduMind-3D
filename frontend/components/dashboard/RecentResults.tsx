@@ -3,15 +3,18 @@
 import useSWR from "swr";
 import { getMyResults } from "@/lib/results-client";
 import { useLocale } from "@/lib/locale-context";
+import { ACCENT_TEXT_CLASS, getWorldByModule, worldCopy } from "@/lib/landing-worlds";
 import { Skeleton, Surface } from "@/components/design-system";
 
 const MAX_VISIBLE = 5;
 
 /**
- * D5 — "Recent results", backed by the newly-consumed `GET /api/results/me`
- * (see lib/results-client.ts). `LabResult` has no `module`/accent field, so
- * this list stays neutral-styled rather than guessing a subject color from
- * the title text.
+ * D5 — "Recent results", backed by `GET /api/results/me` (see
+ * lib/results-client.ts). D8 — `LabResult.module` is now real data (added
+ * to the backend schema in D7 for the teacher analytics endpoints, same
+ * field, just not previously exposed in the frontend type) — each row now
+ * shows which world it belongs to, using the same accent/name every other
+ * page already uses (`getWorldByModule`), instead of staying neutral.
  */
 export default function RecentResults() {
   const { t, locale } = useLocale();
@@ -28,9 +31,17 @@ export default function RecentResults() {
         <Skeleton className="h-full min-h-[10rem] w-full" />
       ) : visible && visible.length > 0 ? (
         <Surface elevated className="flex-1 divide-y divide-border/[0.08]">
-          {visible.map((result) => (
+          {visible.map((result) => {
+            const world = getWorldByModule(result.module);
+            const worldName = world ? worldCopy(t, world.key).name : null;
+            return (
             <div key={result.id} className="flex items-center justify-between gap-4 p-4">
               <div className="min-w-0">
+                {worldName && (
+                  <p className={`text-ds-caption font-semibold uppercase tracking-widest ${world ? ACCENT_TEXT_CLASS[world.accent] : ""}`}>
+                    {worldName}
+                  </p>
+                )}
                 <p className="truncate text-ds-body font-medium text-text-primary">{result.simulation_title}</p>
                 <p className="text-ds-caption text-text-muted">
                   {new Date(result.completed_at).toLocaleDateString(locale)} · {Math.round(result.duration_seconds / 60)}{" "}
@@ -44,7 +55,8 @@ export default function RecentResults() {
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </Surface>
       ) : (
         <Surface className="flex flex-1 items-center justify-center p-6 text-center text-ds-body text-text-muted">

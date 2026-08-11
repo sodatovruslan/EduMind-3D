@@ -88,7 +88,7 @@ function renderDashboard() {
   );
 }
 
-describe("DashboardPage — D5 Student Home", () => {
+describe("DashboardPage — D8 Student Learning Center", () => {
   beforeEach(() => {
     mockUser = { id: "u1", email: "s@b.com", full_name: "Айгуль Сатпаева", role: "student", created_at: "2026-01-01" };
     mockProgress = { profile: EMPTY_PROFILE, events: [] };
@@ -165,14 +165,28 @@ describe("DashboardPage — D5 Student Home", () => {
     expect(await screen.findByText(ru.dashboard.progress.empty)).toBeDefined();
   });
 
-  it("shows real recent results with score, and an empty state when there are none", async () => {
+  it("shows real recent results with score and a real world badge, and an empty state when there are none", async () => {
     mockResults = [
-      { id: "r1", user_id: "u1", simulation_id: "sim-elec", simulation_title: "Простая цепь — попытка 2", actions_log: [], score: 91, feedback: null, duration_seconds: 300, completed_at: "2026-02-01T10:00:00Z" },
+      {
+        id: "r1",
+        user_id: "u1",
+        simulation_id: "sim-elec",
+        simulation_title: "Простая цепь — попытка 2",
+        module: "electricity_lab",
+        actions_log: [],
+        score: 91,
+        feedback: null,
+        duration_seconds: 300,
+        completed_at: "2026-02-01T10:00:00Z",
+      },
     ];
     renderDashboard();
 
     expect(await screen.findByText("Простая цепь — попытка 2")).toBeDefined();
-    expect(await screen.findByText("91")).toBeDefined();
+    // "91" also appears as the Electricity world's avg-score stat now — assert presence, not uniqueness
+    expect((await screen.findAllByText("91")).length).toBeGreaterThan(0);
+    // world badge — "Electricity Lab" also appears on the Worlds portal card, so just assert presence, not uniqueness
+    expect((await screen.findAllByText(ru.worlds.items.electricity.name)).length).toBeGreaterThan(0);
   });
 
   it("shows the recent-results empty state for a student with no completed labs", async () => {
@@ -180,12 +194,23 @@ describe("DashboardPage — D5 Student Home", () => {
     expect(await screen.findByText(ru.dashboard.recentResults.empty)).toBeDefined();
   });
 
-  it("surfaces weak topics constructively ('Focus next'), not punitively", async () => {
-    mockProgress = { profile: { ...EMPTY_PROFILE, weak_topics: ["Закон Ома", "Последовательное соединение"] }, events: [] };
+  it("D8: shows both strengths and weak topics constructively, not punitively", async () => {
+    mockProgress = {
+      profile: { ...EMPTY_PROFILE, strong_topics: ["Закон Ома"], weak_topics: ["Последовательное соединение"] },
+      events: [],
+    };
     renderDashboard();
 
-    expect(await screen.findByText(ru.dashboard.focusNext.title)).toBeDefined();
-    expect(await screen.findByText("Закон Ома, Последовательное соединение")).toBeDefined();
+    expect(await screen.findByText(ru.dashboard.strengths.title)).toBeDefined();
+    expect(await screen.findByText(ru.dashboard.strengths.strongLabel)).toBeDefined();
+    expect(await screen.findByText(ru.dashboard.strengths.weakLabel)).toBeDefined();
+    expect(await screen.findByText("Закон Ома")).toBeDefined();
+    expect(await screen.findByText("Последовательное соединение")).toBeDefined();
+  });
+
+  it("D8: shows the honest empty state when there are no strong/weak topics yet", async () => {
+    renderDashboard();
+    expect(await screen.findByText(ru.dashboard.strengths.empty)).toBeDefined();
   });
 
   it("does not show student-only widgets (Continue Learning / Progress / Recent Results) to a teacher", async () => {
@@ -242,5 +267,65 @@ describe("DashboardPage — D5 Student Home", () => {
     const label = await screen.findByText(new RegExp(`^${ru.dashboard.continueLearning.lastSavedLabel}:`));
     expect(label.textContent).toContain(new Date("2026-02-05").toLocaleDateString("ru"));
     expect(screen.queryByText(/%$/)).toBeNull();
+  });
+
+  it("D8: shows real per-world stats once results exist, and honestly says 'not started' for the rest — never an invented percentage", async () => {
+    mockResults = [
+      { id: "r1", user_id: "u1", simulation_id: "sim-elec", simulation_title: "Простая цепь", module: "electricity_lab", actions_log: [], score: 80, feedback: null, duration_seconds: 200, completed_at: "2026-02-01T10:00:00Z" },
+      { id: "r2", user_id: "u1", simulation_id: "sim-elec", simulation_title: "Простая цепь", module: "electricity_lab", actions_log: [], score: 90, feedback: null, duration_seconds: 200, completed_at: "2026-02-03T10:00:00Z" },
+    ];
+    renderDashboard();
+
+    expect(await screen.findByText(`${ru.dashboard.worlds.completedLabel}:`)).toBeDefined();
+    expect(await screen.findByText("2")).toBeDefined();
+    expect(await screen.findByText("85")).toBeDefined(); // average of 80/90
+    // Chemistry has a real simulation but zero results — honest "not started", no fake 0%
+    expect((await screen.findAllByText(ru.dashboard.worlds.notStarted)).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/^0%$/)).toBeNull();
+  });
+
+  it("D8: NextStep recommends revisiting a real weak topic in the student's recently active world", async () => {
+    mockProgress = { profile: { ...EMPTY_PROFILE, completed_labs: 1, weak_topics: ["Закон Ома"] }, events: [] };
+    mockResults = [
+      { id: "r1", user_id: "u1", simulation_id: "sim-elec", simulation_title: "Простая цепь", module: "electricity_lab", actions_log: [], score: 70, feedback: null, duration_seconds: 200, completed_at: "2026-02-01T10:00:00Z" },
+    ];
+    renderDashboard();
+
+    expect(await screen.findByText(ru.dashboard.nextStep.weakTopicText.replace("{topic}", "Закон Ома"))).toBeDefined();
+    const cta = await screen.findByRole("link", { name: new RegExp(`${ru.dashboard.nextStep.openWorldCta} ${ru.worlds.items.electricity.name}`) });
+    expect(cta.getAttribute("href")).toBe("/electricity_lab/sim-elec");
+  });
+
+  it("D8: NextStep recommends an unexplored world when there are no weak topics", async () => {
+    mockProgress = { profile: { ...EMPTY_PROFILE, completed_labs: 1, weak_topics: [] }, events: [] };
+    mockResults = [
+      { id: "r1", user_id: "u1", simulation_id: "sim-elec", simulation_title: "Простая цепь", module: "electricity_lab", actions_log: [], score: 70, feedback: null, duration_seconds: 200, completed_at: "2026-02-01T10:00:00Z" },
+    ];
+    renderDashboard();
+
+    const text = ru.dashboard.nextStep.exploreWorldText.replace("{world}", ru.worlds.items.chemistry.name);
+    expect(await screen.findByText(text)).toBeDefined();
+    const cta = await screen.findByRole("link", { name: new RegExp(ru.dashboard.nextStep.exploreCta) });
+    expect(cta.getAttribute("href")).toBe("/chemistry_world/sim-chem");
+  });
+
+  it("D8: NextStep renders nothing for a brand-new student — Continue Learning's empty state already covers it", async () => {
+    renderDashboard();
+    await screen.findByText(ru.dashboard.continueLearning.emptyTitle);
+    expect(screen.queryByText(ru.dashboard.nextStep.title)).toBeNull();
+  });
+
+  it("D8: Achievements teaser shows a real unlocked achievement with its localized title, and links to the full grid on /profile", async () => {
+    mockProgress = { profile: { ...EMPTY_PROFILE, achievements: ["first_circuit"] }, events: [] };
+    renderDashboard();
+
+    expect(await screen.findByText(ru.achievements.first_circuit.title)).toBeDefined();
+    const viewAll = await screen.findByRole("link", { name: ru.dashboard.achievementsTeaser.viewAllCta });
+    expect(viewAll.getAttribute("href")).toBe("/profile");
+  });
+
+  it("D8: Achievements teaser shows an honest empty state for a student with zero unlocked achievements", async () => {
+    renderDashboard();
+    expect(await screen.findByText(ru.dashboard.achievementsTeaser.empty)).toBeDefined();
   });
 });

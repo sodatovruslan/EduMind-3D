@@ -36,6 +36,7 @@ export interface LabResult {
   user_id: string;
   simulation_id: string;
   simulation_title: string;
+  module: SimulationModule;
   actions_log: Record<string, unknown>[];
   score: number | null;
   feedback: { text: string } | null;

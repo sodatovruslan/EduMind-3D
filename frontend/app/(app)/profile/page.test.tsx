@@ -37,7 +37,7 @@ const EMPTY_PROFILE: LearningProfile = {
   achievements: [],
   current_streak: 0,
 };
-const mockProgress: ProgressHistory = { profile: EMPTY_PROFILE, events: [] };
+let mockProgress: ProgressHistory = { profile: EMPTY_PROFILE, events: [] };
 vi.mock("@/lib/progress-client", () => ({
   getMyProgress: vi.fn(() => Promise.resolve(mockProgress)),
 }));
@@ -57,6 +57,7 @@ function renderProfile() {
 describe("ProfilePage — D5 Student Profile", () => {
   beforeEach(() => {
     mockUser = { id: "u1", email: "student@example.com", full_name: "Данияр Ахметов", role: "student", created_at: "2026-01-15T00:00:00Z" };
+    mockProgress = { profile: EMPTY_PROFILE, events: [] };
     apiFetchMock.mockReset();
     refreshUserMock.mockReset();
   });
@@ -80,6 +81,17 @@ describe("ProfilePage — D5 Student Profile", () => {
     await act(async () => {});
 
     expect(await screen.findByText(ru.dashboard.progress.empty)).toBeDefined();
+  });
+
+  it("D8: shows a real unlocked achievement with its localized title/description, not the old hardcoded English/Russian mix", async () => {
+    mockProgress = { profile: { ...EMPTY_PROFILE, completed_labs: 1, achievements: ["first_circuit"] }, events: [] };
+    renderProfile();
+    await act(async () => {});
+
+    const badge = await screen.findByTestId("achievement-first_circuit");
+    expect(badge.getAttribute("data-unlocked")).toBe("true");
+    expect(badge.textContent).toContain(ru.achievements.first_circuit.title);
+    expect(badge.getAttribute("title")).toBe(ru.achievements.first_circuit.description);
   });
 
   it("preserves the real edit contract: PATCH /api/users/{id} then refreshUser, save disabled until changed", async () => {

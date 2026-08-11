@@ -172,6 +172,10 @@ export const en: typeof ru = {
       difficultyLabel: "Difficulty",
       availableLabel: "Available",
       comingSoon: "Coming soon",
+      completedLabel: "Completed",
+      avgScoreLabel: "Avg. score",
+      lastActivityLabel: "Last activity",
+      notStarted: "Not started yet",
     },
     progress: {
       title: "Progress",
@@ -197,10 +201,23 @@ export const en: typeof ru = {
       durationLabel: "min",
       empty: "No completed labs yet.",
     },
-    focusNext: {
-      title: "Focus next",
-      subtitle: "Topics worth revisiting before your next lab.",
-      empty: "Nothing to revisit right now — keep it up!",
+    strengths: {
+      title: "Strengths and what to revisit",
+      strongLabel: "Going well",
+      weakLabel: "Worth revisiting",
+      empty: "Complete a few more labs to see your strong and weak topics.",
+    },
+    nextStep: {
+      title: "What's next?",
+      weakTopicText: "Revisit \"{topic}\"",
+      exploreWorldText: "Try {world} — you haven't explored it yet",
+      openWorldCta: "Open",
+      exploreCta: "Explore",
+    },
+    achievementsTeaser: {
+      title: "Achievements",
+      viewAllCta: "All achievements",
+      empty: "Complete your first lab to earn your first achievement.",
     },
     teacherFallback: {
       title: "My simulations",
@@ -216,6 +233,16 @@ export const en: typeof ru = {
     saving: "Saving...",
     saved: "Changes saved.",
     saveError: "Couldn't save changes",
+  },
+  achievements: {
+    first_circuit: { title: "First Circuit", description: "Built your first closed circuit" },
+    first_perfect_lab: { title: "Flawless Run", description: "Completed a lab with zero mistakes" },
+    five_labs_completed: { title: "5 Labs Done", description: "Completed 5 labs" },
+    no_hints_used: { title: "No Hints Needed", description: "Completed a lab without using a single hint" },
+    fast_learner: { title: "Fast Learner", description: "Solved every task within the first two attempts" },
+    electrician_beginner: { title: "Beginner Electrician", description: "Earned your first XP" },
+    electrician_intermediate: { title: "Practicing Electrician", description: "Mastered basic circuits" },
+    electrician_advanced: { title: "Master Electrician", description: "Mastered every Electricity Lab task" },
   },
   chemistry: {
     hud: {

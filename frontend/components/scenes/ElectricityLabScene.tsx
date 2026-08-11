@@ -45,7 +45,7 @@ import {
 import { checkElectricalSafety, type SafetyWarning } from "@/lib/electricity-safety";
 import { apiFetch, ApiError } from "@/lib/api";
 import { playConnect, playDisconnect, playFuseBlow, playPowerOn, playSwitchClick } from "@/lib/sound-effects";
-import { ACHIEVEMENTS } from "@/lib/achievements";
+import { ACHIEVEMENT_EMOJI } from "@/lib/achievements";
 import { explainError } from "@/lib/error-explanations";
 import { submitLabCompleted } from "@/lib/progress-client";
 import type { Simulation } from "@/lib/types";
@@ -1341,7 +1341,7 @@ function ProgressBanners() {
         <div className="flex items-center justify-between rounded-ds-control border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
           <span>
             {newAchievements
-              .map((code) => `${ACHIEVEMENTS[code]?.emoji ?? "🏆"} ${ACHIEVEMENTS[code]?.title ?? code}`)
+              .map((code) => `${ACHIEVEMENT_EMOJI[code] ?? "🏆"} ${t.achievements[code as keyof typeof t.achievements]?.title ?? code}`)
               .join(", ")}{" "}
             {t.electricity.hud.newAchievementSuffix}
           </span>
@@ -1445,7 +1445,7 @@ function CompleteLabSection({
           {labSummary.achievements.length > 0 && (
             <p className="mt-2 text-warning">
               {t.electricity.hud.newAchievementsLabel}{" "}
-              {labSummary.achievements.map((code) => ACHIEVEMENTS[code]?.title ?? code).join(", ")}
+              {labSummary.achievements.map((code) => t.achievements[code as keyof typeof t.achievements]?.title ?? code).join(", ")}
             </p>
           )}
         </div>

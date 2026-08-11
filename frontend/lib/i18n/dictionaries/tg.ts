@@ -172,6 +172,10 @@ export const tg: typeof ru = {
       difficultyLabel: "Мураккабӣ",
       availableLabel: "Дастрас",
       comingSoon: "Ба зудӣ",
+      completedLabel: "Иҷрошуда",
+      avgScoreLabel: "Балли миёна",
+      lastActivityLabel: "Фаъолияти охирин",
+      notStarted: "Ҳанӯз оғоз нашудааст",
     },
     progress: {
       title: "Пешрафт",
@@ -197,10 +201,23 @@ export const tg: typeof ru = {
       durationLabel: "дақ",
       empty: "Ҳанӯз кори иҷрошуда нест.",
     },
-    focusNext: {
-      title: "Ба чӣ таваҷҷуҳ кардан лозим",
-      subtitle: "Мавзӯъҳое, ки пеш аз кори навбатӣ такрор кардан лозим аст.",
-      empty: "Ҳоло чизе барои такрор нест — давом деҳ!",
+    strengths: {
+      title: "Тарафҳои қавӣ ва такрор лозим",
+      strongLabel: "Хуб пеш меравад",
+      weakLabel: "Такрор лозим аст",
+      empty: "Боз якчанд кори лабораториро иҷро кун, то мавзӯъҳои қавӣ ва заифи худро бинӣ.",
+    },
+    nextStep: {
+      title: "Баъд чӣ?",
+      weakTopicText: "Мавзӯи «{topic}»-ро такрор кун",
+      exploreWorldText: "{world}-ро санҷ — ин ҷаҳонро ҳанӯз наомӯхтаӣ",
+      openWorldCta: "Кушодан",
+      exploreCta: "Омӯхтан",
+    },
+    achievementsTeaser: {
+      title: "Дастовардҳо",
+      viewAllCta: "Ҳамаи дастовардҳо",
+      empty: "Аввалин кори лабораториро иҷро кун, то аввалин дастоварди худро гирӣ.",
     },
     teacherFallback: {
       title: "Симулятсияҳои ман",
@@ -216,6 +233,16 @@ export const tg: typeof ru = {
     saving: "Захира шуда истодааст...",
     saved: "Тағйирот захира шуд.",
     saveError: "Захираи тағйирот ноком шуд",
+  },
+  achievements: {
+    first_circuit: { title: "Занҷири аввал", description: "Аввалин занҷири пӯшидаро сохт" },
+    first_perfect_lab: { title: "Кори беайб", description: "Кори лабораториро бе ягон хато иҷро кард" },
+    five_labs_completed: { title: "5 кори лабораторӣ", description: "5 кори лабораториро иҷро кард" },
+    no_hints_used: { title: "Бе маслиҳат", description: "Кори лабораториро бе ягон маслиҳат иҷро кард" },
+    fast_learner: { title: "Омӯзандаи тезфаҳм", description: "Ҳама вазифаҳоро бо кӯшиши як-ду иҷро кард" },
+    electrician_beginner: { title: "Барқчии навомӯз", description: "Аввалин холҳои таҷрибаро гирифт" },
+    electrician_intermediate: { title: "Барқчии амалиётчӣ", description: "Занҷирҳои асосиро бомуваффақият аз худ кард" },
+    electrician_advanced: { title: "Устои барқ", description: "Ҳама вазифаҳои Electricity Lab-ро аз худ кард" },
   },
   chemistry: {
     hud: {

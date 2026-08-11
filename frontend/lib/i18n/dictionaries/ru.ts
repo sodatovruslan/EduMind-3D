@@ -170,6 +170,10 @@ export const ru = {
       difficultyLabel: "Сложность",
       availableLabel: "Доступно",
       comingSoon: "Скоро",
+      completedLabel: "Пройдено",
+      avgScoreLabel: "Средний балл",
+      lastActivityLabel: "Последняя активность",
+      notStarted: "Ещё не начато",
     },
     progress: {
       title: "Прогресс",
@@ -195,10 +199,23 @@ export const ru = {
       durationLabel: "мин",
       empty: "Ещё нет завершённых работ.",
     },
-    focusNext: {
-      title: "На что обратить внимание",
-      subtitle: "Темы, которые стоит повторить перед следующей работой.",
-      empty: "Пока нечего повторять — так держать!",
+    strengths: {
+      title: "Сильные стороны и что повторить",
+      strongLabel: "Получается хорошо",
+      weakLabel: "Стоит повторить",
+      empty: "Заверши ещё несколько работ, чтобы увидеть свои сильные и слабые темы.",
+    },
+    nextStep: {
+      title: "Что дальше?",
+      weakTopicText: "Повтори тему «{topic}»",
+      exploreWorldText: "Попробуй {world} — этот мир ты ещё не исследовал",
+      openWorldCta: "Открыть",
+      exploreCta: "Исследовать",
+    },
+    achievementsTeaser: {
+      title: "Достижения",
+      viewAllCta: "Все достижения",
+      empty: "Заверши первую лабораторную работу, чтобы получить первое достижение.",
     },
     teacherFallback: {
       title: "Мои симуляции",
@@ -214,6 +231,16 @@ export const ru = {
     saving: "Сохраняем...",
     saved: "Изменения сохранены.",
     saveError: "Не удалось сохранить изменения",
+  },
+  achievements: {
+    first_circuit: { title: "Первая цепь", description: "Собрал первую замкнутую цепь" },
+    first_perfect_lab: { title: "Идеальная работа", description: "Прошёл лабораторную работу без единой ошибки" },
+    five_labs_completed: { title: "5 лабораторных", description: "Завершил 5 лабораторных работ" },
+    no_hints_used: { title: "Без подсказок", description: "Прошёл лабораторную работу без единой подсказки" },
+    fast_learner: { title: "Быстро схватывает", description: "Прошёл все задачи с первой-второй попытки" },
+    electrician_beginner: { title: "Начинающий электрик", description: "Набрал первые очки опыта" },
+    electrician_intermediate: { title: "Электрик-практик", description: "Уверенно освоил базовые цепи" },
+    electrician_advanced: { title: "Электрик-мастер", description: "Освоил все задачи Electricity Lab" },
   },
   chemistry: {
     hud: {

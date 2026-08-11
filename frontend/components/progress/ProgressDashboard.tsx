@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Award, Flame, Target, TrendingUp, Zap } from "lucide-react";
 import { getMyProgress, type LearningProfile } from "@/lib/progress-client";
-import { ACHIEVEMENTS, ALL_ACHIEVEMENT_CODES } from "@/lib/achievements";
+import { ACHIEVEMENT_EMOJI, ALL_ACHIEVEMENT_CODES } from "@/lib/achievements";
 import { useLocale } from "@/lib/locale-context";
 import { Skeleton, Surface } from "@/components/design-system";
 
@@ -118,7 +118,7 @@ export default function ProgressDashboard() {
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" data-testid="achievements-grid">
           {ALL_ACHIEVEMENT_CODES.map((code) => {
             const unlocked = profile.achievements.includes(code);
-            const info = ACHIEVEMENTS[code];
+            const info = t.achievements[code as keyof typeof t.achievements];
             return (
               <div
                 key={code}
@@ -129,7 +129,7 @@ export default function ProgressDashboard() {
                   unlocked ? "border-warning/50 bg-warning/10 text-warning" : "border-border/[0.08] bg-background text-text-muted opacity-50"
                 }`}
               >
-                <div className="text-2xl">{info.emoji}</div>
+                <div className="text-2xl">{ACHIEVEMENT_EMOJI[code]}</div>
                 <div className="mt-1 font-medium">{info.title}</div>
               </div>
             );

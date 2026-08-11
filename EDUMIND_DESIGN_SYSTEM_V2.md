@@ -676,4 +676,100 @@ Backend: `backend/tests/test_teacher.py` (5 new tests — role protection, real 
 
 ---
 
-**Current task scope**: D7 (Teacher Learning Analytics Center + test-data cleanup, done, this pass) — see §37. **Code/tests passing is not visual approval** — D8 does not begin until `/teacher` is manually inspected in the browser (student count, Light/Dark × RU/EN/TG, search/filter, selected-student analytics, mobile behavior) and approved.
+## 38. D8 implementation notes — Student Learning Center (code-verified, awaiting manual visual approval)
+
+D7 was approved; the user also reported that a separate, parallel Codex session had independently completed T4/D7.1 (classroom-scoped Teacher Analytics), landing directly on this branch as multiple commits (`c59f706`, `71191b5`, `dea58e0`) outside this session. D8 was scoped strictly to Student Dashboard UX — explicitly not touching the classroom/chat/GeoWorld/physics work other sessions are running concurrently on the same working tree.
+
+### Parallel-session safety
+
+Per the brief's explicit §26, `git status`/`git log --oneline -15` were run before any edit. Found in-progress, uncommitted work belonging to the performance/security session (`backend/app/models/{ai_log,lab_result,learning_event}.py` modified, a new alembic migration for performance indexes) — none of it was touched, read, or staged. No `git reset`/`checkout .`/`clean`/blind `git add .` was used anywhere in this stage.
+
+### Audit — what the "old" Student Dashboard actually was
+
+D5/D5.1/D5.2 had already built a real hierarchy (Hero → Continue Learning + Progress → Worlds → Recent Results + Focus Next) — D8 did not start from a blank/weak page, unlike D7's `/teacher`. The actual gap (matching the user's "Teacher Center is now stronger than Student side" framing) was narrower than a full rebuild: no achievements anywhere on the Dashboard (only on `/profile`), Worlds cards showed catalog info but zero real progress per world, weak topics were shown without their strong-topic counterpart, and there was no synthesized "what should I do next" beyond raw resume mechanics.
+
+### Data classification
+
+| Data | Classification | Source |
+|---|---|---|
+| level/XP/streak/completed_labs/accuracy | REAL NOW | `GET /api/progress/me` (unchanged) |
+| strong_topics/weak_topics | REAL NOW | same endpoint, already fetched, previously only weak topics were shown on Dashboard |
+| achievements (unlock codes) | REAL NOW | same endpoint; **display metadata (title/description) was hardcoded English/Russian mixed text in `lib/achievements.ts`, never localized** — a real i18n bug, fixed this stage (see below) |
+| active Chemistry save (resume) | REAL NOW | `GET /api/chemistry/saves` (unchanged) |
+| Electricity resume | **NOT AVAILABLE** | confirmed (again) — no server-side Electricity saves router exists; Continue Learning correctly never fabricates one |
+| recent lab results (score/duration/date) | REAL NOW | `GET /api/results/me` (unchanged) |
+| per-result `module` (world) | REAL NOW but unexposed | the backend schema already returns it (added in D7 for the teacher endpoints, same `LabResultRead.module`) — `lib/types.ts`'s `LabResult` just didn't declare it; added as a pure type-level fix, zero backend change |
+| per-world completed count / avg score / last activity | DERIVABLE | `GET /api/results/me` grouped by `module` client-side — no new endpoint |
+| "what's next" recommendation | DERIVABLE, deterministic | see NextStep logic below — no AI, no invented copy |
+| GeoWorld per-world progress | **NOT AVAILABLE (honestly represented)** | zero LabResult rows for `geo3d` today — world card shows "не начато", never a fake 0% |
+
+### Information architecture — what was added, and what was deliberately NOT added
+
+Final composition: Hero → (Continue Learning + Progress) → **NextStep** → Worlds (enhanced) → **Strengths/Needs Practice** (replaces the old weak-only Focus Next) → (Recent Results (enhanced) + **Achievements teaser**).
+
+- **NextStep is not a duplicate of Continue Learning.** Continue Learning's job stays "resume what's in progress" (unchanged logic). NextStep only ever suggests something *different*: (1) a real weak topic, attributed to the student's most-recently-active world (from the newest `LabResult.module` — a real, derivable signal, not a fabricated topic→world mapping), with a CTA into that world; else (2) a world with real simulations but zero completed results — "try {world}"; else (3) renders **nothing** — a brand-new student (`completed_labs === 0`) or a student with no weak topics and no unexplored world left has nothing honest to add here, so the component returns `null` rather than inventing a message. This is the brief's §2 "remove the block if there's no honest data" instruction applied per-instance, not just at the page level.
+- **A separate "Quick Actions" block (brief IA item I) was deliberately not built** — every actionable CTA already lives inside Continue Learning / NextStep / Worlds / Achievements; a standalone block would only repeat those same links. Documented here per the brief's own "trim blocks without honest independent purpose" instruction, not silently dropped.
+- **Achievements teaser is a preview, not a second trophy wall** — up to 4 tiles (unlocked first), a real "All achievements" link to `/profile` (where the full grid, `ProgressDashboard.tsx`, already lives, untouched in structure). No duplication of the full grid.
+- **Profile vs Dashboard boundary (brief §13)**: already reasonably separated before this stage (Dashboard = current state + resume; Profile = account + full `ProgressDashboard` with avg hints/attempts/recommended difficulty/full achievement grid) — D8 did not need to restructure `/profile`, only fix the achievement-text i18n bug it shared with the new Dashboard teaser (one shared `lib/achievements.ts`, fixed once, benefits both pages).
+
+### i18n bug found and fixed (not scope creep — required by brief §17 for the new Achievements teaser)
+
+`lib/achievements.ts` hardcoded achievement title/description as a mix of English (`"First Circuit"`) and Russian (`"Собрал первую замкнутую цепь"`) — never routed through the locale system, on both the pre-existing `/profile` grid and now the new Dashboard teaser. Fixed by moving title/description into a new top-level `t.achievements.<code>` dictionary namespace (RU/EN/TG, 8 codes), leaving `lib/achievements.ts` with only the emoji map (`ACHIEVEMENT_EMOJI`). Three real call sites updated: `ProgressDashboard.tsx` (`/profile`), the new `AchievementsTeaser.tsx`, and — found only by `tsc` failing after the refactor — two achievement-toast strings inside `ElectricityLabScene.tsx`'s `ProgressBanners`/`CompleteLabSection` (the same functions D6.2 already retuned) that also read the old hardcoded `ACHIEVEMENTS[code].title`; both now resolve through `t.achievements[code]` too, so the in-lab achievement toast is now genuinely localized for the first time.
+
+### Continue Learning / Worlds / Progress
+
+Continue Learning and Progress logic untouched (still exactly the D5.1 3-tier resume priority). Worlds (`WorldSection.tsx`) gained a real per-world stat line — completed count, average score, last activity — computed from `GET /api/results/me` (same `"results-me"` SWR key `RecentResults` already used, so this is zero extra network requests, not a new fetch per card) grouped by `module`. A world with real simulations but zero results says "не начато" (`t.dashboard.worlds.notStarted`), never a fabricated percentage; a world with zero simulations at all keeps the pre-existing "coming soon" state, which is a different, correct condition.
+
+### Recommendation logic (NextStep)
+
+Documented above under Information Architecture — restated for the report checklist: deterministic, two real tiers plus a silent "nothing to add" fallback, no AI-attributed copy anywhere (`t.dashboard.nextStep.*` never claims "AI recommends").
+
+### Recent activity / Achievements
+
+`RecentResults.tsx` gained a world-name badge per row (`getWorldByModule` + the same accent tokens Landing/Dashboard/Worlds already use), using the now-exposed `LabResult.module`. List stays capped at 5, unchanged. Achievements teaser described above.
+
+### Empty states
+
+Brand-new student: Hero shows real zeros (unchanged, pre-existing), Continue Learning shows its existing honest empty state, Progress shows its existing empty state, NextStep renders nothing, Strengths/Needs Practice shows a new honest empty state (`t.dashboard.strengths.empty`) instead of two empty cards, Worlds shows real simulation availability with "не начато" per world once any simulations exist, Achievements teaser shows a real "complete your first lab" empty state instead of a locked/empty grid. No `0%`, no empty chart, no empty table anywhere on first login.
+
+### Mobile / tablet / desktop
+
+No new grid patterns beyond what D5.1/D5.2 already established (`grid-cols-1` → `sm:`/`lg:` breakpoints throughout); NextStep's strip stacks the CTA under the text below `sm:`; Achievements teaser's tile grid is `grid-cols-2` on mobile, `sm:grid-cols-4` from tablet up; Strengths/Needs Practice is `grid-cols-1 sm:grid-cols-2`. No horizontal-scroll risk introduced (no fixed-width elements added).
+
+### Light/Dark/System
+
+No new theming mechanism — every new component uses only existing D1 semantic tokens (`bg-surface`/`bg-surface-elevated`/`text-text-*`/`border-success`/`border-warning`/`text-accent`/`GlassPanel`/`Surface`); grep-confirmed zero `bg-white/5`/`text-slate-*`/`.glass-panel`/hardcoded colors in any new or edited file.
+
+### RU/EN/TG
+
+All new strings (`t.dashboard.worlds.*` additions, `t.dashboard.strengths.*`, `t.dashboard.nextStep.*`, `t.dashboard.achievementsTeaser.*`, `t.achievements.*`) added to all three locale files, typed against `ru` (`Dictionary = typeof ru`) so a missing EN/TG key would be a compile error. Grep-confirmed zero hardcoded Cyrillic strings in any new component file.
+
+### Accessibility
+
+All new interactive elements (`ButtonLink`s) reuse the existing `ds-focus-ring`/semantic-`<a>` pattern already used everywhere else on this page — no new custom interactive widgets were introduced. Achievement tiles' locked/unlocked state uses a border/opacity pair (not color alone) plus a `title` tooltip with the real description, matching the exact pattern the pre-existing, already-approved `/profile` grid uses — not a new a11y gap.
+
+### Performance
+
+No new network requests: every new/changed component reuses an already-established SWR key (`"progress-me"`, `"results-me"`, or the `simulations` prop already fetched once at the page level) — confirmed by reading each `useSWR` call site, not by fabricated instrumentation. No chart library added; all stats are plain text/CSS. `WorldSection`'s per-card stat computation is a cheap array filter/reduce over an already-fetched, small (per-student) result list, not a new request per card.
+
+### Testing
+
+`app/(app)/dashboard/page.test.tsx`: extended from 15 to 23 tests (module field added to the existing mock `LabResult`, `focusNext`→`strengths` references updated, new coverage for real per-world stats/honest "not started" state, both NextStep recommendation tiers plus its silent brand-new-student fallback, and the achievements teaser's real-unlock + empty states). `app/(app)/profile/page.test.tsx`: +1 test locking in the achievement i18n fix (real unlocked achievement renders the localized RU title/description, not the old hardcoded mix) — required converting its `mockProgress` from `const` to `let` with a `beforeEach` reset, matching the dashboard test's existing convention. Full suite and `tsc`/`lint` results below.
+
+### GeoWorld boundary
+
+Untouched — confirmed via `git status`/`git diff` before staging; zero `components/geo/`, `lib/geo/`, `GeoWorldScene.tsx`, Cesium/MapLibre changes. The performance-session's in-progress model/migration files and the Codex classroom/chat work were left exactly as found.
+
+### Domain logic
+
+Zero changes to physics/chemistry engines, safety systems, scoring/XP formulas, achievement unlock rules, classroom/teacher authorization, or any backend contract — the one backend-adjacent fact used (`LabResultRead.module`) already existed from D7; nothing new was added to the backend in this stage.
+
+### Known limitations
+
+- No browser automation available this session — layout/spacing/visual weight reasoned through the same token system already proven on other pages, not visually re-verified pixel-by-pixel.
+- `NextStep`'s "recently active world" heuristic (newest `LabResult.module`) is a real, derivable signal but an approximation — it doesn't guarantee the weak topic itself came from that exact world, just that it's the world the student most recently worked in. Documented rather than silently assumed to be exact.
+- Achievements teaser's locked-tile accessibility matches the pre-existing `/profile` grid's pattern (border/opacity + title tooltip) — neither has an explicit `aria-label` stating "locked"; a genuine improvement opportunity, not introduced by this stage, not fixed here to avoid scope creep into an already-approved component's a11y contract without a dedicated review.
+
+---
+
+**Current task scope**: D8 (Student Learning Center, done, this pass) — see §38. **Code/tests passing is not visual approval** — D9 does not begin until the Dashboard is manually inspected in the browser (empty-state for a fresh student, real-data state, Light/Dark × RU/EN/TG, mobile/tablet/desktop) and approved.

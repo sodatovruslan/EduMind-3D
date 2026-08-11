@@ -1,9 +1,11 @@
 "use client";
 
+import useSWR from "swr";
 import { motion } from "framer-motion";
 import { useLocale } from "@/lib/locale-context";
 import { ACCENT_TEXT_CLASS, LANDING_WORLDS, worldCopy } from "@/lib/landing-worlds";
-import type { Simulation } from "@/lib/types";
+import { getMyResults } from "@/lib/results-client";
+import type { LabResult, Simulation } from "@/lib/types";
 import { ButtonLink, Skeleton, Surface } from "@/components/design-system";
 
 /**
@@ -19,15 +21,17 @@ import { ButtonLink, Skeleton, Surface } from "@/components/design-system";
 function WorldPortal({
   world,
   simulations,
+  results,
   isLoading,
   index,
 }: {
   world: (typeof LANDING_WORLDS)[number];
   simulations: Simulation[] | undefined;
+  results: LabResult[] | undefined;
   isLoading: boolean;
   index: number;
 }) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const copy = worldCopy(t, world.key);
   const Icon = world.icon;
   const moduleKey = world.routeBase.slice(1) as Simulation["module"];
@@ -36,6 +40,19 @@ function WorldPortal({
   // придумывать не нужно — если их несколько, честно показываем счётчик
   const featured = [...worldSimulations].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
   const extraCount = Math.max(0, worldSimulations.length - 1);
+
+  // D8 — real per-world progress: only ever derived from this student's own
+  // LabResult rows for this module (`GET /api/results/me`, already fetched
+  // once at the section level and shared via SWR's cache — no extra
+  // request per card). No invented percentages: a world with zero results
+  // honestly says "not started yet", not "0%".
+  const worldResults = results?.filter((r) => r.module === moduleKey) ?? [];
+  const scored = worldResults.filter((r) => r.score !== null);
+  const avgScore = scored.length > 0 ? Math.round(scored.reduce((sum, r) => sum + (r.score ?? 0), 0) / scored.length) : null;
+  const lastActivity =
+    worldResults.length > 0
+      ? new Date(Math.max(...worldResults.map((r) => new Date(r.completed_at).getTime()))).toLocaleDateString(locale)
+      : null;
 
   return (
     <motion.div
@@ -74,6 +91,30 @@ function WorldPortal({
             )}
           </div>
 
+          {!isLoading && worldSimulations.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-ds-caption text-text-muted">
+              {worldResults.length > 0 ? (
+                <>
+                  <span>
+                    {t.dashboard.worlds.completedLabel}: <span className="font-medium text-text-secondary">{worldResults.length}</span>
+                  </span>
+                  {avgScore !== null && (
+                    <span>
+                      {t.dashboard.worlds.avgScoreLabel}: <span className="font-medium text-text-secondary">{avgScore}</span>
+                    </span>
+                  )}
+                  {lastActivity && (
+                    <span>
+                      {t.dashboard.worlds.lastActivityLabel}: <span className="font-medium text-text-secondary">{lastActivity}</span>
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span>{t.dashboard.worlds.notStarted}</span>
+              )}
+            </div>
+          )}
+
           <ButtonLink
             href={featured ? `/${featured.module}/${featured.id}` : "#worlds"}
             variant="primary"
@@ -90,6 +131,9 @@ function WorldPortal({
 
 export default function WorldSection({ simulations, isLoading }: { simulations: Simulation[] | undefined; isLoading: boolean }) {
   const { t } = useLocale();
+  // Same "results-me" SWR key RecentResults already uses — SWR dedupes by
+  // key, so this never fires a second network request for the same data.
+  const { data: results } = useSWR("results-me", getMyResults);
 
   return (
     <section id="worlds">
@@ -105,7 +149,7 @@ export default function WorldSection({ simulations, isLoading }: { simulations: 
 
       <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-3">
         {LANDING_WORLDS.map((world, index) => (
-          <WorldPortal key={world.key} world={world} simulations={simulations} isLoading={isLoading} index={index} />
+          <WorldPortal key={world.key} world={world} simulations={simulations} results={results} isLoading={isLoading} index={index} />
         ))}
       </div>
     </section>

@@ -8,19 +8,19 @@ import { useAuth } from "@/lib/auth-context";
 import { useLocale } from "@/lib/locale-context";
 import Hero from "@/components/dashboard/Hero";
 import ContinueLearning from "@/components/dashboard/ContinueLearning";
+import NextStep from "@/components/dashboard/NextStep";
 import WorldSection from "@/components/dashboard/WorldSection";
 import ProgressSnapshot from "@/components/dashboard/ProgressSnapshot";
 import RecentResults from "@/components/dashboard/RecentResults";
-import FocusNext from "@/components/dashboard/FocusNext";
+import StrengthsAndPractice from "@/components/dashboard/StrengthsAndPractice";
+import AchievementsTeaser from "@/components/dashboard/AchievementsTeaser";
 
 /**
  * D5.1 — Student Learning Hub, visual rework of D5 (same route, same
  * underlying `/api/simulations/` fetch, all D5 data logic preserved — see
  * EDUMIND_DESIGN_SYSTEM_V2.md D5.1 notes). D5's composition stacked every
  * section full-width in a single `max-w-6xl` column, which read as an
- * admin list rather than a hub. Reworked into a real hierarchy: Hero →
- * (Continue Learning + Progress side by side) → Worlds (3 big portals,
- * full width) → (Recent Results + Focus Next side by side).
+ * admin list rather than a hub.
  *
  * D5.2 — the content column here (inside StandardAppShell's `<main>`, which
  * spans the FULL remaining viewport width after the Rail) previously had a
@@ -31,6 +31,15 @@ import FocusNext from "@/components/dashboard/FocusNext";
  * composition reads as a wide command center rather than a narrow column
  * with large side margins on very wide (1600–1920px) displays, without
  * stretching individual cards to absurd widths (see D5.2 notes).
+ *
+ * D8 — "Student Learning Center". Hero → (Continue Learning + Progress) →
+ * NextStep (one deterministic "what's next" suggestion, distinct from
+ * Continue Learning's "resume what's in progress" — see NextStep.tsx) →
+ * Worlds (now with real per-world stats) → Strengths/Needs Practice (both
+ * strong AND weak topics, replacing the old weak-only "Focus next") →
+ * Recent Results (now world-badged) → Achievements teaser (links to the
+ * full grid on /profile, deliberately not duplicated here — see
+ * EDUMIND_DESIGN_SYSTEM_V2.md D8 notes for the full data audit).
  *
  * Teacher/admin visiting `/dashboard` (Rail's "Home" is role-agnostic)
  * still get a minimal world-browse fallback instead of fabricated student
@@ -65,11 +74,15 @@ export default function DashboardPage() {
           <ProgressSnapshot />
         </div>
 
+        <NextStep simulations={simulations} />
+
         <WorldSection simulations={simulations} isLoading={isLoading} />
+
+        <StrengthsAndPractice />
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <RecentResults />
-          <FocusNext />
+          <AchievementsTeaser />
         </div>
       </div>
     </MotionConfig>
