@@ -196,6 +196,52 @@ const LOCATIONS = {
 
 type LocationKey = keyof typeof LOCATIONS;
 
+/**
+ * Georeferencing validation (по прямому указанию владельца продукта) —
+ * ТРИ контрольные точки Душанбе с координатами из НАДЁЖНЫХ источников, не
+ * угаданными:
+ *
+ * 1. Памятник Исмоили Сомони (Ҳайкали Исмоили Сомонӣ), площадь Дусти —
+ *    lat=38.5739365, lon=68.7853619, OpenStreetMap Nominatim (way
+ *    1375034135, тип tourism/attraction, адрес "кӯчаи Теҳрон, Ноҳияи
+ *    Исмоили Сомонӣ, Душанбе"). Независимо перепроверено ВТОРЫМ
+ *    источником — Wikidata (через веб-поиск): lat=38.5739306,
+ *    lon=68.7853416 — расхождение между источниками ~0.00002° (~2 метра),
+ *    то есть согласованно. Взято среднее.
+ * 2. Гипрозем (здание/институт, давший имя району), улица Гипрозем,
+ *    район Сино — lat=38.5112209, lon=68.7380377, OpenStreetMap Nominatim
+ *    (relation 3951319, class=building, name="Гипрозем").
+ * 3. 46-й микрорайон, район Фирдавси — lat=38.5289730, lon=68.7663808,
+ *    OpenStreetMap Nominatim (relation 11017357, class=boundary,
+ *    type=administrative, addresstype=suburb — центр официальной
+ *    административной границы микрорайона).
+ *
+ * Цель — НЕ обычные city-labels (те уже есть, LOD по SCALERANK), а
+ * КОНТРОЛЬНЫЕ точки для проверки, что imagery действительно совмещена с
+ * координатами (не только "маркер стоит на слове Душанбе"), поэтому
+ * визуально отличаются (маджента, не золото/белый) и не участвуют в
+ * anti-spam LOD.
+ */
+const CONTROL_POINTS = {
+  ismoiliSomoni: {
+    center: [68.7853518, 38.5739336] as [number, number],
+    label: "🎯 Памятник Исмоили Сомони",
+    source: "OSM Nominatim way 1375034135 + Wikidata (независимо согласуются, ~2м)",
+  },
+  giprozem: {
+    center: [68.7380377, 38.5112209] as [number, number],
+    label: "🎯 Гипрозем",
+    source: "OSM Nominatim relation 3951319 (building=Гипрозем)",
+  },
+  microdistrict46: {
+    center: [68.7663808, 38.5289730] as [number, number],
+    label: "🎯 46-й микрорайон",
+    source: "OSM Nominatim relation 11017357 (admin boundary centroid)",
+  },
+} as const;
+
+type ControlPointKey = keyof typeof CONTROL_POINTS;
+
 declare global {
   interface Window {
     maplibregl?: any;
@@ -310,9 +356,11 @@ function countRecentTiles(hostFragment: string, sinceMs: number): number {
 export default function GeoWorldMapLibreSpikePage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
+  const controlMarkersRef = useRef<any[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [activeLocation, setActiveLocation] = useState<LocationKey>("earth");
+  const [activeLocation, setActiveLocation] = useState<LocationKey | null>("earth");
+  const [activeControlPoint, setActiveControlPoint] = useState<ControlPointKey | null>(null);
   const [projection, setProjectionMode] = useState<"globe" | "mercator">("globe");
   const [terrainStatus, setTerrainStatus] = useState<"pending" | "ready" | "failed">("pending");
   const [labelsStatus, setLabelsStatus] = useState<"pending" | "ready" | "failed">("pending");
@@ -556,6 +604,27 @@ export default function GeoWorldMapLibreSpikePage() {
         });
         mapRef.current = map;
 
+        // Georeferencing validation — маркеры контрольных точек. DOM-based
+        // `Marker` (не data-driven слой), т.к. их всего 3, статичны и не
+        // участвуют в LOD/anti-spam логике city-labels — визуально ЯРКО
+        // отличаются (маджента) от золотых/белых city-меток намеренно, это
+        // debug-инструмент проверки, не часть обычного контента карты.
+        for (const key of Object.keys(CONTROL_POINTS) as ControlPointKey[]) {
+          const point = CONTROL_POINTS[key];
+          const el = document.createElement("div");
+          el.style.width = "16px";
+          el.style.height = "16px";
+          el.style.borderRadius = "50%";
+          el.style.background = "#ec4899";
+          el.style.border = "3px solid #ffffff";
+          el.style.boxShadow = "0 0 0 2px #ec4899, 0 0 8px rgba(236,72,153,0.9)";
+          const marker = new maplibregl.Marker({ element: el, anchor: "center" })
+            .setLngLat(point.center)
+            .setPopup(new maplibregl.Popup({ offset: 14 }).setHTML(`<b>${point.label}</b><br/>${point.center[1].toFixed(6)}, ${point.center[0].toFixed(6)}<br/><span style="font-size:10px">${point.source}</span>`))
+            .addTo(map);
+          controlMarkersRef.current.push(marker);
+        }
+
         // "Готово" — по первому реальному отрисованному кадру (`render`),
         // а НЕ по событию `load`. Найдено headless-браузером (не догадкой):
         // `load` у MapLibre ждёт готовности ВСЕХ источников стиля, включая
@@ -646,6 +715,8 @@ export default function GeoWorldMapLibreSpikePage() {
 
     return () => {
       cancelled = true;
+      for (const marker of controlMarkersRef.current) marker.remove();
+      controlMarkersRef.current = [];
       mapRef.current?.remove();
       mapRef.current = null;
     };
@@ -678,7 +749,19 @@ export default function GeoWorldMapLibreSpikePage() {
     if (!map) return;
     const loc = LOCATIONS[key];
     setActiveLocation(key);
+    setActiveControlPoint(null);
     map.flyTo({ center: loc.center, zoom: loc.zoom, pitch: loc.pitch, duration: 2500, essential: true });
+  }
+
+  // Deep zoom (18) — достаточно, чтобы визуально сверить конкретный
+  // объект/квартал под маркером с imagery, не просто "в целом Душанбе".
+  function flyToControlPoint(key: ControlPointKey) {
+    const map = mapRef.current;
+    if (!map) return;
+    const point = CONTROL_POINTS[key];
+    setActiveControlPoint(key);
+    setActiveLocation(null);
+    map.flyTo({ center: point.center, zoom: 18, pitch: 0, bearing: 0, duration: 2500, essential: true });
   }
 
   function toggleEsri() {
@@ -773,6 +856,41 @@ export default function GeoWorldMapLibreSpikePage() {
         >
           {esriEnabled ? "High-res (Esri, eval-only) ON" : "High-res (Esri, eval-only) OFF"}
         </button>
+      </div>
+
+      {/* Georeferencing validation — контрольные точки Душанбе, координаты из OSM Nominatim/Wikidata (см. комментарий у CONTROL_POINTS), не city-labels. */}
+      <div
+        style={{
+          position: "absolute",
+          top: 90,
+          left: 12,
+          zIndex: 10,
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 6,
+          maxWidth: 420,
+          fontFamily: "monospace",
+          fontSize: 12,
+        }}
+      >
+        {(Object.keys(CONTROL_POINTS) as ControlPointKey[]).map((key) => (
+          <button
+            key={key}
+            onClick={() => flyToControlPoint(key)}
+            disabled={status !== "ready"}
+            title={`${CONTROL_POINTS[key].center[1].toFixed(6)}, ${CONTROL_POINTS[key].center[0].toFixed(6)} — ${CONTROL_POINTS[key].source}`}
+            style={{
+              padding: "6px 10px",
+              borderRadius: 999,
+              border: "1px solid rgba(236,72,153,0.6)",
+              background: activeControlPoint === key ? "rgba(236,72,153,0.4)" : "rgba(0,0,0,0.5)",
+              color: "#f9a8d4",
+              cursor: status === "ready" ? "pointer" : "not-allowed",
+            }}
+          >
+            {CONTROL_POINTS[key].label}
+          </button>
+        ))}
       </div>
 
       {/* Диагностика — те же принципы честности, что и в Cesium-спайке: реальные счётчики сетевых запросов через performance API (не выдуманные), FPS из реального rAF-цикла. */}
