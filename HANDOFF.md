@@ -2399,3 +2399,41 @@ Bundle `maplibre-gl.js` — 275 КБ gzip по сети (реальный зам
 
 ### Статус на конец продолжения №36
 **GeoWorld G6.7 (MapLibre GL JS Engine Spike) — реализован, задокументирован, изолированный коммит подготовлен.** Никакой миграции не выполнено — по прямому указанию задания. G7 по-прежнему заблокирован до решения владельца продукта (KEEP CURRENT vs CESIUM vs MAPLIBRE) — решение принимается только после его собственной визуальной проверки `/geoworld-maplibre-spike` в браузере, особенно рельефа Памира.
+
+---
+
+## Обновление 2026-08-12 (продолжение №37) — GeoWorld G6.8: High-resolution imagery / deep-zoom spike
+
+### Задача
+G6.7 одобрен визуально владельцем продукта (globe, Globe↔Mercator, Terrarium-рельеф "реально читается как горы" — оставляем MapLibre как кандидата). Осталась проблема: NASA GIBS BlueMarble (500м/px) недостаточно детален при глубоком зуме на Душанбе/Памир. G6.8 — отдельный research + implementation спайк ИМЕННО imagery-слоя, явно НЕ трогает MapLibre-движок и НЕ трогает Terrarium terrain (height/geometry разделены от color/texture архитектурно). Полное задание — 22 пункта, от research (NASA GIBS/Esri/Sentinel-2/MapTiler/Mapbox/Bing/Google) до multi-resolution crossfade-стратегии, deep-zoom acceptance-теста на Памире, честного репортинга проблем без "подмены результата красивым видом другого города" — см. `GEOWORLD_ROADMAP.md`, раздел G6.8, за полным текстом и таблицей.
+
+### Research (curl/WMTSCapabilities/официальные Terms — не по памяти)
+- **NASA GIBS HLS** (`HLS_S30_Nadir_BRDF_Adjusted_Reflectance`) — 30м/px, БЕЗ ключа, public domain, EPSG:3857 XYZ до z12. Но — композит по КОНКРЕТНЫМ датам (не непрерывный охват): прямой curl-тест одного тайла над Душанбе на 8 датах дал 404 на 7/8. Best free легально, но интеграционно хрупкий.
+- **Esri World Imagery** — технически без ключа, `Access-Control-Allow-Origin: *`, подтверждено HTTP 200 до z18 над Душанбе И Памиром с РЕАЛЬНЫМ содержимым (скачаны и просмотрены тайлы — над Душанбе различимы машины/разметка, над Памиром — ледники/хребты, суб-метровое разрешение). Юридически: Esri Master Agreement официально запрещает коммерческое использование без ArcGIS Online/Enterprise-лицензии — прямой конфликт с production. Best quality, eval-only.
+- **Sentinel-2 cloudless (EOX)** — 10м/px, EPSG:3857 XYZ, без ключа, но лицензия (подтверждено НАПРЯМУЮ из WMTSCapabilities.xml abstract) — CC BY-NC-SA 4.0 NonCommercial — исключён для коммерческого продукта.
+- **MapTiler Satellite** — Free-план подтверждён как "non-commercial + R&D only" в их Terms — не production без платного плана. Best production option (если проект примет платный план).
+- **Mapbox** — карта обязательна при регистрации, исключён (прямой конфликт с "no billing"). **Bing** — ToS прямо запрещает комбинирование с не-Bing картографической библиотекой, исключён без вариантов. **Google** — billing, вероятное отсутствие покрытия Памира, comparison-only.
+
+### Реализация
+`frontend/app/(dev)/geoworld-maplibre-spike/page.tsx` (тот же файл, единственный изменённый) — добавлены три imagery-tier'а с zoom-based crossfade (`raster-opacity` interpolate + `raster-fade-duration`): BlueMarble (z0-8, не менялся) → NASA HLS (z5-10, дата резолвится client-side параллельным пробником по нескольким последним дням) → Esri (z6/7+, ЯВНЫЙ UI-тумблер "High-res (Esri, eval-only)" с точной формулировкой лицензионного риска в tooltip, по умолчанию виден для демонстрации качества, но не скрыт от того, что это eval-only). Диагностика расширена: провайдер по tier'у, HLS resolved date, счётчики Esri/failed tiles.
+
+### Реальные баги, найденные headless-тестированием
+1. **HTTP 400** — fallback-логика расширяла BlueMarble source `maxzoom` до 9, но его реальная TileMatrixSet (`GoogleMapsCompatible_Level8`) жёстко ограничена z0-8 — z9 давал невалидный `TileMatrix` (400, не 404). Исправлено: maxzoom всегда 8, MapLibre сам делает overzoom.
+2. **Ложный "HLS недоступен"** — 14 параллельных date-проб с таймаутом 5с не укладывались в стеснённой песочнице (сетевая конкуренция), хотя прямой curl вне браузера подтверждал рабочие даты. Уменьшено до 8 попыток/7с — заметно стабильнее, хотя в этой конкретной песочнице иногда всё ещё не резолвится (независимо подтверждено, что сами URL рабочие).
+3. **Молчаливое занижение честных счётчиков тайлов** — `performance.getEntriesByType("resource")` имеет лимит буфера (обычно 250), переполнялся на длинной сессии. Добавлен `performance.setResourceTimingBufferSize(2000)`.
+
+После обоих фиксов: `Failed tiles: 0` в финальном состоянии, Esri-запросы подтверждены (2-20 в разных сценариях), GIBS-запросы 33-59, terrain 5-9 — честные цифры из встроенной диагностики.
+
+### Честная оговорка
+Скриншот "Вся Земля" получен успешно. Скриншоты Душанбе/Памир крупным планом — НЕ получены (тот же класс GPU-readback ограничения этой песочницы, что уже задокументирован в G6.7, усугубляется при одновременной загрузке двух imagery-источников). FPS на Памире в headless-тестах падал до 3-7 — перегрузка именно этой песочницы (программный/слабый GPU + одновременная загрузка BlueMarble+Esri+Terrain+Hillshade), не показатель реальной производительности у владельца продукта.
+
+### Результаты проверок
+| Проверка | Результат |
+|---|---|
+| `npx tsc --noEmit` (frontend) | 0 ошибок (после обоих фиксов) |
+| `npx eslint` | 0 ошибок |
+| dev-server | `/geoworld-maplibre-spike` и все проверенные production-роуты (`/`, `/dashboard`, `/teacher/classes`, `/design-preview`, `/geoworld-engine-spike`) — HTTP 200 |
+| GeoWorld boundary | production `/geo3d/[id]` и Cesium-спайк не тронуты; параллельная сессия (`git status`/`git log`) проверена перед началом и перед коммитом — ничего чужого не затронуто |
+
+### Статус на конец продолжения №37
+**GeoWorld G6.8 (High-resolution imagery / deep-zoom spike) — реализован, задокументирован, изолированный коммит подготовлен.** Полный сравнительный отчёт (BEST FREE / BEST QUALITY / BEST PRODUCTION OPTION / BEST FALLBACK) — в `GEOWORLD_ROADMAP.md`, раздел G6.8. Никакой миграции не выполнено. Решение по production imagery — за владельцем продукта после его собственной визуальной проверки Душанбе/Памира в браузере.

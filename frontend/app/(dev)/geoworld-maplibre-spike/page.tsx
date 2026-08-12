@@ -61,6 +61,51 @@
  * НЕСКОЛЬКО Feature на одну страну — материк + заморские территории) — та
  * же идея, что фикс в Cesium-спайке (G6.6.1, второй раунд): группировка по
  * имени, оставляем только самый большой полигон по площади bbox.
+ *
+ * G6.8 — high-resolution imagery / deep-zoom (полный research — см.
+ * GEOWORLD_ROADMAP.md, раздел G6.8). BlueMarble (500м/px) остаётся базовым
+ * слоем для низкого zoom, но deep zoom на Душанбе/Памир получает ДВА
+ * дополнительных tier'а поверх него:
+ *
+ * 5. NASA GIBS HLS (Harmonized Landsat Sentinel-2), слой
+ *    `HLS_S30_Nadir_BRDF_Adjusted_Reflectance` — 30м/px, БЕЗ ключа, public
+ *    domain, EPSG:3857 `GoogleMapsCompatible_Level12` (тот же принцип
+ *    стандартной XYZ-сетки, что BlueMarble). ВАЖНОЕ ОТЛИЧИЕ от BlueMarble,
+ *    найденное эмпирически (не догадка): HLS — это композит по КОНКРЕТНЫМ
+ *    датам (спутник пролетает не каждый день + облачность), а не
+ *    непрерывный ежедневный глобальный охват. Прямой curl-тест тайла над
+ *    Душанбе на 8 датах подряд (2026-08-01…2026-08-10) дал 404 на 7 из 8 —
+ *    рабочей оказалась ровно одна (2026-08-05). Поэтому дата не
+ *    захардкожена — при инициализации `resolveHlsDate()` пробует несколько
+ *    последних дней ПАРАЛЛЕЛЬНО для тайла-представителя (около Душанбе) и
+ *    берёт самую свежую дату с реальным попаданием; если ни одна не
+ *    сработала за разумное число попыток — tier честно пропускается
+ *    (fallback на BlueMarble/Esri), без пустого экрана.
+ *
+ * 6. Esri World Imagery (`server.arcgisonline.com/.../World_Imagery/`) —
+ *    технически: БЕЗ ключа, `Access-Control-Allow-Origin: *`, подтверждено
+ *    curl (HTTP 200 до z18 включительно над Душанбе И Памиром, реальные
+ *    JPEG с деталями — не заглушки). ЮРИДИЧЕСКИ: подтверждено официальными
+ *    условиями Esri (Esri Master Agreement / community.esri.com) — сервис
+ *    "не доступен для коммерческого использования" без ArcGIS
+ *    Online/Enterprise-лицензии. Это ПРЯМОЙ конфликт с production-планами
+ *    (коммерческий EdTech-продукт), поэтому подключён здесь ТОЛЬКО как
+ *    demo/evaluation-слой, по умолчанию с явной пометкой риска в UI и
+ *    возможностью выключить. См. §8 требования задания — проблема не
+ *    скрыта, а прямо показана.
+ *
+ * Исследованы, но НЕ подключены живым кодом (полный разбор в
+ * GEOWORLD_ROADMAP.md): Sentinel-2 cloudless EOX (`s2cloudless-2025_3857` —
+ * подтверждено curl+WMTSCapabilities.xml, EPSG:3857 XYZ есть, НО
+ * официальная лицензия в самом capabilities-документе — CC BY-NC-SA
+ * 4.0, NonCommercial — прямой конфликт с production); MapTiler Satellite
+ * (free-план подтверждён как "non-commercial + R&D only" в их Terms —
+ * тоже не production-ready без платного плана); Mapbox Satellite
+ * (требует карту при регистрации — прямой конфликт с "no billing/no card"
+ * требованием); Bing Maps imagery (ToS прямо запрещает комбинировать с
+ * не-Bing картографической библиотекой — исключён без вариантов); Google
+ * Photorealistic 3D Tiles / Maps Platform (billing, ограниченное покрытие
+ * городов — comparison-only, без ключа).
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -77,6 +122,68 @@ const TERRAIN_ATTRIBUTION = "Terrain: AWS Open Data — elevation-tiles-prod (Te
 const BORDERS_URL = "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson";
 const CITIES_URL = "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_populated_places.geojson";
 const VECTOR_ATTRIBUTION = "Borders/labels: Natural Earth (public domain)";
+
+// G6.8 — high-res imagery tiers (см. комментарий в шапке файла).
+const HLS_TILE_TEMPLATE =
+  "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/HLS_S30_Nadir_BRDF_Adjusted_Reflectance/default/{date}/GoogleMapsCompatible_Level12/{z}/{y}/{x}.png";
+const HLS_ATTRIBUTION = "Imagery: NASA GIBS / HLS Sentinel-2 (~30m/px, public domain, no key)";
+const ESRI_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+const ESRI_ATTRIBUTION =
+  "Imagery: Esri World Imagery — EVALUATION ONLY (Esri Master Agreement disallows production use outside an ArcGIS subscription)";
+
+function lngLatToTileXY(lng: number, lat: number, z: number): { x: number; y: number } {
+  const n = 2 ** z;
+  const x = Math.floor(((lng + 180) / 360) * n);
+  const latRad = (lat * Math.PI) / 180;
+  const y = Math.floor(((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n);
+  return { x: Math.max(0, Math.min(n - 1, x)), y: Math.max(0, Math.min(n - 1, y)) };
+}
+
+function isoDateDaysAgo(days: number): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+// Тайл-представитель около Душанбе — главный acceptance-регион задания.
+const HLS_PROBE_Z = 8;
+const HLS_PROBE_TILE = lngLatToTileXY(68.773879, 38.560035, HLS_PROBE_Z);
+
+/**
+ * HLS — композит по КОНКРЕТНЫМ датам, не непрерывный ежедневный охват (см.
+ * пояснение в шапке файла). Пробуем несколько последних дней ПАРАЛЛЕЛЬНО
+ * (не угадываем одну дату и не перебираем последовательно — это было бы и
+ * медленнее, и всё ещё гаданием), берём самую свежую дату с реальным
+ * попаданием (HTTP 200) для тайла-представителя. Если ни одна не сработала
+ * за `maxDaysBack` попыток — возвращаем `null`, вызывающий код честно
+ * пропускает этот tier (см. `init()`), НЕ показывает пустой экран.
+ */
+async function resolveHlsDate(maxDaysBack = 8, timeoutMs = 7000): Promise<string | null> {
+  const candidates = Array.from({ length: maxDaysBack }, (_, i) => isoDateDaysAgo(i));
+  const results = await Promise.allSettled(
+    candidates.map(async (date) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const url = HLS_TILE_TEMPLATE.replace("{date}", date)
+          .replace("{z}", String(HLS_PROBE_Z))
+          .replace("{y}", String(HLS_PROBE_TILE.y))
+          .replace("{x}", String(HLS_PROBE_TILE.x));
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return date;
+      } finally {
+        clearTimeout(timer);
+      }
+    })
+  );
+  const working = results
+    .filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled")
+    .map((r) => r.value)
+    .sort()
+    .reverse();
+  return working[0] ?? null;
+}
 
 const LOCATIONS = {
   earth: { center: [0, 20] as [number, number], zoom: 1.3, pitch: 0, label: "Вся Земля" },
@@ -209,9 +316,12 @@ export default function GeoWorldMapLibreSpikePage() {
   const [projection, setProjectionMode] = useState<"globe" | "mercator">("globe");
   const [terrainStatus, setTerrainStatus] = useState<"pending" | "ready" | "failed">("pending");
   const [labelsStatus, setLabelsStatus] = useState<"pending" | "ready" | "failed">("pending");
-  const [tileStats, setTileStats] = useState({ gibs: 0, terrain: 0 });
+  const [tileStats, setTileStats] = useState({ gibs: 0, terrain: 0, esri: 0 });
+  const [failedTiles, setFailedTiles] = useState(0);
   const [fps, setFps] = useState(0);
   const [memoryMB, setMemoryMB] = useState<number | null>(null);
+  const [hlsDate, setHlsDate] = useState<"probing" | "unavailable" | string>("probing");
+  const [esriEnabled, setEsriEnabled] = useState(true);
   const loadStartRef = useRef(0);
 
   useEffect(() => {
@@ -220,39 +330,153 @@ export default function GeoWorldMapLibreSpikePage() {
     async function init() {
       try {
         loadStartRef.current = performance.now();
+        // Честный счётчик тайлов (`countRecentTiles`, ниже) читает
+        // `performance.getEntriesByType("resource")` — у браузеров есть
+        // ограничение размера этого буфера (обычно 250 записей по
+        // умолчанию), которое может незаметно переполниться на длинной
+        // сессии (HLS date-probe сам по себе даёт до 8 доп. запросов) и
+        // "стереть" более ранние записи — тогда счётчик молча занижает
+        // реальное число тайлов. Поднимаем лимit заранее, а не гадаем.
+        if (typeof performance.setResourceTimingBufferSize === "function") {
+          performance.setResourceTimingBufferSize(2000);
+        }
         loadStylesheetOnce(MAPLIBRE_CSS);
-        await loadScriptOnce(MAPLIBRE_JS);
+        // G6.8: HLS-дата резолвится ПАРАЛЛЕЛЬНО с загрузкой движка (не
+        // последовательно) — пробные запросы к тому же домену GIBS, что уже
+        // используется для BlueMarble, не добавляют новый хост в критический
+        // путь загрузки.
+        const [, resolvedHlsDate] = await Promise.all([loadScriptOnce(MAPLIBRE_JS), resolveHlsDate()]);
         if (cancelled || !containerRef.current) return;
+        setHlsDate(resolvedHlsDate ?? "unavailable");
 
         const maplibregl = window.maplibregl;
         if (!maplibregl) throw new Error("window.maplibregl не появился после загрузки скрипта");
+
+        // Границы zoom-tier'ов имиджей (G6.8) — оценка по нативному
+        // разрешению источников (BlueMarble ~500м/px, HLS ~30м/px, Esri от
+        // единиц метров до суб-метра в застроенных районах), НЕ пиксель-в-
+        // пиксель визуальное сравнение (в этой песочнице нет надёжного
+        // способа сделать скриншот WebGL — см. честная оговорка G6.7).
+        // Финальная точная подстройка — за владельцем продукта после
+        // визуальной проверки. Если HLS-дату не удалось резолвить — Esri
+        // просто подхватывает раньше, no dead zoom range без имиджей.
+        //
+        // ВАЖНО (найдено headless-тестом, реальный баг, не гипотеза):
+        // `GoogleMapsCompatible_Level8` — это ПОТОЛОК тайловой сетки
+        // BlueMarble, буквально 8 уровней (z0-8), НЕ произвольное число.
+        // Запрос z9 к этой TileMatrixSet — невалидный TileMatrix, GIBS
+        // отвечает HTTP 400 (не 404). Source-`maxzoom` для BlueMarble
+        // должен быть 8 ВСЕГДА, независимо от наличия HLS — MapLibre сам
+        // умеет "overzoom" (растянуть z8-тайл на z9+), лишний трафик и
+        // невалидные запросы для этого не нужны.
+        const hasHls = Boolean(resolvedHlsDate);
+        const bluemarbleMaxZoom = 8;
+        const esriMinZoom = hasHls ? 7 : 6;
+
+        const sources: Record<string, any> = {
+          "gibs-bluemarble": {
+            type: "raster",
+            tiles: [GIBS_URL],
+            tileSize: 256,
+            minzoom: 0,
+            maxzoom: bluemarbleMaxZoom,
+            attribution: GIBS_ATTRIBUTION,
+          },
+          "esri-world-imagery": {
+            type: "raster",
+            tiles: [ESRI_URL],
+            tileSize: 256,
+            minzoom: esriMinZoom,
+            maxzoom: 19,
+            attribution: ESRI_ATTRIBUTION,
+          },
+          "aws-terrarium": {
+            type: "raster-dem",
+            tiles: [TERRAIN_URL],
+            tileSize: 256,
+            encoding: "terrarium",
+            maxzoom: 15,
+            attribution: TERRAIN_ATTRIBUTION,
+          },
+          "country-borders": { type: "geojson", data: BORDERS_URL, attribution: VECTOR_ATTRIBUTION },
+          "country-labels": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+          "city-points": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
+        };
+        if (resolvedHlsDate) {
+          sources["gibs-hls"] = {
+            type: "raster",
+            tiles: [HLS_TILE_TEMPLATE.replace("{date}", resolvedHlsDate)],
+            tileSize: 256,
+            minzoom: 5,
+            maxzoom: 10,
+            attribution: HLS_ATTRIBUTION,
+          };
+        }
+
+        // Кроссфейд между tier'ами — не резкий обрыв по zoom, а
+        // zoom-интерполированная `raster-opacity` с перекрытием в 2 уровня
+        // между соседними источниками (см. §6 задания: "no white flash,
+        // no резкая граница"). `raster-fade-duration` (ниже) сглаживает
+        // ещё и подгрузку отдельных тайлов ВНУТРИ каждого слоя.
+        const imageryLayers = hasHls
+          ? [
+              {
+                id: "bluemarble",
+                type: "raster",
+                source: "gibs-bluemarble",
+                paint: {
+                  "raster-opacity": ["interpolate", ["linear"], ["zoom"], 5, 1, 7, 0],
+                  "raster-fade-duration": 400,
+                },
+              },
+              {
+                id: "hls",
+                type: "raster",
+                source: "gibs-hls",
+                paint: {
+                  "raster-opacity": ["interpolate", ["linear"], ["zoom"], 5, 0, 7, 1, 8, 1, 10, 0],
+                  "raster-fade-duration": 400,
+                },
+              },
+              {
+                id: "esri-imagery",
+                type: "raster",
+                source: "esri-world-imagery",
+                layout: { visibility: "visible" },
+                paint: {
+                  "raster-opacity": ["interpolate", ["linear"], ["zoom"], 7, 0, 9, 1],
+                  "raster-fade-duration": 400,
+                },
+              },
+            ]
+          : [
+              {
+                id: "bluemarble",
+                type: "raster",
+                source: "gibs-bluemarble",
+                paint: {
+                  "raster-opacity": ["interpolate", ["linear"], ["zoom"], 6, 1, 9, 0],
+                  "raster-fade-duration": 400,
+                },
+              },
+              {
+                id: "esri-imagery",
+                type: "raster",
+                source: "esri-world-imagery",
+                layout: { visibility: "visible" },
+                paint: {
+                  "raster-opacity": ["interpolate", ["linear"], ["zoom"], 6, 0, 8, 1],
+                  "raster-fade-duration": 400,
+                },
+              },
+            ];
 
         const map = new maplibregl.Map({
           container: containerRef.current,
           style: {
             version: 8,
             projection: { type: "globe" },
-            sources: {
-              "gibs-bluemarble": {
-                type: "raster",
-                tiles: [GIBS_URL],
-                tileSize: 256,
-                minzoom: 0,
-                maxzoom: 8,
-                attribution: GIBS_ATTRIBUTION,
-              },
-              "aws-terrarium": {
-                type: "raster-dem",
-                tiles: [TERRAIN_URL],
-                tileSize: 256,
-                encoding: "terrarium",
-                maxzoom: 15,
-                attribution: TERRAIN_ATTRIBUTION,
-              },
-              "country-borders": { type: "geojson", data: BORDERS_URL, attribution: VECTOR_ATTRIBUTION },
-              "country-labels": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
-              "city-points": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
-            },
+            sources,
             sky: {
               "atmosphere-blend": ["interpolate", ["linear"], ["zoom"], 0, 1, 5, 1, 7, 0],
             },
@@ -260,7 +484,7 @@ export default function GeoWorldMapLibreSpikePage() {
             terrain: { source: "aws-terrarium", exaggeration: 1.5 },
             layers: [
               { id: "background", type: "background", paint: { "background-color": "#000814" } },
-              { id: "bluemarble", type: "raster", source: "gibs-bluemarble" },
+              ...imageryLayers,
               {
                 id: "hillshade",
                 type: "hillshade",
@@ -355,6 +579,7 @@ export default function GeoWorldMapLibreSpikePage() {
           // eslint-disable-next-line no-console
           console.warn("MapLibre error event:", e?.sourceId ?? "(no source)", e?.error?.message ?? e?.error);
           if (e?.sourceId === "aws-terrarium" && terrainStatus === "pending") setTerrainStatus("failed");
+          if (e?.sourceId) setFailedTiles((n) => n + 1);
         });
 
         map.on("load", () => {
@@ -406,6 +631,7 @@ export default function GeoWorldMapLibreSpikePage() {
           setTileStats({
             gibs: countRecentTiles("gibs.earthdata.nasa.gov", loadStartRef.current),
             terrain: countRecentTiles("elevation-tiles-prod", loadStartRef.current),
+            esri: countRecentTiles("arcgisonline.com", loadStartRef.current),
           });
         }, 2_000);
       } catch (err) {
@@ -453,6 +679,14 @@ export default function GeoWorldMapLibreSpikePage() {
     const loc = LOCATIONS[key];
     setActiveLocation(key);
     map.flyTo({ center: loc.center, zoom: loc.zoom, pitch: loc.pitch, duration: 2500, essential: true });
+  }
+
+  function toggleEsri() {
+    const map = mapRef.current;
+    if (!map || !map.getLayer("esri-imagery")) return;
+    const next = !esriEnabled;
+    map.setLayoutProperty("esri-imagery", "visibility", next ? "visible" : "none");
+    setEsriEnabled(next);
   }
 
   function toggleProjection() {
@@ -524,6 +758,21 @@ export default function GeoWorldMapLibreSpikePage() {
         >
           {projection === "globe" ? "Globe → Mercator" : "Mercator → Globe"}
         </button>
+        <button
+          onClick={toggleEsri}
+          disabled={status !== "ready"}
+          title={ESRI_ATTRIBUTION}
+          style={{
+            padding: "6px 10px",
+            borderRadius: 999,
+            border: esriEnabled ? "1px solid rgba(248,113,113,0.6)" : "1px solid rgba(255,255,255,0.3)",
+            background: esriEnabled ? "rgba(127,29,29,0.5)" : "rgba(0,0,0,0.5)",
+            color: esriEnabled ? "#fca5a5" : "#fff",
+            cursor: status === "ready" ? "pointer" : "not-allowed",
+          }}
+        >
+          {esriEnabled ? "High-res (Esri, eval-only) ON" : "High-res (Esri, eval-only) OFF"}
+        </button>
       </div>
 
       {/* Диагностика — те же принципы честности, что и в Cesium-спайке: реальные счётчики сетевых запросов через performance API (не выдуманные), FPS из реального rAF-цикла. */}
@@ -542,9 +791,12 @@ export default function GeoWorldMapLibreSpikePage() {
           maxWidth: 320,
         }}
       >
+        <div style={{ marginBottom: 4, color: "#7dd3fc" }}>Engine: MapLibre GL JS {MAPLIBRE_VERSION}</div>
         <div>FPS: {fps}</div>
-        <div>{`GIBS tile requests: ${tileStats.gibs}`}</div>
+        <div>{`GIBS (BlueMarble+HLS) requests: ${tileStats.gibs}`}</div>
+        <div>{`Esri requests: ${tileStats.esri}`}</div>
         <div>{`Terrain tile requests: ${tileStats.terrain}`}</div>
+        <div style={{ color: failedTiles > 0 ? "#f87171" : undefined }}>{`Failed tiles: ${failedTiles}`}</div>
         <div>
           Terrain:{" "}
           {terrainStatus === "ready" ? (
@@ -565,7 +817,23 @@ export default function GeoWorldMapLibreSpikePage() {
             "loading..."
           )}
         </div>
-        {memoryMB !== null && <div>{`JS heap: ~${memoryMB} MB (Chromium only)`}</div>}
+        <div style={{ marginTop: 4, borderTop: "1px solid rgba(255,255,255,0.15)", paddingTop: 4 }}>
+          Imagery tiers (G6.8):
+        </div>
+        <div>{`· z0-7: NASA GIBS BlueMarble (500m/px)`}</div>
+        <div>
+          {hlsDate === "probing" && "· mid-zoom: NASA GIBS HLS (30m/px) — resolving date..."}
+          {hlsDate === "unavailable" && (
+            <span style={{ color: "#fbbf24" }}>· mid-zoom: HLS unavailable — BlueMarble extends further</span>
+          )}
+          {hlsDate !== "probing" && hlsDate !== "unavailable" && (
+            <span style={{ color: "#4ade80" }}>{`· z5-10: NASA GIBS HLS (30m/px), date ${hlsDate}`}</span>
+          )}
+        </div>
+        <div style={{ color: esriEnabled ? "#fca5a5" : "rgba(255,255,255,0.5)" }}>
+          {`· z7+: Esri World Imagery (sub-meter) — ${esriEnabled ? "ON, eval-only" : "OFF"}`}
+        </div>
+        {memoryMB !== null && <div style={{ marginTop: 4 }}>{`JS heap: ~${memoryMB} MB (Chromium only)`}</div>}
       </div>
 
       <div
@@ -583,7 +851,7 @@ export default function GeoWorldMapLibreSpikePage() {
           borderRadius: 6,
         }}
       >
-        {`MapLibre GL JS ${MAPLIBRE_VERSION} (CDN, BSD-3-Clause, без ключа/токена) · ${GIBS_ATTRIBUTION} · ${TERRAIN_ATTRIBUTION} · ${VECTOR_ATTRIBUTION} · dev-only спайк, ничего из production/Cesium-спайка не тронуто.`}
+        {`MapLibre GL JS ${MAPLIBRE_VERSION} (CDN, BSD-3-Clause, без ключа/токена) · ${GIBS_ATTRIBUTION} · ${HLS_ATTRIBUTION} · ${ESRI_ATTRIBUTION} · ${TERRAIN_ATTRIBUTION} · ${VECTOR_ATTRIBUTION} · dev-only спайк, ничего из production/Cesium-спайка не тронуто.`}
       </div>
     </div>
   );
