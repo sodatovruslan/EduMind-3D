@@ -58,7 +58,7 @@ export default function LabNotebookPanel() {
                     <span className="text-text-muted">{n.maxTemperature}</span> {entry.maxTemperatureC.toFixed(1)}°C
                   </div>
                   <div>
-                    <span className="text-text-muted">{n.maxPressure}</span> {entry.maxPressureKPa.toFixed(1)} кПа
+                    <span className="text-text-muted">{n.maxPressure}</span> {entry.maxPressureKPa.toFixed(1)} {n.kpaUnit}
                   </div>
                   {entry.reactionHistory.length > 0 && (
                     <div>

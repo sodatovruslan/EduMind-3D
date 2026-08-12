@@ -18,10 +18,17 @@ export default function TopBar({ onOpenMobileMenu }: { onOpenMobileMenu: () => v
   const { t } = useLocale();
 
   return (
-    <header className="ds-glass sticky top-0 z-30 flex h-16 items-center gap-3 border-x-0 border-t-0 px-4 sm:px-6">
+    <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-border/[0.08] bg-surface px-4 sm:px-6">
       <button
         type="button"
-        onClick={onOpenMobileMenu}
+        onClick={(e) => {
+          // D9 — some browsers (notably Safari) don't focus a button on
+          // click by default, which would make MobileDrawer's "restore
+          // focus to whatever opened it" logic land on the wrong element.
+          // Focusing explicitly makes that deterministic everywhere.
+          e.currentTarget.focus();
+          onOpenMobileMenu();
+        }}
         aria-label={t.shell.mobile.openMenu}
         className="ds-focus-ring rounded-ds-control p-2 text-text-primary lg:hidden"
       >

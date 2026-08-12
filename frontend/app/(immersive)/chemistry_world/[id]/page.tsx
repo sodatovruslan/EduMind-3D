@@ -6,6 +6,7 @@ import type { Simulation } from "@/lib/types";
 import Loader from "@/components/ui/Loader";
 import ChemistryWorldScene from "@/components/scenes/ChemistryWorldScene";
 import SimulationShell from "@/components/simulation/SimulationShell";
+import SimulationNotFound from "@/components/simulation/SimulationNotFound";
 
 export default function ChemistryWorldPage({ params }: { params: { id: string } }) {
   const { data: simulation, isLoading } = useSWR<Simulation>(
@@ -14,7 +15,7 @@ export default function ChemistryWorldPage({ params }: { params: { id: string } 
   );
 
   if (isLoading) return <Loader />;
-  if (!simulation) return <p className="text-sm text-slate-400">Симуляция не найдена.</p>;
+  if (!simulation) return <SimulationNotFound />;
 
   return (
     <SimulationShell simulation={simulation}>

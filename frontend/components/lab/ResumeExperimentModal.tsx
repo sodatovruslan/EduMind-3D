@@ -57,6 +57,7 @@ export default function ResumeExperimentModal({
           <button
             type="button"
             onClick={onCancel}
+            aria-label={r.cancelButton}
             data-testid="resume-modal-close"
             className="ds-focus-ring rounded-ds-control text-text-muted transition-colors hover:text-text-primary"
           >

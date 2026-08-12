@@ -315,6 +315,7 @@ export const tg: typeof ru = {
       unavailable: "Ёрдамчии ИИ муваққатан дастрас нест",
       greeting: "Салом! Ман ёрдамчии ИИ-и ту оид ба химия ҳастам. Дар бораи таҷрибаи ҷорӣ пурс ё яке аз саволҳои поёнро интихоб кун.",
       inputPlaceholder: "Дар бораи таҷрибаи ҷорӣ бипурс...",
+      sendAria: "Паём фиристодан",
       suggestedQuestions: [
         "Чаро таҳшин пайдо шуд?",
         "Ман чиро нодуруст кардам?",
@@ -360,6 +361,7 @@ export const tg: typeof ru = {
       empty: "Ҳанӯз сабте нест — таҷрибаи аввалини худро ба итмом расон.",
       maxTemperature: "Ҳарорати макс.:",
       maxPressure: "Фишори макс.:",
+      kpaUnit: "кПа",
       reactions: "Реаксияҳо:",
       hazards: "Ҳодисаҳои хатарнок:",
       warnings: "Огоҳиҳо:",
@@ -508,6 +510,10 @@ export const tg: typeof ru = {
       circuitUsedHeading: "Занҷири истифодашуда",
       circuitUsedText: "Компонентҳо: {components} · Пайвастҳо: {count}",
       measurementsHeading: "Ченкуниҳо",
+      unitVolt: "В",
+      unitAmpere: "А",
+      unitOhm: "Ом",
+      unitWatt: "Вт",
       analysisHeading: "Таҳлил (саволҳои илмӣ)",
       correctLabel: "Дуруст:",
       incorrectLabel: "Нодуруст:",
@@ -568,6 +574,8 @@ export const tg: typeof ru = {
   },
   simulation: {
     back: "Бозгашт",
+    notFound: "Симулятсия ёфт нашуд.",
+    backToDashboard: "Бозгашт ба кабинет",
     aiTeacher: {
       trigger: "Ёрдамчии ИИ",
       expand: "Кушодани Ёрдамчии ИИ",

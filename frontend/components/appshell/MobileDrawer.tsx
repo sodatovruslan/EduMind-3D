@@ -22,21 +22,49 @@ export default function MobileDrawer({ open, onClose }: { open: boolean; onClose
   const { t } = useLocale();
   const pathname = usePathname();
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const items = getNavItems(user?.role);
 
   useEffect(() => {
     if (!open) return;
+    // D9 — remember whatever had focus before the drawer opened (the
+    // hamburger trigger in TopBar, external to this component) so it can be
+    // restored on close, instead of leaving focus on the now-hidden close
+    // button.
+    const previouslyFocused = document.activeElement as HTMLElement | null;
     closeButtonRef.current?.focus();
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      // D9 — real focus trap: cycle Tab/Shift+Tab within the drawer instead
+      // of letting keyboard focus leak into the (visually obscured)
+      // background page while the drawer is open.
+      if (e.key === "Tab" && dialogRef.current) {
+        const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
     }
     document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", handleKeyDown);
+      previouslyFocused?.focus();
     };
   }, [open, onClose]);
 
@@ -55,6 +83,7 @@ export default function MobileDrawer({ open, onClose }: { open: boolean; onClose
           />
 
           <motion.div
+            ref={dialogRef}
             initial={{ x: "-100%" }}
             animate={{ x: 0 }}
             exit={{ x: "-100%" }}

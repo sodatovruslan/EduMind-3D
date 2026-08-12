@@ -315,6 +315,7 @@ export const en: typeof ru = {
       unavailable: "AI Teacher is temporarily unavailable",
       greeting: "Hi! I'm your AI chemistry teacher. Ask me about the current experiment, or pick one of the questions below.",
       inputPlaceholder: "Ask about the current experiment...",
+      sendAria: "Send message",
       suggestedQuestions: [
         "Why did a precipitate form?",
         "What did I do wrong?",
@@ -360,6 +361,7 @@ export const en: typeof ru = {
       empty: "No entries yet — complete your first experiment.",
       maxTemperature: "Max temperature:",
       maxPressure: "Max pressure:",
+      kpaUnit: "kPa",
       reactions: "Reactions:",
       hazards: "Hazards:",
       warnings: "Warnings:",
@@ -508,6 +510,10 @@ export const en: typeof ru = {
       circuitUsedHeading: "Circuit used",
       circuitUsedText: "Components: {components} · Connections: {count}",
       measurementsHeading: "Measurements",
+      unitVolt: "V",
+      unitAmpere: "A",
+      unitOhm: "Ω",
+      unitWatt: "W",
       analysisHeading: "Analysis (scientific questions)",
       correctLabel: "Correct:",
       incorrectLabel: "Incorrect:",
@@ -568,6 +574,8 @@ export const en: typeof ru = {
   },
   simulation: {
     back: "Back",
+    notFound: "Simulation not found.",
+    backToDashboard: "Back to dashboard",
     aiTeacher: {
       trigger: "AI Teacher",
       expand: "Open AI Teacher",

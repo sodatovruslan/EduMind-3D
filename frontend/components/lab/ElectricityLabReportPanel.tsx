@@ -101,7 +101,8 @@ export default function ElectricityLabReportPanel() {
           <ul className="space-y-1 font-mono text-xs text-text-secondary" data-testid="electricity-report-measurements">
             {lastNotebookEntry.measurements.map((m, i) => (
               <li key={i}>
-                U = {m.voltageV.toFixed(2)} В · I = {m.currentA.toFixed(3)} А · R = {m.resistanceOhm.toFixed(1)} Ом · P = {m.powerW.toFixed(2)} Вт
+                U = {m.voltageV.toFixed(2)} {r.unitVolt} · I = {m.currentA.toFixed(3)} {r.unitAmpere} · R = {m.resistanceOhm.toFixed(1)} {r.unitOhm} · P ={" "}
+                {m.powerW.toFixed(2)} {r.unitWatt}
               </li>
             ))}
           </ul>

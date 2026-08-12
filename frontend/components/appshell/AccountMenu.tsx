@@ -23,6 +23,7 @@ export default function AccountMenu() {
   const { t } = useLocale();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -30,7 +31,13 @@ export default function AccountMenu() {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
     }
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
+      // D9 — Escape both closes the menu and returns focus to its trigger
+      // (the standard disclosure-menu pattern); an outside click doesn't
+      // steal focus back, since the user's attention already moved elsewhere.
+      if (e.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
     }
     document.addEventListener("mousedown", handlePointerDown);
     document.addEventListener("keydown", handleKeyDown);
@@ -46,6 +53,7 @@ export default function AccountMenu() {
   return (
     <div ref={containerRef} className="relative">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"

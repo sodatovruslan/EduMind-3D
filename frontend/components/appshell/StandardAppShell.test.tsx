@@ -98,6 +98,20 @@ describe("StandardAppShell — D4 authenticated navigation", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
+  it("D9: closing the mobile drawer with Escape returns focus to its trigger button", async () => {
+    renderShell();
+    await act(async () => {});
+
+    const trigger = screen.getByRole("button", { name: ru.shell.mobile.openMenu });
+    fireEvent.click(trigger);
+    await screen.findByRole("dialog");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    expect(document.activeElement).toBe(trigger);
+  });
+
   it("mobile drawer closes when a nav link is clicked", async () => {
     renderShell();
     await act(async () => {});
@@ -121,6 +135,20 @@ describe("StandardAppShell — D4 authenticated navigation", () => {
 
     fireEvent.click(screen.getByRole("menuitem", { name: new RegExp(ru.shell.account.logout) }));
     expect(logoutMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("D9: closing the account menu with Escape returns focus to its trigger button", async () => {
+    renderShell();
+    await act(async () => {});
+
+    const trigger = screen.getByRole("button", { name: ru.shell.account.menuLabel });
+    fireEvent.click(trigger);
+    await screen.findByRole("menu");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+
+    expect(document.activeElement).toBe(trigger);
   });
 
   it("switching language updates the rendered navigation labels", async () => {

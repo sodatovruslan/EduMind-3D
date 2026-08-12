@@ -313,6 +313,7 @@ export const ru = {
       unavailable: "AI Teacher временно недоступен",
       greeting: "Привет! Я твой AI-преподаватель по химии. Спроси меня о текущем эксперименте или выбери один из вопросов ниже.",
       inputPlaceholder: "Спроси про текущий эксперимент...",
+      sendAria: "Отправить сообщение",
       suggestedQuestions: [
         "Почему образовался осадок?",
         "Что я сделал неправильно?",
@@ -358,6 +359,7 @@ export const ru = {
       empty: "Записей пока нет — заверши свой первый эксперимент.",
       maxTemperature: "Макс. температура:",
       maxPressure: "Макс. давление:",
+      kpaUnit: "кПа",
       reactions: "Реакции:",
       hazards: "Опасные явления:",
       warnings: "Предупреждения:",
@@ -506,6 +508,10 @@ export const ru = {
       circuitUsedHeading: "Использованная цепь",
       circuitUsedText: "Компоненты: {components} · Соединений: {count}",
       measurementsHeading: "Измерения",
+      unitVolt: "В",
+      unitAmpere: "А",
+      unitOhm: "Ом",
+      unitWatt: "Вт",
       analysisHeading: "Анализ (научные вопросы)",
       correctLabel: "Верно:",
       incorrectLabel: "Неверно:",
@@ -566,6 +572,8 @@ export const ru = {
   },
   simulation: {
     back: "Назад",
+    notFound: "Симуляция не найдена.",
+    backToDashboard: "Вернуться в кабинет",
     aiTeacher: {
       trigger: "ИИ-наставник",
       expand: "Открыть ИИ-наставника",

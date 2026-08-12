@@ -102,7 +102,13 @@ export default function ChemistryTeacherChat({ simulationId, context, onMessageS
         </button>
       </div>
 
-      <div ref={scrollRef} className="flex-1 space-y-2 overflow-y-auto p-3" data-testid="chemistry-teacher-history">
+      <div
+        ref={scrollRef}
+        role="log"
+        aria-live="polite"
+        className="flex-1 space-y-2 overflow-y-auto p-3"
+        data-testid="chemistry-teacher-history"
+      >
         {messages.length === 0 && (
           <div className="space-y-3">
             <p className="flex items-start gap-2 text-ds-body text-text-secondary">
@@ -164,6 +170,7 @@ export default function ChemistryTeacherChat({ simulationId, context, onMessageS
         <button
           onClick={() => sendMessage(input)}
           disabled={isLoading || !input.trim()}
+          aria-label={c.sendAria}
           data-testid="chemistry-teacher-send"
           className="ds-focus-ring rounded-ds-control bg-accent px-3 py-2 text-white transition-all hover:brightness-110 disabled:opacity-50"
         >

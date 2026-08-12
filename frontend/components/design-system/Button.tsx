@@ -6,8 +6,7 @@ import { forwardRef } from "react";
  * Design System V2 (EDUMIND_DESIGN_SYSTEM_V2.md §14/§27) — shared Button
  * primitive. Uses only semantic tokens (bg-accent/bg-surface/text-*, etc.)
  * so it renders correctly in Light/Dark/System without any per-page theme
- * logic. Not wired into any existing page yet (see §15/§25 — additive-only
- * for D1); consumed today only by the (dev) visual-proof page.
+ * logic. Used across Profile, Auth, Dashboard, Teacher/Classes and more.
  */
 export type ButtonVariant = "primary" | "secondary" | "ghost";
 

@@ -772,4 +772,87 @@ Zero changes to physics/chemistry engines, safety systems, scoring/XP formulas, 
 
 ---
 
-**Current task scope**: D8 (Student Learning Center, done, this pass) — see §38. **Code/tests passing is not visual approval** — D9 does not begin until the Dashboard is manually inspected in the browser (empty-state for a fresh student, real-data state, Light/Dark × RU/EN/TG, mobile/tablet/desktop) and approved.
+## 39. D9 implementation notes — Product-wide UX & Visual QA / Consistency Pass (code-verified, awaiting manual visual approval)
+
+D8 was approved. D9 is not a single-page redesign — it's a QA pass across the whole product so Dashboard/Profile/Teacher Center/Chemistry/Electricity/shared chrome read as one finished product rather than stitched-together D-stages. Per the brief's explicit safety requirements, `git status`/`git log --oneline -15` were run before any edit, and again before staging.
+
+### Parallel-session state at the start of D9
+
+Several other sessions were active on this same working tree: a performance/security pass (`backend/app/models/{ai_log,lab_result,learning_event}.py` mid-edit, a new alembic migration for performance indexes) and a new GeoWorld MapLibre spike (`frontend/app/(dev)/geoworld-maplibre-spike/`, untracked). Neither was touched, read for editing, or staged — confirmed clean via `git status` again immediately before commit.
+
+### Audit method
+
+Rather than one pass, three parallel read-only audits were run (student-facing routes/components, teacher-facing routes/components including the Classes feature a separate Codex session added on top of D7, and the shared AppShell/design-system-primitives layer) against the same reference: `EDUMIND_DESIGN_SYSTEM_V2.md` §26 (glass-vs-solid rule) and the semantic token set. Combined, they surfaced ~35 concrete findings with file+line citations. This section only lists what was actually fixed and what was deliberately deferred — the full raw findings aren't reproduced here.
+
+### Consistency fixes (shared layer — highest blast radius)
+
+- **`app/globals.css`**: `body` was still hardcoded `bg-surface-deep text-slate-100` (pre-V2 legacy, non-theme-reactive) — the single highest-blast-radius legacy leak in the app, since every page inherits it. Fixed to `bg-background text-text-primary`. Also removed confirmed-dead CSS (`.ai-assistant-pulse`/`pulse-glow` keyframe — grep-confirmed zero remaining references anywhere).
+- **`components/ui/Loader.tsx`**: rendered by `ProtectedRoute` on every protected-route load, used `border-brand` (legacy static color) with no background of its own — combined with the `body` bug above, this produced a full-screen dark flash on every auth check even in Light Mode. Retuned to `border-accent` + explicit `bg-background`.
+- **`components/appshell/TopBar.tsx`**: was `.ds-glass` itself, while `LocaleSwitcher`/`ThemeToggle` (rendered inside it) and `AccountMenu`'s dropdown (`GlassPanel`) are *also* glass — nested glass-on-glass on every standard-shell page, directly violating `GlassPanel.tsx`'s own documented "never nest a GlassPanel inside another GlassPanel" rule (§6). Changed `TopBar` to a solid bar (`bg-surface` + `border-b border-border/[0.08]`), matching `Rail`'s existing solid treatment — the nested controls now sit on solid chrome, not glass-on-glass.
+- **`components/design-system/Button.tsx`**: stale doc comment claiming it was "not wired into any existing page yet" — now used across Profile/Auth/Dashboard/Teacher/Classes; comment corrected.
+
+### Consistency fixes (Teacher Center — Classes/ClassDetail)
+
+The Classes feature (added on top of D7 by a separate Codex session) turned out to be *substantially* on-token already — correct `Surface` usage, correct glass-vs-solid rule, fully localized RU/EN/TG (confirmed by the audit, not assumed). The real, narrow gaps fixed:
+- `ClassesList.tsx`/`ClassDetail.tsx` used the legacy `Loader` full-screen spinner (including one case where it rendered *inside* a `p-6` wrapper, breaking out to full viewport height) instead of the `Skeleton` pattern every D7 reference component uses. Replaced with sized `Skeleton`s; `ClassDetail`'s loading state now also keeps the back-link visible instead of blanking the whole page.
+- Both files formatted dates via bare `toLocaleDateString(locale)` instead of `INTL_LOCALE_TAG[locale]` (the one inconsistent spot in the whole Teacher Center's date formatting — every D7 component already does this correctly). Fixed at both sites.
+- Three hand-rolled inputs duplicated `.ds-input`'s exact rule set instead of using the class — replaced with `ds-input ds-focus-ring` (+ the same pill/icon treatment `StudentDirectory`'s own search input already uses, for the search-with-icon case).
+- `ClassDetail.tsx`'s archived-class banner tinted itself by overriding `Surface`'s own `border`/`bg` classes via `className` — two same-property Tailwind classes fighting, with the winner determined by generated-CSS rule order, not visually guaranteed. Changed to a bare tinted `div`, matching how every other single-color tint in the app is applied directly rather than through a primitive's own slots.
+- `ClassFilter.tsx` was a bare `<label>` sitting directly on the page background between `Hero` and `KpiRow` (no panel, no section semantics) and used a different select shape (`rounded-ds-control`) than `StudentDirectory`'s pill filters (`rounded-full`) for the same "filter" role on the same page. Wrapped in a `Surface` bar and switched to the pill-select treatment.
+
+### Consistency + accessibility fixes (student layer)
+
+- **4 immersive routes** (`chemistry_world`/`electricity_lab`/`geo3d`/`simlab` `[id]/page.tsx`) each had an identical bare `<p className="text-sm text-slate-400">Симуляция не найдена.</p>` fallback — legacy color (invisible in Light Mode), hardcoded Russian never routed through `useLocale()`, and no way back to the app. Replaced all 4 with one new shared `components/simulation/SimulationNotFound.tsx` (real `t.simulation.notFound`/`.backToDashboard` keys, a `Surface` + `ButtonLink` back to `/dashboard`) instead of four copies to keep in sync.
+- **`ChemistryTeacherChat.tsx`** was missing `role="log" aria-live="polite"` on its message history and `aria-label` on its send button — both present on its structurally-identical sibling `AITeacherChat.tsx`. Also its `t.chemistry.aiChat` dictionary block was missing the `sendAria` key entirely (not just unused in the component — genuinely absent from all 3 locale files). Added the key to RU/EN/TG and wired both attributes.
+- **Hardcoded unit abbreviations** inside otherwise-fully-localized components: `LabNotebookPanel.tsx` had a literal `кПа` after a real interpolated number; `ElectricityLabReportPanel.tsx` had literal `В`/`А`/`Ом`/`Вт` in its measurement rows. In English locale these rendered as e.g. "R = 12.0 Ом". Added `kpaUnit`/`unitVolt`/`unitAmpere`/`unitOhm`/`unitWatt` to the relevant dictionary namespaces (RU/EN/TG) and wired them in.
+
+### Accessibility fixes (interaction consistency)
+
+- **`AccountMenu.tsx`**: closing via Escape now returns focus to its trigger button (the standard disclosure-menu pattern) — previously focus was left on the now-hidden menu, stranding keyboard users. Outside-click close deliberately does *not* steal focus back (the user's attention already moved elsewhere).
+- **`MobileDrawer.tsx`**: (a) now saves and restores whatever had focus before it opened (the hamburger trigger, external to the component) instead of leaving focus on the vanished close button; (b) gained a real Tab/Shift+Tab focus trap — previously a keyboard user could Tab straight through the drawer into the visually-obscured background page despite the backdrop and scroll-lock. `TopBar.tsx`'s hamburger button now also explicitly focuses itself on click (some browsers, notably Safari, don't focus buttons on click by default — this made the "restore previous focus" behavior deterministic everywhere, not just where the OS/browser happens to focus on click).
+- **`ResumeExperimentModal.tsx`**: icon-only close (X) button had no accessible name (screen readers announced only "button") — added `aria-label={r.cancelButton}`, reusing the same locale string the visible Cancel button already uses.
+
+### Deliberately deferred (documented, not silently skipped)
+
+- **`GeoWorldScene.tsx`'s control panel** (full legacy-token vocabulary — `.glass-panel`, `neon-cyan`/`neon-violet`, `surface-deep`, `text-slate-*`) — the single largest remaining visual-maturity gap found by the audit. Not touched: this file is inside the explicit GeoWorld boundary this session (and every prior D-stage) has been instructed never to touch, and `git log` shows very recent, actively in-progress GeoWorld commits (G6.6.1, plus the untracked MapLibre spike) — editing it risks colliding with concurrent work on the exact same file. Recommended as a dedicated, GeoWorld-team-coordinated stage.
+- **`AIAssistantChat.tsx`** (GeoWorld/SimLab's floating AI chat, full legacy palette — `bg-slate-900/70`, `border-white/15`, `text-slate-*`) — not under `components/geo/`/`lib/geo/` so not strictly inside the GeoWorld boundary, but a full migration to the `AITeacherChat`/`ChemistryTeacherChat` pattern is a non-trivial component rewrite; deferred to keep this pass's diff reviewable rather than rushed.
+- **Chemistry vs. Electricity "resume saved session" UX gap**: Chemistry's `ResumeExperimentModal` is a true overlay modal with Cancel/Restart/Continue, triggered from an in-catalog active-save badge; Electricity's `ElectricityResumeModal` is a non-dismissable inline card with only Restart/Continue (no way to just go back to browsing), and its catalog has no active-save badge at all. This is a real behavioral inconsistency, not just a style difference — fixing it means changing interaction flow inside `ElectricityLabScene.tsx` (1700+ lines, real e2e coverage), which is bigger/riskier than a token/consistency fix. Documented for a dedicated follow-up rather than rushed alongside ~20 other fixes in one pass.
+- **Heading-scale (`text-ds-title`) and body-scale (`text-ds-body`/`text-ds-caption`) sweep across all Chemistry/Electricity lab panels** (catalog browsers, notebook panels, report panels, resume modals, tutorial panels, guided-lab panel) — confirmed by the audit to be genuinely inconsistent (4 different heading sizes across otherwise-equivalent panels, raw `text-sm`/`text-xs`/`text-[10px]` instead of the DS scale throughout). This is real and worth doing, but touches ~10 files each with their own D6.1/D6.2-era test coverage — a mechanical sweep at that scale risked turning a QA pass into a rewrite. Deferred as a named, scoped follow-up rather than attempted piecemeal.
+- **Lab action buttons' `rounded-full` pill shape** vs. the shared `Button` primitive's `rounded-ds-control` — consistent *within* the lab family, but a second, never-reconciled button language. Not changed: unlike the other fixes here, this is a visual *decision* (pill vs. rounded-rect), not an unambiguous bug, and changing button shape across ~8 files is a more visible change than this pass's other token-level fixes — left for an explicit design decision rather than made unilaterally.
+- **Classes' `window.confirm()`** for archive/remove actions — visually off-brand (native browser dialog) but there is no in-app confirmation-modal primitive anywhere in the codebase yet to replace it with, and building one is a new subsystem the brief explicitly says not to add speculatively. Also already accessible by default (native dialogs are keyboard/AT-friendly), so this is a polish gap, not a functional or accessibility regression.
+
+### Light/Dark/System
+
+No new theming mechanism. Every fix in this pass either removes a legacy non-theme-aware class or reuses an already-proven semantic token — the `body`/`Loader` fix specifically closes the one Light-Mode "dark flash" bug found. No component audited was found using raw hex/rgb colors within this pass's fixed scope.
+
+### RU/EN/TG
+
+Every new/changed string (`t.simulation.*` additions, `t.chemistry.aiChat.sendAria`, `t.chemistry.notebook.kpaUnit`, `t.electricity.report.unit{Volt,Ampere,Ohm,Watt}`) added to all three locale files, typed against `ru` so a missing EN/TG key is a compile error, not a runtime gap.
+
+### Accessibility
+
+Covered above (AccountMenu/MobileDrawer focus handling, ResumeExperimentModal aria-label, ChemistryTeacherChat aria-live/aria-label parity). Not attempted as a full audit-to-zero pass — per the brief's own "don't turn this into a giant accessibility rewrite" instruction, fixes were limited to concrete, confirmed gaps with an exact known-good sibling to match, not a speculative sweep.
+
+### Performance-related frontend findings
+
+No backend performance work done (none needed — no shared contract changed). No new duplicate-request patterns introduced: all new/changed components reuse existing SWR keys or props. No chart libraries added. No layout-shift-prone changes (token/class swaps only, no structural reflow).
+
+### Testing
+
+`components/simulation/SimulationNotFound.test.tsx` (new — real message + working back-link). `components/lab/ResumeExperimentModal.test.tsx` (+1 — close button has a real accessible name). `components/appshell/StandardAppShell.test.tsx` (+2 — mobile drawer and account menu both return focus to their trigger on Escape, exercised through the real integrated shell, not a mocked sub-component). One real regression caught and fixed while adding the mobile-drawer test: the "restore previously-focused element" approach only works if the trigger was actually focused when the drawer opened, which isn't guaranteed by a raw click in every browser (Safari doesn't focus buttons on click by default) — fixed by having `TopBar`'s hamburger explicitly focus itself on click, which also made the test deterministic. Full suite: **104 files / 906 tests passing** (up from 103/902 before this stage). `tsc --noEmit` and `next lint` both clean.
+
+### Manual visual QA
+
+Not performed — no browser automation tool available this session, and the frontend dev server was not running (stopped earlier at the user's own request for manual inspection, not restarted since). Every fix in this pass is reasoned from the same token system already visually proven on other approved pages (Dashboard, Teacher Center), not re-verified pixel-by-pixel. Code/tests passing is not visual approval.
+
+### GeoWorld boundary
+
+Confirmed untouched via `git status`/`git diff` before staging — zero changes to `components/geo/`, `lib/geo/`, `GeoWorldScene.tsx`, or the MapLibre spike. The performance-session's in-progress model/migration files were also left exactly as found.
+
+### Domain logic
+
+Zero changes to physics/chemistry/electricity engines, safety systems, scoring/XP, classroom/teacher authorization, or any backend contract — this entire stage is frontend presentation/interaction-consistency only, no backend files touched.
+
+---
+
+**Current task scope**: D9 (Product-wide UX & Visual QA / Consistency Pass, done, this pass) — see §39. **Code/tests passing is not visual approval** — D10 does not begin until this pass is manually inspected in the browser (Light/Dark, mobile drawer/account-menu keyboard behavior, Classes loading states, the 4 not-found fallbacks) and approved.

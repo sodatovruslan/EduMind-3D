@@ -75,6 +75,22 @@ describe("Stage S-8.4 — Resume Experiment Modal UI Tests", () => {
     expect(screen.getByTestId("resume-modal-cancel")).toBeDefined();
   });
 
+  it("D9: the icon-only close (X) button has an accessible name, not just an icon", () => {
+    renderModal(
+      <ResumeExperimentModal
+        isOpen={true}
+        experimentTitle="Нагрев воды"
+        saveSnapshot={sampleSnapshot}
+        onResume={vi.fn()}
+        onRestart={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    );
+
+    const closeButton = screen.getByTestId("resume-modal-close");
+    expect(closeButton.getAttribute("aria-label")).toBeTruthy();
+  });
+
   it("3. Clicking Continue triggers onResume callback", () => {
     const onResume = vi.fn();
     renderModal(

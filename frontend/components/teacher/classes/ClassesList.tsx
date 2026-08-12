@@ -6,9 +6,10 @@ import useSWR from "swr";
 import { Plus, Users } from "lucide-react";
 import Button from "@/components/design-system/Button";
 import Surface from "@/components/design-system/Surface";
-import Loader from "@/components/ui/Loader";
+import Skeleton from "@/components/design-system/Skeleton";
 import { createClassroom, listClasses } from "@/lib/classes-client";
 import { useLocale } from "@/lib/locale-context";
+import { INTL_LOCALE_TAG } from "@/lib/i18n/locales";
 
 export default function ClassesList() {
   const { t, locale } = useLocale();
@@ -53,7 +54,7 @@ export default function ClassesList() {
               value={name}
               onChange={(event) => setName(event.target.value)}
               maxLength={255}
-              className="ds-focus-ring mt-1 w-full rounded-ds-control border border-border/10 bg-background px-3 py-2 text-text-primary"
+              className="ds-input ds-focus-ring mt-1 w-full"
               placeholder={copy.classNamePlaceholder}
             />
           </label>
@@ -64,7 +65,13 @@ export default function ClassesList() {
         {formError && <p role="alert" className="mt-2 text-ds-caption text-danger">{formError}</p>}
       </Surface>
 
-      {isLoading && <Loader />}
+      {isLoading && (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <Skeleton className="h-32 w-full" />
+          <Skeleton className="h-32 w-full" />
+          <Skeleton className="h-32 w-full" />
+        </div>
+      )}
       {error && <Surface className="p-5 text-danger">{copy.loadError}</Surface>}
       {!isLoading && !error && classrooms?.length === 0 && (
         <Surface className="p-8 text-center text-text-muted">{copy.empty}</Surface>
@@ -84,7 +91,7 @@ export default function ClassesList() {
                   <Users size={17} /> {copy.memberCount.replace("{count}", String(classroom.student_count))}
                 </p>
                 <p className="mt-2 text-ds-caption text-text-muted">
-                  {copy.updated} {new Date(classroom.updated_at).toLocaleDateString(locale)}
+                  {copy.updated} {new Date(classroom.updated_at).toLocaleDateString(INTL_LOCALE_TAG[locale])}
                 </p>
               </Surface>
             </Link>
