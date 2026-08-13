@@ -45,3 +45,9 @@ class User(Base):
     class_memberships = relationship(
         "ClassMembership", back_populates="student", foreign_keys="ClassMembership.student_id"
     )
+    conversations_as_teacher = relationship(
+        "Conversation", back_populates="teacher", foreign_keys="Conversation.teacher_id", cascade="all, delete-orphan"
+    )
+    conversations_as_student = relationship(
+        "Conversation", back_populates="student", foreign_keys="Conversation.student_id", cascade="all, delete-orphan"
+    )

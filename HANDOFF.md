@@ -2504,3 +2504,56 @@ G6.8 одобрен визуально (globe/terrain/deep zoom/Esri/Душан�
 
 ### Статус на конец продолжения №39
 **GeoWorld G6.9 (MapLibre performance + production imagery architecture) — завершён, cold/warm load ускорены в 8-10 раз с доказанным root cause, изолированный коммит подготовлен.** Terrain/GPU-сторона производительности сознательно не трогалась (не была доказанной причиной, требует отдельного измерения на реальном железе владельца продукта, не в этой песочнице). G6.10 не начат — решение о нём за владельцем продукта после его собственной проверки скорости в браузере.
+
+---
+
+## Обновление 2026-08-11 (продолжение №40) — T5: Student ↔ Teacher Real-Time Messaging Foundation
+
+### Задача
+Подхватить функциональную ветку от Codex (T2 `c59f706` Classroom foundation, T3 `71191b5` Classes UI, T4/D7.1 `dea58e0` classroom-scoped Teacher Analytics) и построить настоящий человеческий messaging между учеником и учителем — НЕ AI-чат. Фундамент для будущих T6 (presence/typing), T7-T9 (voice/video/screen), T10 (contextual help call) — сами эти этапы сознательно НЕ реализовывались.
+
+### Аудит перед кодом
+Найдено: три РАЗНЫХ AI-чата (`AITeacherChat`/`ChemistryTeacherChat` — `/api/ai/teacher`; `AIAssistantChat` — `/api/ai/hint`) — ни одна из их таблиц (`AILog`) не подходит для человеческих сообщений (другая семантика — stateless LLM-вызовы, не переписка). WebSocket-инфраструктуры не было вообще — `ws_manager.py`/`ws_messaging.py` созданы с нуля. `classroom_scope.py` (от T2) переиспользован как единственный источник авторизации — добавлена ровно одна новая симметричная функция `classroom_link_exists(db, teacher_id, student_id)`, ничего в нём не изменено.
+
+### Domain model
+`Conversation` (id, teacher_id, student_id, created_at, last_message_at, last_message_preview — денормализовано намеренно, чтобы список бесед не делал N+1 подзапрос "последнее сообщение" на каждую беседу) + `Message` (id, conversation_id, sender_id, content, created_at). **Одна беседа на пару (teacher_id, student_id), НЕ на Classroom** — задокументированное решение: ученик с несколькими общими классами у одного учителя всё равно получает ровно одну переписку, а не дублирующиеся чаты по числу классов (бриф §17 требовал явно решить и задокументировать это).
+
+### Migration
+`f1a2b3c4d5e6_add_conversations_and_messages.py`, `down_revision = d4e5f6a7b8c9` (последняя закоммиченная T2-миграция). **Внимание: параллельная perf-сессия готовит свою миграцию `0f12aa5fce35` от той же точки** (`alembic current` показал `d4e5f6a7b8c9 (branchpoint)` ещё до моего upgrade) — после коммита обеих в истории будет два head'а, потребуется `alembic merge heads` при интеграции; это ожидаемо при параллельной разработке миграций, не ошибка. Проверено на реальном dev Postgres: `upgrade → downgrade → upgrade`, все три шага чистые.
+
+### Авторизация (критически)
+Student может открыть беседу только с teacher-владельцем классрума, где у student активное membership; teacher — только со student из своих доступных классов (`accessible_student_ids`). Admin **не получает** messaging автоматически (403 на попытку открыть беседу, пустой список бесед/counterparts) — осознанное решение по брифу. Removed membership закрывает **и новые, и уже существующие** беседы немедленно — авторизация перепроверяется на КАЖДЫЙ доступ (`_get_authorized_conversation`), не только при создании; история старой беседы после removal читаться не может (выбрано explicit безопасное поведение, не "можно читать, но нельзя писать" — задокументировано в коде).
+
+### Duplicate conversation protection
+`UniqueConstraint(teacher_id, student_id)` на уровне БД + `IntegrityError`-catch-and-recover в `get_or_create_conversation` (тот же паттерн, что T2 уже использовал для class membership race) — race протестирован напрямую вставкой двух строк в один session.commit().
+
+### REST API
+`GET/POST /api/conversations`, `GET /api/conversations/{id}`, `GET /api/conversations/{id}/messages` (cursor-пагинация: `?before=&limit=`, дефолт 30 / максимум 100, `has_more` флаг), `POST /api/conversations/{id}/messages`. Плюс `GET /api/conversations/counterparts` — необходимый минимальный доп-эндпоинт (ученик иначе не может узнать, КТО его учитель — `/api/classes/*` доступен только teacher/admin), считает реальный classroom-derived список, ничего не выдумывает.
+
+### WebSocket
+`ws_manager.py` — in-memory registry, **честно задокументировано как single-process only** (Redis в проекте нет, добавлять его только ради T5 — раздувание scope, как явно предупреждал бриф). Множественные соединения на conversation_id (обе стороны + несколько вкладок одного пользователя) поддержаны нативно структурой данных (`set[WebSocket]`), не "один сокет на пользователя". Auth — `?token=` query-параметр с тем же access-токеном, что REST (`decode_token`, не отдельный механизм); неавторизованный/чужой пользователь получает `close(WS_1008_POLICY_VIOLATION)` без утечки информации о том, что именно не так. Сообщения транслируются ТОЛЬКО после успешного commit в БД (бриф §13) — сокет никогда не может "потерять" уже отправленное сообщение или разослать то, что не сохранилось.
+
+### Реальный баг найден и исправлен по пути
+`datetime.utcnow()` на этой машине оказался недостаточно точным — 5 сообщений подряд иногда получали одинаковый `created_at`, а tie-breaker `Message.id` (случайный UUID) не коррелирует с порядком вставки → история могла отрендериться не по порядку (поймано полным прогоном тестов, не в изоляции). Исправлено module-level monotonic watermark (`_next_message_timestamp()` в `messaging_service.py`) — гарантирует строго возрастающие timestamps в рамках процесса. **Тот же класс бага уже существует в `test_chemistry_saves.py::test_latest_active_save`** (не моя зона, не тронут, зафиксирован как pre-existing flake для владельца этой фичи).
+
+### Frontend
+`lib/messaging-client.ts` (REST), `lib/useConversationSocket.ts` (WS-хук: bounded reconnect с exponential backoff 1с→15с cap, никакого tight loop, дедупликация — забота вызывающего кода по message id). `/messages` route (добавлен в `appshell-nav.ts` для student+teacher, НЕ admin — совпадает с backend-правилом), `components/messaging/{ConversationList,ConversationView,MessageComposer,NewConversationPicker}.tsx`. Design V2 без исключений (только существующие токены/примитивы — `Surface`, `Skeleton`, `.ds-input`, `.ds-focus-ring`), полная RU/EN/TG (`t.messaging.*`, `t.shell.nav.messages` — новые ключи типизированы от `ru`, пропуск в EN/TG — ошибка компиляции). Mobile: список/беседа переключаются (тот же паттерн directory/detail, что Teacher Center уже установил в D7), не сжимаются в 390px. Content рендерится как обычный JSX-текст (`{m.content}`), НЕ `dangerouslySetInnerHTML` — XSS-защита от самого React, не кастомный санитайзер.
+
+### Результаты проверок
+| Проверка | Результат |
+|---|---|
+| Backend `pytest` (полный, 3 прогона подряд) | **102/102** стабильно (1 pre-existing flake в `test_chemistry_saves.py`, не мой код, задокументирован выше) |
+| Backend `test_messaging.py` | **18/18** — auth (student/teacher/admin/unrelated/removed-membership), duplicate protection, DB race, send/empty/too-long/history-order/pagination, WS auth (missing/invalid token, wrong user) + WS real broadcast round-trip |
+| Frontend `npx vitest run` (полный) | **927/927** — 14 новых тестов (ConversationList/View/Page), 1 pre-existing тест (`appshell-nav.test.ts`) обновлён под новый пункт меню, а не ослаблен |
+| `npx tsc --noEmit` (frontend) | 0 ошибок |
+| `next lint` | 0 ошибок |
+| Alembic | `upgrade → downgrade → upgrade` на реальном dev Postgres, все три шага чистые |
+
+### Честная оговорка
+Ручная двух-пользовательская проверка в браузере (ученик пишет — учитель видит без reload, и наоборот) **не выполнена** — браузерной автоматизации в этой сессии не было. Это осознанно не выдаётся за визуальное подтверждение.
+
+### Параллельная работа
+`git status`/`git log` перед началом и перед коммитом на каждом крупном шаге — GeoWorld G6.9 (другая Claude-сессия, коммит подготовлен) и backend performance-сессия (несколько модельных файлов + отдельная alembic-миграция) видны в рабочем дереве, ни один файл не тронут, не включён в коммит.
+
+### Статус на конец продолжения №40
+**T5 (Student ↔ Teacher Real-Time Messaging Foundation) — завершён, код верифицирован (backend+frontend suites зелёные), архитектура готова как фундамент для T6+.** GeoWorld/Design/Teacher-Classroom-management (T2/T3) не тронуты. Известное последствие для интеграции: миграция `f1a2b3c4d5e6` создаёт второй Alembic head параллельно с perf-миграцией `0f12aa5fce35` — потребуется `alembic merge heads` при объединении веток. T6 не начат — ждёт ручной проверки владельцем продукта в браузере.

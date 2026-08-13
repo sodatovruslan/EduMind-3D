@@ -59,3 +59,30 @@ async def teacher_has_student_access(db: AsyncSession, user: User, student_id: s
 async def require_student_access(db: AsyncSession, user: User, student_id: str) -> None:
     if not await teacher_has_student_access(db, user, student_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found in teacher scope")
+
+
+async def classroom_link_exists(db: AsyncSession, teacher_id: str, student_id: str) -> bool:
+    """True if `student_id` has an active membership in any classroom `teacher_id` owns.
+
+    T5 — the one symmetric primitive human messaging authorization is built
+    on: unlike `teacher_has_student_access` (which assumes the CALLER is the
+    teacher), this takes both ids explicitly so it works whichever side of
+    the pair initiates (teacher opening a student's conversation, or a
+    student opening their teacher's) without a second, parallel
+    authorization mechanism. Deliberately does not distinguish "teacher
+    doesn't exist" / "student doesn't exist" / "no shared active
+    classroom" — callers should treat every negative the same way callers
+    of `get_accessible_classroom` already do (404, not "forbidden"), so a
+    guess at another user's id can't be used to probe who exists.
+    """
+    query = (
+        select(ClassMembership.id)
+        .join(Classroom, Classroom.id == ClassMembership.class_id)
+        .where(
+            Classroom.teacher_id == teacher_id,
+            ClassMembership.student_id == student_id,
+            ClassMembership.removed_at.is_(None),
+        )
+        .limit(1)
+    )
+    return (await db.execute(query)).scalar_one_or_none() is not None
