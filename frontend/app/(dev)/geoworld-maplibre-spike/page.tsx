@@ -111,8 +111,18 @@
 import { useEffect, useRef, useState } from "react";
 
 const MAPLIBRE_VERSION = "5.24.0";
-const MAPLIBRE_JS = `https://unpkg.com/maplibre-gl@${MAPLIBRE_VERSION}/dist/maplibre-gl.js`;
-const MAPLIBRE_CSS = `https://unpkg.com/maplibre-gl@${MAPLIBRE_VERSION}/dist/maplibre-gl.css`;
+// G6.9 — самое дорогое звено cold-load'а (см. GEOWORLD_ROADMAP.md, раздел
+// G6.9): реальный замер (и `curl` вне браузера, и Resource Timing внутри)
+// показал десятки секунд на загрузку ~1МБ `maplibre-gl.js` именно с
+// unpkg.com в этой песочнице — воспроизводимо, не GPU/рендеринг. Файлы
+// скачаны ОДИН РАЗ и лежат статикой в `public/vendor/` (тот же CDN-байт-в-
+// байт, просто раздаётся нашим сервером — НЕ npm-зависимость, package.json
+// не тронут). CDN остаётся честным fallback'ом на случай, если локальные
+// файлы почему-то отсутствуют (see `loadScriptWithFallback`).
+const MAPLIBRE_JS_LOCAL = `/vendor/maplibre-gl-${MAPLIBRE_VERSION}/maplibre-gl.js`;
+const MAPLIBRE_CSS_LOCAL = `/vendor/maplibre-gl-${MAPLIBRE_VERSION}/maplibre-gl.css`;
+const MAPLIBRE_JS_CDN = `https://unpkg.com/maplibre-gl@${MAPLIBRE_VERSION}/dist/maplibre-gl.js`;
+const MAPLIBRE_CSS_CDN = `https://unpkg.com/maplibre-gl@${MAPLIBRE_VERSION}/dist/maplibre-gl.css`;
 
 const GIBS_URL =
   "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/BlueMarble_NextGeneration/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpeg";
@@ -183,6 +193,37 @@ async function resolveHlsDate(maxDaysBack = 8, timeoutMs = 7000): Promise<string
     .sort()
     .reverse();
   return working[0] ?? null;
+}
+
+// G6.9 §17 — HLS date-discovery делает до 8 параллельных пробных запросов
+// при КАЖДОЙ загрузке страницы (найдено измерением: ~7с у каждой попытки,
+// если она не попадает точно, см. GEOWORLD_ROADMAP.md G6.9). Кэшируем
+// резолвленную дату в `localStorage` с TTL — повторный визит в течение TTL
+// пропускает пробник целиком. TTL сознательно короткий (2 часа, не "навсегда"),
+// т.к. HLS-даты по своей природе МЕНЯЮТСЯ (новый спутниковый пролёт делает более
+// свежую дату доступной, а старая может выпасть из ротации GIBS) — прямое
+// требование §17 "данные не должны тихо устаревать навсегда".
+const HLS_CACHE_KEY = "g69-hls-date-cache-v1";
+const HLS_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
+
+function getCachedHlsDate(): string | null {
+  try {
+    const raw = localStorage.getItem(HLS_CACHE_KEY);
+    if (!raw) return null;
+    const { date, cachedAt } = JSON.parse(raw) as { date: string; cachedAt: number };
+    if (Date.now() - cachedAt > HLS_CACHE_TTL_MS) return null;
+    return date;
+  } catch {
+    return null;
+  }
+}
+
+function setCachedHlsDate(date: string): void {
+  try {
+    localStorage.setItem(HLS_CACHE_KEY, JSON.stringify({ date, cachedAt: Date.now() }));
+  } catch {
+    // localStorage недоступен (приватный режим и т.п.) — не критично, просто нет кэша.
+  }
 }
 
 const LOCATIONS = {
@@ -271,11 +312,30 @@ function loadScriptOnce(src: string): Promise<void> {
   });
 }
 
-function loadStylesheetOnce(href: string): void {
+// G6.9 — локальный файл первым (см. комментарий у MAPLIBRE_JS_LOCAL), CDN
+// как честный fallback, если по какой-то причине статика недоступна (напр.
+// сборка без public/vendor) — не превращаем "быстрее" в "хрупче".
+async function loadScriptWithFallback(localSrc: string, cdnSrc: string): Promise<"local" | "cdn"> {
+  try {
+    await loadScriptOnce(localSrc);
+    return "local";
+  } catch {
+    await loadScriptOnce(cdnSrc);
+    return "cdn";
+  }
+}
+
+function loadStylesheetOnce(href: string, fallbackHref?: string): void {
   if (document.querySelector(`link[href="${href}"]`)) return;
   const link = document.createElement("link");
   link.rel = "stylesheet";
   link.href = href;
+  if (fallbackHref) {
+    link.onerror = () => {
+      link.onerror = null;
+      link.href = fallbackHref;
+    };
+  }
   document.head.appendChild(link);
 }
 
@@ -388,38 +448,39 @@ export default function GeoWorldMapLibreSpikePage() {
         if (typeof performance.setResourceTimingBufferSize === "function") {
           performance.setResourceTimingBufferSize(2000);
         }
-        loadStylesheetOnce(MAPLIBRE_CSS);
-        // G6.8: HLS-дата резолвится ПАРАЛЛЕЛЬНО с загрузкой движка (не
-        // последовательно) — пробные запросы к тому же домену GIBS, что уже
-        // используется для BlueMarble, не добавляют новый хост в критический
-        // путь загрузки.
-        const [, resolvedHlsDate] = await Promise.all([loadScriptOnce(MAPLIBRE_JS), resolveHlsDate()]);
+        loadStylesheetOnce(MAPLIBRE_CSS_LOCAL, MAPLIBRE_CSS_CDN);
+        // G6.9 — HLS-дата БОЛЬШЕ НЕ блокирует создание карты (реальный баг
+        // G6.8, найден code-review при расследовании cold-load: `await
+        // Promise.all([loadScriptOnce(...), resolveHlsDate()])` заставлял
+        // ждать резолвинга HLS-даты (до 7с таймаута на каждую из 8
+        // параллельных попыток) ПЕРЕД тем, как вообще появится глобус —
+        // прямое нарушение "progressive loading" (§9 задания G6.9), хотя
+        // сам движок к этому моменту уже был готов). Теперь: карта
+        // создаётся сразу после загрузки движка, ВСЕГДА в "no-HLS"
+        // конфигурации слоёв (BlueMarble → Esri, без разрыва по zoom —
+        // см. imageryLayers ниже); HLS резолвится в фоне и, если/когда
+        // готов, ДОБАВЛЯЕТСЯ поверх уже работающей карты (см. `upgradeToHls`
+        // в конце функции) — тем самым HLS honestly превращается из
+        // "обязательного условия первого кадра" в "необязательное
+        // качественное улучшение", как и требует ТЗ.
+        const engineSource = await loadScriptWithFallback(MAPLIBRE_JS_LOCAL, MAPLIBRE_JS_CDN);
         if (cancelled || !containerRef.current) return;
-        setHlsDate(resolvedHlsDate ?? "unavailable");
+        // eslint-disable-next-line no-console
+        console.log(`[G6.9] MapLibre engine loaded from: ${engineSource}`);
 
         const maplibregl = window.maplibregl;
         if (!maplibregl) throw new Error("window.maplibregl не появился после загрузки скрипта");
 
-        // Границы zoom-tier'ов имиджей (G6.8) — оценка по нативному
-        // разрешению источников (BlueMarble ~500м/px, HLS ~30м/px, Esri от
-        // единиц метров до суб-метра в застроенных районах), НЕ пиксель-в-
-        // пиксель визуальное сравнение (в этой песочнице нет надёжного
-        // способа сделать скриншот WebGL — см. честная оговорка G6.7).
-        // Финальная точная подстройка — за владельцем продукта после
-        // визуальной проверки. Если HLS-дату не удалось резолвить — Esri
-        // просто подхватывает раньше, no dead zoom range без имиджей.
-        //
-        // ВАЖНО (найдено headless-тестом, реальный баг, не гипотеза):
+        // ВАЖНО (найдено headless-тестом в G6.8, реальный баг, не гипотеза):
         // `GoogleMapsCompatible_Level8` — это ПОТОЛОК тайловой сетки
         // BlueMarble, буквально 8 уровней (z0-8), НЕ произвольное число.
         // Запрос z9 к этой TileMatrixSet — невалидный TileMatrix, GIBS
         // отвечает HTTP 400 (не 404). Source-`maxzoom` для BlueMarble
-        // должен быть 8 ВСЕГДА, независимо от наличия HLS — MapLibre сам
-        // умеет "overzoom" (растянуть z8-тайл на z9+), лишний трафик и
-        // невалидные запросы для этого не нужны.
-        const hasHls = Boolean(resolvedHlsDate);
+        // должен быть 8 ВСЕГДА — MapLibre сам умеет "overzoom" (растянуть
+        // z8-тайл на z9+), лишний трафик и невалидные запросы для этого не
+        // нужны.
         const bluemarbleMaxZoom = 8;
-        const esriMinZoom = hasHls ? 7 : 6;
+        const esriMinZoom = 6;
 
         const sources: Record<string, any> = {
           "gibs-bluemarble": {
@@ -450,74 +511,36 @@ export default function GeoWorldMapLibreSpikePage() {
           "country-labels": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
           "city-points": { type: "geojson", data: { type: "FeatureCollection", features: [] } },
         };
-        if (resolvedHlsDate) {
-          sources["gibs-hls"] = {
-            type: "raster",
-            tiles: [HLS_TILE_TEMPLATE.replace("{date}", resolvedHlsDate)],
-            tileSize: 256,
-            minzoom: 5,
-            maxzoom: 10,
-            attribution: HLS_ATTRIBUTION,
-          };
-        }
 
         // Кроссфейд между tier'ами — не резкий обрыв по zoom, а
         // zoom-интерполированная `raster-opacity` с перекрытием в 2 уровня
-        // между соседними источниками (см. §6 задания: "no white flash,
-        // no резкая граница"). `raster-fade-duration` (ниже) сглаживает
-        // ещё и подгрузку отдельных тайлов ВНУТРИ каждого слоя.
-        const imageryLayers = hasHls
-          ? [
-              {
-                id: "bluemarble",
-                type: "raster",
-                source: "gibs-bluemarble",
-                paint: {
-                  "raster-opacity": ["interpolate", ["linear"], ["zoom"], 5, 1, 7, 0],
-                  "raster-fade-duration": 400,
-                },
-              },
-              {
-                id: "hls",
-                type: "raster",
-                source: "gibs-hls",
-                paint: {
-                  "raster-opacity": ["interpolate", ["linear"], ["zoom"], 5, 0, 7, 1, 8, 1, 10, 0],
-                  "raster-fade-duration": 400,
-                },
-              },
-              {
-                id: "esri-imagery",
-                type: "raster",
-                source: "esri-world-imagery",
-                layout: { visibility: "visible" },
-                paint: {
-                  "raster-opacity": ["interpolate", ["linear"], ["zoom"], 7, 0, 9, 1],
-                  "raster-fade-duration": 400,
-                },
-              },
-            ]
-          : [
-              {
-                id: "bluemarble",
-                type: "raster",
-                source: "gibs-bluemarble",
-                paint: {
-                  "raster-opacity": ["interpolate", ["linear"], ["zoom"], 6, 1, 9, 0],
-                  "raster-fade-duration": 400,
-                },
-              },
-              {
-                id: "esri-imagery",
-                type: "raster",
-                source: "esri-world-imagery",
-                layout: { visibility: "visible" },
-                paint: {
-                  "raster-opacity": ["interpolate", ["linear"], ["zoom"], 6, 0, 8, 1],
-                  "raster-fade-duration": 400,
-                },
-              },
-            ];
+        // между соседними источниками (см. §6 задания G6.8: "no white
+        // flash, no резкая граница"). `raster-fade-duration` сглаживает
+        // ещё и подгрузку отдельных тайлов ВНУТРИ каждого слоя. Это ВСЕГДА
+        // "no-HLS" вариант при старте (см. комментарий выше про G6.9) —
+        // HLS-вариант этих же opacity-выражений применяется динамически в
+        // `upgradeToHls` ниже, один-в-один совпадает с прежней G6.8 веткой.
+        const imageryLayers = [
+          {
+            id: "bluemarble",
+            type: "raster",
+            source: "gibs-bluemarble",
+            paint: {
+              "raster-opacity": ["interpolate", ["linear"], ["zoom"], 6, 1, 9, 0],
+              "raster-fade-duration": 400,
+            },
+          },
+          {
+            id: "esri-imagery",
+            type: "raster",
+            source: "esri-world-imagery",
+            layout: { visibility: "visible" },
+            paint: {
+              "raster-opacity": ["interpolate", ["linear"], ["zoom"], 6, 0, 8, 1],
+              "raster-fade-duration": 400,
+            },
+          },
+        ];
 
         const map = new maplibregl.Map({
           container: containerRef.current,
@@ -624,6 +647,63 @@ export default function GeoWorldMapLibreSpikePage() {
             .addTo(map);
           controlMarkersRef.current.push(marker);
         }
+
+        // G6.9 — HLS резолвится и подключается ПОСЛЕ того, как карта уже
+        // создана и рендерится (см. комментарий выше про progressive
+        // loading) — честное необязательное улучшение, не условие первого
+        // кадра. Кэш (`getCachedHlsDate`, TTL 2ч, §17) пропускает 8
+        // параллельных пробных запросов целиком на повторных визитах.
+        (async () => {
+          const cached = getCachedHlsDate();
+          const resolvedHlsDate = cached ?? (await resolveHlsDate());
+          if (cancelled || mapRef.current !== map) return;
+          if (!resolvedHlsDate) {
+            setHlsDate("unavailable");
+            return;
+          }
+          if (!cached) setCachedHlsDate(resolvedHlsDate);
+          setHlsDate(resolvedHlsDate);
+
+          // `addSource`/`addLayer` требуют загруженного стиля — если карта
+          // ещё не успела (маловероятно к этому моменту, но не гадаем).
+          if (!map.isStyleLoaded()) {
+            await new Promise<void>((resolve) => map.once("load", () => resolve()));
+          }
+          if (cancelled || mapRef.current !== map) return;
+
+          map.addSource("gibs-hls", {
+            type: "raster",
+            tiles: [HLS_TILE_TEMPLATE.replace("{date}", resolvedHlsDate)],
+            tileSize: 256,
+            minzoom: 5,
+            maxzoom: 10,
+            attribution: HLS_ATTRIBUTION,
+          });
+          // Вставлен ПЕРЕД esri-imagery — тот же порядок слоёв (bluemarble →
+          // hls → esri), что и в прежней G6.8 статической ветке.
+          map.addLayer(
+            {
+              id: "hls",
+              type: "raster",
+              source: "gibs-hls",
+              paint: {
+                "raster-opacity": ["interpolate", ["linear"], ["zoom"], 5, 0, 7, 1, 8, 1, 10, 0],
+                "raster-fade-duration": 400,
+              },
+            },
+            "esri-imagery"
+          );
+          // Те же opacity-выражения, что были в G6.8 "hasHls"-ветке —
+          // BlueMarble теперь уступает HLS раньше (zoom 5-7, не 6-9), Esri
+          // подхватывает чуть позже (zoom 7-9, не 6-8), т.к. HLS покрывает
+          // промежуток.
+          map.setPaintProperty("bluemarble", "raster-opacity", ["interpolate", ["linear"], ["zoom"], 5, 1, 7, 0]);
+          map.setPaintProperty("esri-imagery", "raster-opacity", ["interpolate", ["linear"], ["zoom"], 7, 0, 9, 1]);
+        })().catch((hlsErr) => {
+          if (!cancelled) setHlsDate("unavailable");
+          // eslint-disable-next-line no-console
+          console.warn("HLS upgrade failed:", hlsErr);
+        });
 
         // "Готово" — по первому реальному отрисованному кадру (`render`),
         // а НЕ по событию `load`. Найдено headless-браузером (не догадкой):
