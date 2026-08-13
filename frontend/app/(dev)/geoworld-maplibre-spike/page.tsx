@@ -417,6 +417,15 @@ export default function GeoWorldMapLibreSpikePage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const controlMarkersRef = useRef<any[]>([]);
+  // Отдельный ref (не читаем `terrainStatus` state внутри обработчиков
+  // событий карты — тот захвачен ЗАМЫКАНИЕМ `init()` в момент монтирования
+  // и остаётся "pending" НАВСЕГДА для этих колбэков, независимо от
+  // реальных ре-рендеров — классический stale closure). Баг, найденный по
+  // реальному скриншоту владельца продукта: после сотен успешных terrain-
+  // тайлов ОДИН последующий сбой (нормальное явление на масштабе — грань
+  // покрытия/rate limit) откатывал статус на "failed", хотя рельеф уже
+  // давно и корректно отрисован.
+  const terrainEverReadyRef = useRef(false);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeLocation, setActiveLocation] = useState<LocationKey | null>("earth");
@@ -727,7 +736,10 @@ export default function GeoWorldMapLibreSpikePage() {
           // Честная диагностика — не маскируем ошибки тайлов, только логируем.
           // eslint-disable-next-line no-console
           console.warn("MapLibre error event:", e?.sourceId ?? "(no source)", e?.error?.message ?? e?.error);
-          if (e?.sourceId === "aws-terrarium" && terrainStatus === "pending") setTerrainStatus("failed");
+          // Отдельные сбои ПОСЛЕ того, как рельеф хоть раз подтверждён
+          // готовым, — не регресс всей системы (см. комментарий у
+          // `terrainEverReadyRef`), не откатываем статус задним числом.
+          if (e?.sourceId === "aws-terrarium" && !terrainEverReadyRef.current) setTerrainStatus("failed");
           if (e?.sourceId) setFailedTiles((n) => n + 1);
         });
 
@@ -767,7 +779,8 @@ export default function GeoWorldMapLibreSpikePage() {
         // загружены и рельеф уже виден.
         map.on("sourcedata", (e: any) => {
           if (cancelled) return;
-          if (e.sourceId === "aws-terrarium" && e.isSourceLoaded && terrainStatus === "pending") {
+          if (e.sourceId === "aws-terrarium" && e.isSourceLoaded && !terrainEverReadyRef.current) {
+            terrainEverReadyRef.current = true;
             setTerrainStatus("ready");
           }
         });
