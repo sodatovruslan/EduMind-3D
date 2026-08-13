@@ -27,7 +27,7 @@ export default function ChemistryTutorialPanel() {
       data-step={stepIndex}
     >
       <div className="mb-2 flex items-center justify-between">
-        <div className="font-mono text-xs uppercase tracking-widest text-accent">
+        <div className="font-mono text-ds-caption uppercase tracking-widest text-accent">
           {u.stepCounter.replace("{current}", String(stepIndex + 1)).replace("{total}", String(totalSteps))}
         </div>
         <motion.button
@@ -35,12 +35,12 @@ export default function ChemistryTutorialPanel() {
           whileTap={{ scale: 0.95 }}
           onClick={skipTutorial}
           data-testid="chemistry-tutorial-skip"
-          className="ds-focus-ring rounded-ds-control font-mono text-xs text-text-muted underline-offset-2 transition-colors hover:text-text-secondary hover:underline"
+          className="ds-focus-ring rounded-ds-control font-mono text-ds-caption text-text-muted underline-offset-2 transition-colors hover:text-text-secondary hover:underline"
         >
           {u.skipButton}
         </motion.button>
       </div>
-      <p className="text-sm text-text-primary" data-testid="chemistry-tutorial-instruction">
+      <p className="text-ds-body text-text-primary" data-testid="chemistry-tutorial-instruction">
         {currentInstruction}
       </p>
     </motion.div>

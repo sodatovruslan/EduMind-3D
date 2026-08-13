@@ -42,29 +42,29 @@ export default function CompletionScreen() {
     >
       <div className="mb-3 flex items-center gap-2 text-success">
         <Award size={20} />
-        <h3 className="font-headline text-base font-semibold">
+        <h3 className="text-ds-title">
           {c.titlePrefix}: {lastNotebookEntry.experimentTitle}
         </h3>
       </div>
 
-      <div className="mb-3 text-3xl font-bold text-text-primary" data-testid="completion-overall-score">
+      <div className="mb-3 text-ds-display text-text-primary" data-testid="completion-overall-score">
         {lastAssessment.overallScore}/100
       </div>
 
       <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
         {categories.map((category) => (
           <div key={category.key} className="rounded-ds-control border border-border/[0.08] bg-surface-elevated p-2" data-testid={`completion-category-${category.key}`}>
-            <div className="flex items-center justify-between text-xs text-text-secondary">
+            <div className="flex items-center justify-between text-ds-caption text-text-secondary">
               <span>{category.label}</span>
               <span className="font-mono text-text-primary">{category.score}</span>
             </div>
-            <p className="mt-1 text-xs text-text-muted">{category.explanation}</p>
+            <p className="mt-1 text-ds-caption text-text-muted">{category.explanation}</p>
           </div>
         ))}
       </div>
 
       {recommended && (
-        <p className="text-sm text-text-secondary" data-testid="completion-recommendation">
+        <p className="text-ds-body text-text-secondary" data-testid="completion-recommendation">
           {c.recommendation}: <span className="text-accent">{recommended.title}</span>
         </p>
       )}

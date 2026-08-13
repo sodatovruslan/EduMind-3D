@@ -1286,7 +1286,7 @@ function ElectricityResetButton({ onReset }: { onReset: () => void }) {
         resetLabSession();
       }}
       data-testid="reset-button"
-      className="ds-focus-ring flex items-center gap-2 rounded-full border border-border/[0.12] px-4 py-2 text-sm font-medium text-text-primary transition-colors hover:bg-text-primary/5"
+      className="ds-focus-ring flex items-center gap-2 rounded-full border border-border/[0.12] px-4 py-2 text-ds-body font-medium text-text-primary transition-colors hover:bg-text-primary/5"
     >
       <RotateCcw size={16} />
       {t.electricity.hud.reset}
@@ -1301,11 +1301,18 @@ function ElectricityResetButton({ onReset }: { onReset: () => void }) {
 function ElectricityLabExperienceSection() {
   const { selectedExperiment, lastNotebookEntry, pendingResume, catalog, resumeSave, discardPendingResume } =
     useElectricityLabExperience();
+  // D10 — local-only dismiss, unifying with Chemistry's resume modal (which
+  // already has a non-destructive Cancel): lets the student look at the
+  // catalog first instead of forcing an immediate Continue/Start Over
+  // decision, without discarding the save or inventing new backend state.
+  // Keyed to the save's own id so a genuinely different pending resume
+  // (e.g. after starting a new experiment elsewhere) still prompts again.
+  const [dismissedSaveId, setDismissedSaveId] = useState<string | null>(null);
 
   // Stage S9.7 — Autosave & Resume: незавершённая сессия найдена и ни одна
   // работа ещё не выбрана в этой загрузке страницы — предлагаем
   // Продолжить/Начать заново вместо каталога, пока студент не решит.
-  if (pendingResume && !selectedExperiment) {
+  if (pendingResume && !selectedExperiment && pendingResume.saveId !== dismissedSaveId) {
     const experiment = catalog.find((e) => e.id === pendingResume.experiment.experimentId);
     return (
       <ElectricityResumeModal
@@ -1313,6 +1320,7 @@ function ElectricityLabExperienceSection() {
         snapshot={pendingResume}
         onContinue={() => resumeSave(pendingResume)}
         onStartOver={discardPendingResume}
+        onCancel={() => setDismissedSaveId(pendingResume.saveId)}
       />
     );
   }
@@ -1338,7 +1346,7 @@ function ProgressBanners() {
   return (
     <div className="flex flex-col gap-2 sm:col-span-2">
       {newAchievements.length > 0 && (
-        <div className="flex items-center justify-between rounded-ds-control border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
+        <div className="flex items-center justify-between rounded-ds-control border border-warning/40 bg-warning/10 p-3 text-ds-body text-warning">
           <span>
             {newAchievements
               .map((code) => `${ACHIEVEMENT_EMOJI[code] ?? "🏆"} ${t.achievements[code as keyof typeof t.achievements]?.title ?? code}`)
@@ -1351,7 +1359,7 @@ function ProgressBanners() {
         </div>
       )}
       {repeatedMistakeCode && (
-        <div className="flex items-center justify-between rounded-ds-control border border-accent-geo/40 bg-accent-geo/10 p-3 text-sm text-accent-geo">
+        <div className="flex items-center justify-between rounded-ds-control border border-accent-geo/40 bg-accent-geo/10 p-3 text-ds-body text-accent-geo">
           <span>{t.electricity.hud.repeatedMistakeMessage.replace("{mistake}", explainError(repeatedMistakeCode, repeatedMistakeCode))}</span>
           <button onClick={dismissRepeatedMistake} className="ds-focus-ring ml-2 shrink-0 rounded-ds-control text-accent-geo/70 transition-colors hover:text-accent-geo">
             ×
@@ -1417,25 +1425,25 @@ function CompleteLabSection({
 
   return (
     <div className="flex flex-col gap-3 sm:col-span-2">
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {error && <p className="text-ds-body text-danger">{error}</p>}
 
       <div className="flex items-center gap-3">
         <button
           onClick={handleComplete}
           disabled={state.connections.length === 0}
           data-testid="complete-button"
-          className="ds-focus-ring rounded-full border border-border/[0.12] px-4 py-2 text-sm font-medium text-text-primary transition-colors hover:bg-text-primary/5 disabled:opacity-50"
+          className="ds-focus-ring rounded-full border border-border/[0.12] px-4 py-2 text-ds-body font-medium text-text-primary transition-colors hover:bg-text-primary/5 disabled:opacity-50"
         >
           {t.electricity.hud.completeAttempt}
         </button>
         {completionScore !== null && (
-          <span className="font-mono text-sm font-medium text-text-primary">{t.electricity.hud.scoreLabel.replace("{score}", String(completionScore))}</span>
+          <span className="font-mono text-ds-body font-medium text-text-primary">{t.electricity.hud.scoreLabel.replace("{score}", String(completionScore))}</span>
         )}
       </div>
 
       {labSummary && (
         <div
-          className="rounded-ds-control border border-accent/40 bg-accent/10 p-4 text-sm text-text-primary"
+          className="rounded-ds-control border border-accent/40 bg-accent/10 p-4 text-ds-body text-text-primary"
           data-testid="lab-summary"
         >
           <p className="whitespace-pre-wrap">{labSummary.summary}</p>
@@ -1633,7 +1641,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
               onClick={handleClockToggle}
               data-testid="clock-toggle"
               title={t.electricity.hud.clockHint}
-              className="ds-focus-ring flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-medium text-white transition-all hover:brightness-110"
+              className="ds-focus-ring flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-ds-body font-medium text-white transition-all hover:brightness-110"
             >
               {clock.isRunning ? <Pause size={16} /> : <Play size={16} />}
               {clock.isRunning ? t.electricity.hud.clockPause : t.electricity.hud.clockStart}
@@ -1641,7 +1649,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
             <ElectricityResetButton onReset={handleReset} />
           </div>
 
-          <div role="radiogroup" aria-label={t.electricity.hud.qualityAria} className="flex items-center gap-1 font-mono text-xs text-text-muted">
+          <div role="radiogroup" aria-label={t.electricity.hud.qualityAria} className="flex items-center gap-1 font-mono text-ds-caption text-text-muted">
             {QUALITY_OPTIONS.map((level) => (
               <button
                 key={level}
@@ -1667,7 +1675,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
           data-active={solution.isCircuitActive}
           data-short={solution.isShortCircuit}
           data-fuse-blown={state.components.find((c) => c.id === "fuse")?.isBlown ?? false}
-          className="rounded-ds-control border border-border/[0.1] bg-surface p-3 text-sm text-text-secondary sm:col-span-2"
+          className="rounded-ds-control border border-border/[0.1] bg-surface p-3 text-ds-body text-text-secondary sm:col-span-2"
         >
           {!solution.isClosedLoop && <p className="text-text-muted">{t.electricity.hud.statusConnect}</p>}
           {solution.isClosedLoop && solution.isShortCircuit && (
@@ -1710,10 +1718,8 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
                   initial={{ opacity: 0, x: -8 }}
                   animate={{ opacity: 1, x: 0 }}
                   data-testid={`safety-warning-${w.code}`}
-                  className={`flex items-center gap-2 rounded-xl border p-3 text-sm ${
-                    w.severity === "danger"
-                      ? "border-red-400/40 bg-red-500/10 text-red-300"
-                      : "border-amber-400/40 bg-amber-500/10 text-amber-200"
+                  className={`flex items-center gap-2 rounded-ds-control border p-3 text-ds-body ${
+                    w.severity === "danger" ? "border-danger/40 bg-danger/10 text-danger" : "border-warning/40 bg-warning/10 text-warning"
                   }`}
                 >
                   <AlertTriangle size={14} className="shrink-0" />
@@ -1725,7 +1731,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
         </AnimatePresence>
 
         <div className="sm:col-span-2">
-          <h3 className="mb-2 font-mono text-xs uppercase tracking-widest text-text-muted">{t.electricity.hud.quickCheckHeading}</h3>
+          <h3 className="mb-2 font-mono text-ds-caption uppercase tracking-widest text-text-muted">{t.electricity.hud.quickCheckHeading}</h3>
           <TaskPanel />
         </div>
 
@@ -1737,7 +1743,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
             измерение/анализ/вывод), автоматический отчёт и Лабораторный
             журнал измерений. */}
         <div className="space-y-4 sm:col-span-2">
-          <h3 className="font-headline text-lg font-semibold text-text-primary">{t.electricity.hud.labHeading}</h3>
+          <h3 className="text-ds-title text-text-primary">{t.electricity.hud.labHeading}</h3>
           <ElectricityLabExperienceSection />
           <ElectricityLabNotebookPanel />
         </div>

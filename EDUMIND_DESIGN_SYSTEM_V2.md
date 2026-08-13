@@ -855,4 +855,88 @@ Zero changes to physics/chemistry/electricity engines, safety systems, scoring/X
 
 ---
 
-**Current task scope**: D9 (Product-wide UX & Visual QA / Consistency Pass, done, this pass) — see §39. **Code/tests passing is not visual approval** — D10 does not begin until this pass is manually inspected in the browser (Light/Dark, mobile drawer/account-menu keyboard behavior, Classes loading states, the 4 not-found fallbacks) and approved.
+## 40. D10 implementation notes — Final Product Polish, Design Closure & Design Freeze (code-verified, awaiting manual visual approval)
+
+D10 is the final stage of the D-series. Per the brief, this stage closed the specific items D9 explicitly deferred, then did one last product-wide consistency check, then issued a Design Freeze verdict.
+
+### Audit-first (parallel-session safety)
+
+`git status`/`git log --oneline -15` before starting and again before staging. In-flight, untouched: the performance-session's `backend/app/models/{ai_log,lab_result,learning_event}.py` + a new alembic migration. GeoWorld had advanced significantly since D9 (`870cc5c` MapLibre spike, `2ade9e3` G6.8 high-res imagery, `40efaf3` georeferencing validation against real Dushanbe landmarks — user-confirmed "GEOREFERENCING VERIFIED") but `components/geo/`, `lib/geo/`, and the dev spike routes showed as clean (not mid-edit) throughout this session — confirmed via `git status` before touching `GeoWorldScene.tsx` and again before committing.
+
+### D9 fix verification (§1 of the brief)
+
+Grep-verified all of D9's fixes were still intact and not reverted: `body` semantic tokens, `Loader.tsx`'s `border-accent`, `TopBar`'s solid (non-glass) header, Classes' `Skeleton` usage, `SimulationNotFound`, `MobileDrawer`'s focus-trap/`previouslyFocused` restore, `AccountMenu`'s `triggerRef`, `ResumeExperimentModal`'s close-button `aria-label`. Nothing needed re-fixing.
+
+### AIAssistantChat — final migration
+
+`components/ai/AIAssistantChat.tsx` (GeoWorld's and SimLab's floating "AI lab assistant" — `POST /api/ai/hint`, a different persona/contract from AI Teacher's context-builder-based `/api/ai/teacher`) was the last component on the pre-D1 legacy palette (`bg-brand`, `bg-slate-900/70`, `border-white/15`, `text-slate-*`, `bg-white/10`), deliberately deferred out of D9. Rather than a bespoke migration, it now reuses `AITeacherDock` — the exact same collapsible floating-chrome component Chemistry/Electricity's AI Teacher chats already use (D6) — via two new optional props (`triggerLabel`/`expandAria`/`collapseAria`, defaulting to the existing "AI Teacher" copy so the two existing callers are unaffected) so it gets its own copy (`t.aiAssistant.*`) instead of inheriting "AI Teacher" mislabeling. Internal message/history/composer markup mirrors `AITeacherChat.tsx`'s already-approved D6.1 pattern (`ds-glass` panel, `role="log" aria-live="polite"` history, `aria-label` on the send button, `.ds-input`). Request/response handling (`apiFetch("/api/ai/hint", ...)`, the scene-state-plus-question prompt construction) is byte-identical to before — only presentation changed. New `t.aiAssistant.*` namespace (RU/EN/TG, 11 keys). Positioning changed from an ad hoc `absolute bottom-4 right-4` wrapper to `AITeacherDock`'s `fixed bottom-4 right-4` + `max-w-[calc(100vw-2rem)]` — the same pattern already proven correct for Chemistry/Electricity, which also closes a mobile-safety gap the old ad hoc wrapper never had.
+
+### Chemistry vs. Electricity resume UX — unified
+
+D9 found a real behavioral gap: Chemistry's `ResumeExperimentModal` was a true overlay modal with 3 actions (Cancel/Restart/Continue); Electricity's `ElectricityResumeModal` was a non-dismissable inline card with only 2 (Restart/Continue), no way to just look at the catalog first. Investigated both flows in full before changing anything: Chemistry's `activeSaves` is a real per-experiment map (`ExperimentCatalogBrowser.tsx`, from `GET /api/chemistry/saves`) rendered as a badge on every card; Electricity's `pendingResume` (`ElectricityLabScene.tsx`'s `useElectricityLabExperience()`) is a single global value with no per-experiment equivalent — a genuine data-model difference, not just a styling one, and `useElectricityLabExperience` itself was **not** touched (would be inventing new backend-adjacent state, out of scope).
+
+What changed, staying within what the existing state already supports:
+- `ElectricityResumeModal.tsx` rebuilt as the same true overlay-modal shell as `ResumeExperimentModal.tsx` (`fixed inset-0` backdrop, close X, same `text-ds-*` scale, same `Clock` icon size — closes the icon-size drift D9 also flagged).
+- Added a real, non-destructive `onCancel` — `ElectricityLabExperienceSection` now tracks a local `dismissedSaveId` (keyed to the save's own id, so a genuinely different pending resume still prompts again) instead of unconditionally forcing a Continue/Start-Over decision. This is local component state only — no new fetch, no new endpoint.
+- Destructive-action safety (brief §7): both "Restart"/"Start over" paths — the modal actions in both worlds, **and** Chemistry's catalog-card direct-restart bypass (`ExperimentCatalogBrowser.tsx`, which previously discarded a save with a single click and zero confirmation) — now go through `window.confirm(t.*.resume.restartConfirm)` before firing. No new modal subsystem built (brief explicitly asks not to); reused the same `window.confirm()` pattern the Classes feature already established.
+- Documented, not silently papered over: Electricity's catalog still has no per-card "resume" badge (would require replicating Chemistry's active-save-map architecture inside `useElectricityLabExperience`, out of scope) — a dismissed resume prompt only reappears on next page load, not via a catalog affordance. This is the one remaining real asymmetry.
+
+### Lab typography sweep
+
+Converted raw Tailwind sizes to the `text-ds-*` scale across the full lab-panel family: `ExperimentCatalogBrowser.tsx`, `ElectricityExperimentCatalogBrowser.tsx`, `CompletionScreen.tsx`, `ElectricityLabReportPanel.tsx`, `LabNotebookPanel.tsx`, `ElectricityLabNotebookPanel.tsx`, `ResumeExperimentModal.tsx`, `ElectricityResumeModal.tsx`, `TutorialPanel.tsx`, `ChemistryTutorialPanel.tsx`, `GuidedLabPanel.tsx`, `ElectricityGuidedLabPanel.tsx`, plus the main scene chrome in `ChemistryWorldScene.tsx`/`ElectricityLabScene.tsx` (lab heading, emergency-stop panel, safety-warning banners, achievement/repeated-mistake banners, complete-attempt section, quality selector, circuit status). Mapping: panel/section headings → `text-ds-title`; body/description copy → `text-ds-body`; metadata/labels/badges (including the former `text-[10px]`/`text-[11px]` micro-tiers, which had no defined-scale equivalent) → `text-ds-caption`; the two completion screens' headline score number → `text-ds-display` (the visual focal point of that screen, per D9's own suggested resolution). In-3D `<Html>` tooltip badges (battery polarity markers, hover tooltips) and the dev-only "Dev Autosave"/F3-diagnostics blocks were left untouched, per the established precedent that scene-space and developer-tooling surfaces are out of scope.
+
+**Two real hardcoded-color bugs found and fixed while sweeping, not part of the plan going in**: `ChemistryWorldScene.tsx`'s emergency-stop panel (`border-red-500/60 bg-red-950/40`) and both worlds' safety-warning banners (`border-red-400/40 bg-red-500/10 text-red-300` / `border-amber-400/40 bg-amber-500/10 text-amber-200`) used raw Tailwind red/amber instead of the `danger`/`warning` semantic tokens already used everywhere else for exactly this purpose (e.g. `ProgressBanners`). Fixed to `border-danger/*`/`bg-danger/10`/`text-danger` and `border-warning/*`/`bg-warning/10`/`text-warning`.
+
+### Lab control consistency
+
+Checked button height/input height/radius/icon-size parity between every Chemistry/Electricity twin pair (catalog search icons, notebook chevrons, guided-lab step icons) — found already consistent (byte-identical `size={}` values) except the resume-modal `Clock` icon (fixed above) and a real, if minor, a11y gap: `GuidedLabPanel.tsx`'s decorative icons (`AlertTriangle`/`Target`/`CheckCircle2`) lacked `aria-hidden="true"`, while its Electricity twin's equivalent icons already had it. Added it, matching the twin. **Deliberately not touched**: the `rounded-full` pill-button shape used consistently across the whole lab-action-button family vs. the shared `Button` primitive's `rounded-ds-control` — per D9's own framing, this is internally consistent within its own domain (not drift), and changing button shape is a more visible design decision than the token-level fixes made everywhere else in this stage; left for an explicit, dedicated decision rather than made unilaterally under a "consistency pass."
+
+### GeoWorld UI — what changed, what stayed untouched
+
+Confirmed via `git status` immediately before editing that `components/geo/`, `lib/geo/`, and `GeoWorldScene.tsx` were not mid-edit by any other session. Scope was strictly the inline JSX chrome in `GeoWorldScene.tsx` itself:
+
+- **Migrated**: the below-canvas control panel (cutaway toggle, tile-debug toggle, terrain-exaggeration control, temperature slider, climate-event card, continent/layer info card, error message, complete-attempt button+score) from the full legacy vocabulary (`.glass-panel`, `neon-cyan`/`neon-violet`, `border-glass-border`, `bg-surface-container-lowest`, `text-slate-*`) onto D1 tokens (`ds-glass`, `accent-geo`/`accent`, `border-border/[0.12]`, `bg-surface-elevated`, `text-text-*`) and the `text-ds-*` typography scale. The always-visible data-source attribution strip's tokens were fixed the same way (its attribution text itself — provider names — stays untranslated, same treatment as catalog data elsewhere).
+- **Localized for the first time**: this component had zero `useLocale()` usage before this stage — every string in the control panel (toggle labels, slider label, climate/continent/layer copy, complete-attempt button, score label) was hardcoded Russian. Added `useLocale()` + a new `t.geo.hud.*` namespace (RU/EN/TG, 15 keys) and wired every string through it.
+- **Explicitly NOT touched**: everything inside `<CanvasShell>` (`EarthLayers`, `RealEarthTileLayer`, `CountryBordersLayer`, `TectonicPlatesLayer`, camera/`GlobeControls`, tile/LOD/terrain logic) — the engine. `components/geo/LayerControlPanel.tsx` and `components/geo/GeoFeatureInfoCard.tsx` — separate files under the strict `components/geo/` boundary this project has enforced since D6; `GeoWorldScene.tsx` only *imports* them, it doesn't define them, so migrating their internals would mean editing files outside this stage's sanctioned scope. The `tile-debug-stats` diagnostics overlay — left completely alone (neither tokens nor i18n), matching the established precedent for developer-facing diagnostic panels (same treatment as Chemistry's F3 panel/"Dev Autosave" block).
+
+### Design system final consistency spot-check
+
+Repo-wide grep for remaining legacy-class leakage outside known exclusions found exactly one real, live file: **`components/scenes/SimLabScene.tsx`** (the Physics/SimLab module) — still fully on the pre-D1 palette (`.glass-panel`, `border-glass-border`, `bg-surface-container-lowest`, `focus:border-brand`, `bg-surface-slate`). Not migrated in this stage: SimLab has been deliberately excluded from promotion since D2 ("SimLab/Physics is intentionally not promoted" — Landing) and D6 ("don't advertise on landing/dashboard if not intentionally promoted, but don't break it") — it isn't named anywhere in D10's own scope list, and isn't reachable from real product navigation. Every other match (`ExperimentPanel.tsx`, `TaskPanel.tsx`, `LabModeSelector.tsx`, `KpiRow.tsx`, `AITeacherChat.tsx`, `ChemistryTeacherChat.tsx`, etc.) was confirmed to be a migration-documentation comment, not live code.
+
+### Light/Dark/System, Responsive, RU/EN/TG, Accessibility, Loading/Empty/Error
+
+No new theming mechanism anywhere in this stage — every fix reuses tokens/patterns already proven on approved pages. No new hardcoded RU/EN strings introduced; every new string (`aiAssistant.*`, `geo.hud.*`, resume `cancelButton`/`restartConfirm`, report units) is in all three dictionaries, typed against `ru` so a missing key is a compile error. No new responsive breakpoints or grid patterns — token/class swaps only, and the `AITeacherDock`-based `AIAssistantChat` gained a real mobile-safety fix (`max-w-[calc(100vw-2rem)]`) it didn't have before. Accessibility fixes were targeted, not a rewrite: the `GuidedLabPanel` icon `aria-hidden` parity above, plus everything already covered under the "resume UX safety" section (destructive actions now require confirmation, consistently, in both worlds). Loading/empty/error states were not restructured in this stage (D7/D8/D9 already established the honest-state patterns product-wide); this stage's own new UI (the resume-cancel flow, GeoWorld's now-localized empty/loading copy) follows the same honest-state conventions already in place.
+
+### Performance
+
+No new dependencies (no chart library, no animation library). No new network requests — `AIAssistantChat`'s request pattern is unchanged; the resume-UX changes are local component state only. No layout-shift-prone changes — token/class swaps and a component reused wholesale (`AITeacherDock`), not new structural elements.
+
+### Backend
+
+Zero backend files touched this stage — confirmed via the final `git status` before commit (the performance-session's in-progress model/migration files remained exactly as found, untouched).
+
+### Testing
+
+New: `components/ai/AIAssistantChat.test.tsx` (3 tests — collapsed-by-default with its own label, real ask→hint round trip via a mocked `apiFetch`, send button accessible name). Updated: `components/lab/ElectricityResumeModal.test.tsx` (+3 — destructive confirm accepted/declined, real Cancel action) and `components/lab/ResumeExperimentModal.test.tsx` (+2 — same destructive-confirm coverage, now that Chemistry's own modal also gates Restart behind `window.confirm`). `components/appshell/StandardAppShell.test.tsx`/`AITeacherDock.test.tsx` re-run to confirm the new optional dock props didn't change default behavior (all pre-existing assertions passed unchanged). Full suite: **105 files / 913 tests passing** (up from 105/906 — some of that net file count is unchanged files with new tests, not new files, since AIAssistantChat.test.tsx is the only new file). `tsc --noEmit` and `next lint` both clean throughout, re-verified after every major batch of changes, not just once at the end. Backend not touched, so the backend suite was not re-run (per the brief's own explicit permission).
+
+### Manual visual QA
+
+Not performed — no browser automation tool available this session. Every change in this stage is reasoned from the same token system and component patterns already visually proven on other approved pages (Dashboard, Teacher Center, D9's fixes), not re-verified pixel-by-pixel — this is explicitly *not* a substitute for the user's own visual check.
+
+### Known limitations (carried forward, not fixed this stage)
+
+- `components/scenes/SimLabScene.tsx` remains fully on the legacy palette — deliberately out of scope (see above); would need its own dedicated pass if SimLab is ever promoted into real navigation.
+- Electricity's resume flow still lacks a catalog-level "you have a saved session" affordance once dismissed — documented data-model asymmetry with Chemistry, not fixed (would require new state-provider work).
+- The Electricity finish-step misleading-completion-copy bug (`lib/electricity-lab-catalog.ts:207`, open since D6.1) remains open — a real but narrow copy bug, not a structural/visual issue, explicitly never in scope for any D-stage per the user's own repeated instruction.
+- Classes' archive/remove actions still use native `window.confirm()` rather than a themed in-app confirmation — no regression (still fully accessible), just visually off-brand; no in-app confirm-modal primitive exists yet to replace it with, and building one speculatively was explicitly out of scope.
+- Achievements teaser locked-tile accessibility (no explicit `aria-label` stating "locked") — a pre-existing, project-wide minor gap noted again in D9, not addressed in D10 either; genuinely minor, not a Design Freeze blocker.
+
+### DESIGN FREEZE CHECK
+
+Is there a remaining **major** visual/UX problem blocking Design V2 closure? No. Every item on this stage's own Definition of Done was met: AIAssistantChat migrated, resume UX unified, lab typography swept, real control inconsistencies fixed, GeoWorld UI shell migrated (engine honestly deferred by design, not by avoidance), Light/Dark/System and RU/EN/TG stayed internally consistent throughout, no responsive regressions introduced, no accessibility regressions, no fake data anywhere, no new heavy dependencies, tests/tsc/lint all green, parallel work fully preserved. The items listed under "Known limitations" above are real but are, without exception, narrow, documented, and non-blocking (one deliberately-unpromoted legacy route, one documented data-model asymmetry, one long-standing narrow copy bug, one native-dialog cosmetic mismatch, one minor a11y nuance) — none of them make the product feel like it was "assembled from different stages."
+
+**DESIGN V2 STATUS: FROZEN.**
+
+---
+
+**Current task scope**: D10 (Final Product Polish & Design Freeze, done, this pass) — see §40. **Design V2 is code-verified and, per this stage's own audit, has no known major blockers — but code/tests passing is still not visual approval.** The freeze verdict above is this session's assessment; final sign-off is the user's manual visual review. No D11 begins without explicit approval.

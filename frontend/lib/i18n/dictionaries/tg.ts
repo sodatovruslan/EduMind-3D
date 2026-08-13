@@ -377,6 +377,7 @@ export const tg: typeof ru = {
       revisionLabel: "Ревизия:",
       cancelButton: "Бекор кардан",
       restartButton: "Аз нав оғоз кардан",
+      restartConfirm: "Аз нав оғоз кунем? Пешрафти сабтшудаи ҷорӣ гум мешавад.",
       continueButton: "Идома додан",
     },
     tutorial: {
@@ -544,7 +545,9 @@ export const tg: typeof ru = {
       progressLabel: "Пешрафт:",
       stepValue: "Қадами {step}",
       revisionLabel: "Ревизия:",
+      cancelButton: "Баъдтар",
       restartButton: "Аз нав оғоз кардан",
+      restartConfirm: "Аз нав оғоз кунем? Пешрафти сабтшудаи ҷорӣ гум мешавад.",
       continueButton: "Идома додан",
     },
     tutorial: {
@@ -572,6 +575,25 @@ export const tg: typeof ru = {
     controlsLook: "Назар бо муш",
     controlsMode: "Реҷаи камера",
   },
+  geo: {
+    hud: {
+      hideCutaway: "Пинҳон кардани буриши қабатҳо",
+      showCutaway: "Нишон додани буриши қабатҳо",
+      hideTileDebug: "Пинҳон кардани Tile/LOD debug",
+      showTileDebug: "Нишон додани Tile/LOD debug",
+      tileDebugTitle: "Визуализатсияи debug-и муҳаррики tile ва сатҳи ҷузъиёт",
+      exaggerationTitle: "Мубталоғаи визуалии релеф — зарбкунанда болои маълумоти воқеии баландӣ, на ивазкунандаи он",
+      terrainOff: "Релеф хомӯш",
+      warmingLabel: "Гармшавии глобалӣ: +{value}°C",
+      loadingData: "Маълумот бор карда мешавад...",
+      clickPrompt: "Ба сатҳи Замин зер кун, то дар бораи қитъа маълумот гирӣ, сипас буриши қабатҳоро фаъол кун — ин ба мантия ва ядро дастрасӣ мекушояд.",
+      areaPopulationLabel: "Масоҳат: {area} млн км² · Аҳолӣ: {population} млн нафар",
+      depthTemperatureLabel: "Чуқурӣ: {depth} км · Ҳарорат: {temp}°C",
+      stateCompositionLabel: "Ҳолат: {state} · Таркиб: {composition}",
+      completeAttempt: "Ба итмом расонидани кӯшиш",
+      scoreLabel: "Балл: {score}/100",
+    },
+  },
   simulation: {
     back: "Бозгашт",
     notFound: "Симулятсия ёфт нашуд.",
@@ -581,6 +603,19 @@ export const tg: typeof ru = {
       expand: "Кушодани Ёрдамчии ИИ",
       collapse: "Пӯшидани Ёрдамчии ИИ",
     },
+  },
+  aiAssistant: {
+    trigger: "Ёрдамчии лабораторӣ",
+    expand: "Кушодани Ёрдамчии лабораторӣ",
+    collapse: "Пӯшидани Ёрдамчии лабораторӣ",
+    header: "Ёрдамчии лабораторӣ",
+    greeting: "Дар бораи қадами ҷорӣ маслиҳат пурс — ман бе додани ҷавоби тайёр роҳнамоӣ мекунам.",
+    thinking: "Фикр мекунам...",
+    inputPlaceholder: "Дар бораи қадами ҷорӣ бипурс...",
+    sendAria: "Фиристодани савол",
+    defaultQuestion: "Дар бораи ҳолати ҷорӣ маслиҳат деҳ",
+    studentQuestionPrefix: "Саволи хонанда:",
+    unavailable: "Ёрдамчии ИИ муваққатан дастрас нест",
   },
   shell: {
     nav: {

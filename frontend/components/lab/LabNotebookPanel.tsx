@@ -25,11 +25,11 @@ export default function LabNotebookPanel() {
 
   return (
     <div className="rounded-ds-panel border border-border/[0.08] bg-surface p-4" data-testid="lab-notebook-panel">
-      <h3 className="mb-3 flex items-center gap-2 font-headline text-lg font-semibold text-text-primary">
+      <h3 className="mb-3 flex items-center gap-2 text-ds-title text-text-primary">
         <BookOpen size={18} /> {n.heading}
       </h3>
 
-      {notebookEntries.length === 0 && <p className="text-sm text-text-muted">{n.empty}</p>}
+      {notebookEntries.length === 0 && <p className="text-ds-body text-text-muted">{n.empty}</p>}
 
       <ul className="space-y-2">
         {notebookEntries.map((entry) => {
@@ -45,15 +45,15 @@ export default function LabNotebookPanel() {
                 className="ds-focus-ring flex w-full items-center justify-between gap-2 p-3 text-left"
               >
                 <div>
-                  <div className="text-sm font-medium text-text-primary">{entry.experimentTitle}</div>
-                  <div className="font-mono text-[10px] uppercase tracking-widest text-text-muted">
+                  <div className="text-ds-body font-medium text-text-primary">{entry.experimentTitle}</div>
+                  <div className="font-mono text-ds-caption uppercase tracking-widest text-text-muted">
                     {new Date(entry.dateIso).toLocaleString(INTL_LOCALE_TAG[locale])} · {entry.assessment.overallScore}/100
                   </div>
                 </div>
                 {expanded ? <ChevronUp size={16} className="shrink-0 text-text-secondary" /> : <ChevronDown size={16} className="shrink-0 text-text-secondary" />}
               </button>
               {expanded && (
-                <div className="space-y-2 border-t border-border/[0.08] p-3 text-sm text-text-secondary">
+                <div className="space-y-2 border-t border-border/[0.08] p-3 text-ds-body text-text-secondary">
                   <div>
                     <span className="text-text-muted">{n.maxTemperature}</span> {entry.maxTemperatureC.toFixed(1)}°C
                   </div>

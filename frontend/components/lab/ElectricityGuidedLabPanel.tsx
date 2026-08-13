@@ -57,7 +57,7 @@ export default function ElectricityGuidedLabPanel() {
     <div className="ds-glass rounded-ds-panel border-accent/40 p-4" data-testid="electricity-guided-lab-panel">
       <div className="mb-3 flex items-center justify-between">
         <div>
-          <h3 className="font-headline text-base font-semibold text-text-primary">{selectedExperiment.title}</h3>
+          <h3 className="text-ds-title text-text-primary">{selectedExperiment.title}</h3>
           <p className="font-mono text-ds-caption uppercase tracking-widest text-text-muted" data-testid="electricity-guided-lab-progress-label">
             {g.stepCounter
               .replace("{stepLabel}", g.stepLabels[currentStep.kind])

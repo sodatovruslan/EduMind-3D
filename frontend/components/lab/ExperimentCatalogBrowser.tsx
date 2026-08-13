@@ -104,7 +104,7 @@ export default function ExperimentCatalogBrowser() {
 
   return (
     <div className="rounded-ds-panel border border-border/[0.08] bg-surface p-4" data-testid="experiment-catalog-browser">
-      <h3 className="mb-3 font-headline text-lg font-semibold text-text-primary">{c.heading}</h3>
+      <h3 className="mb-3 text-ds-title text-text-primary">{c.heading}</h3>
 
       <div className="mb-4 flex flex-col gap-2 sm:flex-row">
         <label className="relative flex-1">
@@ -159,7 +159,7 @@ export default function ExperimentCatalogBrowser() {
                   {!unlocked && <Lock size={14} className="shrink-0 text-text-muted" aria-label={c.lockedAria} />}
                 </div>
 
-                <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-text-muted">
+                <div className="flex items-center gap-2 font-mono text-ds-caption uppercase tracking-widest text-text-muted">
                   <span>{DIFFICULTY_LABEL[exp.difficulty]}</span>
                   <span>·</span>
                   <span>{exp.estimatedMinutes} {c.minutesSuffix}</span>
@@ -170,14 +170,14 @@ export default function ExperimentCatalogBrowser() {
                   )}
                 </div>
 
-                <p className="text-xs text-text-secondary">{exp.description}</p>
+                <p className="text-ds-caption text-text-secondary">{exp.description}</p>
 
                 {!unlocked && UNLOCK_HINT[exp.difficulty] && (
-                  <p className="mt-1 text-[11px] italic text-text-muted">{UNLOCK_HINT[exp.difficulty]}</p>
+                  <p className="mt-1 text-ds-caption italic text-text-muted">{UNLOCK_HINT[exp.difficulty]}</p>
                 )}
 
                 {best !== null && (
-                  <div className="mt-1 font-mono text-[10px] text-accent">
+                  <div className="mt-1 font-mono text-ds-caption text-accent">
                     {c.bestScore.replace("{best}", String(best)).replace("{attempts}", String(attempts))}
                   </div>
                 )}
@@ -185,12 +185,12 @@ export default function ExperimentCatalogBrowser() {
                 {unlocked && (
                   <div className="mt-2 flex items-center justify-between gap-2 pt-2 border-t border-border/[0.08]">
                     {activeSave ? (
-                      <div data-testid={`catalog-active-save-${exp.id}`} className="flex items-center gap-1.5 font-mono text-xs text-warning">
+                      <div data-testid={`catalog-active-save-${exp.id}`} className="flex items-center gap-1.5 font-mono text-ds-caption text-warning">
                         <Clock size={13} />
                         <span>{c.activeSave.replace("{step}", String(activeSave.experiment.currentStepIndex + 1))}</span>
                       </div>
                     ) : (
-                      <span className="text-xs text-text-muted">{c.newExperiment}</span>
+                      <span className="text-ds-caption text-text-muted">{c.newExperiment}</span>
                     )}
 
                     <div className="flex items-center gap-2">
@@ -199,7 +199,7 @@ export default function ExperimentCatalogBrowser() {
                           type="button"
                           onClick={() => setModalSnapshot({ expId: exp.id, snapshot: activeSave })}
                           data-testid={`catalog-resume-${exp.id}`}
-                          className="ds-focus-ring flex items-center gap-1 rounded-full bg-accent px-3 py-1 text-xs font-medium text-white transition-all hover:brightness-110"
+                          className="ds-focus-ring flex items-center gap-1 rounded-full bg-accent px-3 py-1 text-ds-caption font-medium text-white transition-all hover:brightness-110"
                         >
                           <Play size={12} className="fill-white" />
                           {c.resumeButton}
@@ -208,9 +208,12 @@ export default function ExperimentCatalogBrowser() {
 
                       <button
                         type="button"
-                        onClick={() => selectExperiment(exp.id)}
+                        onClick={() => {
+                          if (activeSave && !window.confirm(t.chemistry.resume.restartConfirm)) return;
+                          selectExperiment(exp.id);
+                        }}
                         data-testid={`catalog-start-${exp.id}`}
-                        className="ds-focus-ring rounded-full border border-border/[0.12] px-3 py-1 text-xs font-medium text-text-primary transition-colors hover:bg-text-primary/5"
+                        className="ds-focus-ring rounded-full border border-border/[0.12] px-3 py-1 text-ds-caption font-medium text-text-primary transition-colors hover:bg-text-primary/5"
                       >
                         {activeSave ? c.restartButton : c.startButton}
                       </button>
@@ -221,7 +224,7 @@ export default function ExperimentCatalogBrowser() {
             </li>
           );
         })}
-        {results.length === 0 && <li className="text-sm text-text-muted sm:col-span-2">{c.empty}</li>}
+        {results.length === 0 && <li className="text-ds-body text-text-muted sm:col-span-2">{c.empty}</li>}
       </ul>
 
       <ResumeExperimentModal

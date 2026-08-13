@@ -3114,7 +3114,7 @@ function EmergencyStopResetButton() {
         resetLabSession();
       }}
       data-testid="emergency-stop-reset"
-      className="ds-focus-ring flex items-center gap-2 rounded-full bg-danger px-4 py-2 text-sm font-medium text-white transition-all hover:brightness-110"
+      className="ds-focus-ring flex items-center gap-2 rounded-full bg-danger px-4 py-2 text-ds-body font-medium text-white transition-all hover:brightness-110"
     >
       <RotateCcw size={16} />
       {t.chemistry.emergencyStop.resetButton}
@@ -3555,21 +3555,21 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
                     initial={{ opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
-                    className="mt-4 rounded-2xl border border-red-500/60 bg-red-950/40 p-4"
+                    className="mt-4 rounded-ds-panel border border-danger/60 bg-danger/10 p-4"
                     data-testid="emergency-stop-panel"
                   >
                     <div className="mb-2 flex items-center gap-2 text-danger">
                       <AlertOctagon size={20} />
-                      <span className="font-mono text-sm font-semibold uppercase tracking-widest">
+                      <span className="font-mono text-ds-body font-semibold uppercase tracking-widest">
                         {t.chemistry.emergencyStop.titlePrefix} — {state.emergencyStop.level}
                       </span>
                     </div>
-                    <ul className="mb-3 space-y-0.5 text-sm text-danger" data-testid="emergency-stop-causes">
+                    <ul className="mb-3 space-y-0.5 text-ds-body text-danger" data-testid="emergency-stop-causes">
                       {state.emergencyStop.causes.map((cause) => (
                         <li key={cause.code}>⚠ {cause.message}</li>
                       ))}
                     </ul>
-                    <p className="mb-3 text-xs text-danger/80">
+                    <p className="mb-3 text-ds-caption text-danger/80">
                       {t.chemistry.emergencyStop.stoppedMessage}
                     </p>
                     <EmergencyStopResetButton />
@@ -3671,10 +3671,8 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
                           key={w.code}
                           initial={{ opacity: 0, x: -8 }}
                           animate={{ opacity: 1, x: 0 }}
-                          className={`flex items-center gap-2 rounded-xl border p-3 text-sm ${
-                            w.severity === "danger"
-                              ? "border-red-400/40 bg-red-500/10 text-red-300"
-                              : "border-amber-400/40 bg-amber-500/10 text-amber-200"
+                          className={`flex items-center gap-2 rounded-ds-control border p-3 text-ds-body ${
+                            w.severity === "danger" ? "border-danger/40 bg-danger/10 text-danger" : "border-warning/40 bg-warning/10 text-warning"
                           }`}
                           data-testid={`safety-warning-${w.code}`}
                         >
@@ -3704,7 +3702,7 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
                     оценка и Лабораторный журнал. */}
                 <div className="space-y-4 sm:col-span-2">
                   <div className="flex items-center justify-between gap-2">
-                    <h3 className="font-headline text-lg font-semibold text-text-primary">{t.chemistry.hud.labHeading}</h3>
+                    <h3 className="text-ds-title text-text-primary">{t.chemistry.hud.labHeading}</h3>
                     <LabModeSelector />
                   </div>
                   <GuidedLabExperienceSection />

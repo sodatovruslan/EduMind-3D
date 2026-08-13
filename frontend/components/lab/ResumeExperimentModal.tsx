@@ -52,7 +52,7 @@ export default function ResumeExperimentModal({
         <div className="mb-4 flex items-start justify-between">
           <div className="flex items-center gap-2">
             <Clock className="text-accent" size={22} />
-            <h3 className="font-headline text-lg font-semibold text-text-primary">{r.heading}</h3>
+            <h3 className="text-ds-title text-text-primary">{r.heading}</h3>
           </div>
           <button
             type="button"
@@ -65,7 +65,7 @@ export default function ResumeExperimentModal({
           </button>
         </div>
 
-        <p className="mb-4 text-sm text-text-secondary">
+        <p className="mb-4 text-ds-body text-text-secondary">
           {(() => {
             const [before, after] = r.body.split("{title}");
             return (
@@ -78,7 +78,7 @@ export default function ResumeExperimentModal({
           })()}
         </p>
 
-        <div className="mb-6 rounded-ds-control border border-border/[0.08] bg-surface p-3.5 space-y-2 text-xs font-mono text-text-secondary">
+        <div className="mb-6 rounded-ds-control border border-border/[0.08] bg-surface p-3.5 space-y-2 font-mono text-ds-caption text-text-secondary">
           <div className="flex items-center justify-between">
             <span className="text-text-muted">{r.lastSaveLabel}</span>
             <span className="text-accent">{formattedDate}</span>
@@ -98,16 +98,18 @@ export default function ResumeExperimentModal({
             type="button"
             onClick={onCancel}
             data-testid="resume-modal-cancel"
-            className="ds-focus-ring rounded-full border border-border/[0.12] px-4 py-2 text-sm font-medium text-text-secondary transition-colors hover:bg-text-primary/5"
+            className="ds-focus-ring rounded-full border border-border/[0.12] px-4 py-2 text-ds-body font-medium text-text-secondary transition-colors hover:bg-text-primary/5"
           >
             {r.cancelButton}
           </button>
 
           <button
             type="button"
-            onClick={onRestart}
+            onClick={() => {
+              if (window.confirm(r.restartConfirm)) onRestart();
+            }}
             data-testid="resume-modal-restart"
-            className="ds-focus-ring flex items-center justify-center gap-1.5 rounded-full border border-warning/40 bg-warning/10 px-4 py-2 text-sm font-medium text-warning transition-colors hover:bg-warning/20"
+            className="ds-focus-ring flex items-center justify-center gap-1.5 rounded-full border border-warning/40 bg-warning/10 px-4 py-2 text-ds-body font-medium text-warning transition-colors hover:bg-warning/20"
           >
             <RefreshCw size={15} />
             {r.restartButton}
@@ -117,7 +119,7 @@ export default function ResumeExperimentModal({
             type="button"
             onClick={onResume}
             data-testid="resume-modal-continue"
-            className="ds-focus-ring flex items-center justify-center gap-1.5 rounded-full bg-accent px-5 py-2 text-sm font-medium text-white shadow-ds-sm transition-all hover:brightness-110"
+            className="ds-focus-ring flex items-center justify-center gap-1.5 rounded-full bg-accent px-5 py-2 text-ds-body font-medium text-white shadow-ds-sm transition-all hover:brightness-110"
           >
             <Play size={15} className="fill-white" />
             {r.continueButton}

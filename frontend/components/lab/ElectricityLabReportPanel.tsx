@@ -39,12 +39,12 @@ export default function ElectricityLabReportPanel() {
     >
       <div className="mb-3 flex items-center gap-2 text-success">
         <Award size={20} />
-        <h3 className="font-headline text-base font-semibold">
+        <h3 className="text-ds-title">
           {r.titlePrefix}: {lastNotebookEntry.experimentTitle}
         </h3>
       </div>
 
-      <div className="mb-3 text-3xl font-bold text-text-primary" data-testid="electricity-report-score">
+      <div className="mb-3 text-ds-display text-text-primary" data-testid="electricity-report-score">
         {lastNotebookEntry.score}/100
       </div>
 
@@ -61,8 +61,8 @@ export default function ElectricityLabReportPanel() {
           ] as const
         ).map(([key, label]) => (
           <div key={key} className="rounded-ds-control border border-border/[0.08] bg-surface-elevated p-2 text-center">
-            <div className="font-mono text-lg font-semibold text-text-primary">{lastNotebookEntry.assessment[key].score}</div>
-            <div className="text-[10px] uppercase tracking-widest text-text-muted">{label}</div>
+            <div className="font-mono text-ds-title text-text-primary">{lastNotebookEntry.assessment[key].score}</div>
+            <div className="text-ds-caption uppercase tracking-widest text-text-muted">{label}</div>
           </div>
         ))}
       </div>
@@ -70,7 +70,7 @@ export default function ElectricityLabReportPanel() {
       {/* Stage S9.6 — реальные счётчики попытки: сколько подсказок/ошибок/
           нарушений безопасности/самостоятельных исправлений и сколько
           заняло по времени — то, что раньше не сохранялось нигде. */}
-      <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs text-text-secondary" data-testid="electricity-report-evidence-summary">
+      <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 font-mono text-ds-caption text-text-secondary" data-testid="electricity-report-evidence-summary">
         <span>{r.hintsLabel} {lastNotebookEntry.hintsUsed}</span>
         <span>{r.mistakesLabel} {lastNotebookEntry.mistakesCount}</span>
         <span>{r.safetyIncidentsLabel} {lastNotebookEntry.safetyIncidentsCount}</span>
@@ -82,13 +82,13 @@ export default function ElectricityLabReportPanel() {
       </div>
 
       <div className="mb-3">
-        <h4 className="mb-1 font-mono text-xs uppercase tracking-widest text-text-muted">{r.objectiveHeading}</h4>
-        <p className="text-sm text-text-secondary">{lastNotebookEntry.objective}</p>
+        <h4 className="mb-1 font-mono text-ds-caption uppercase tracking-widest text-text-muted">{r.objectiveHeading}</h4>
+        <p className="text-ds-body text-text-secondary">{lastNotebookEntry.objective}</p>
       </div>
 
       <div className="mb-3">
-        <h4 className="mb-1 font-mono text-xs uppercase tracking-widest text-text-muted">{r.circuitUsedHeading}</h4>
-        <p className="text-sm text-text-secondary">
+        <h4 className="mb-1 font-mono text-ds-caption uppercase tracking-widest text-text-muted">{r.circuitUsedHeading}</h4>
+        <p className="text-ds-body text-text-secondary">
           {r.circuitUsedText
             .replace("{components}", lastNotebookEntry.circuitUsed.componentKinds.join(", "))
             .replace("{count}", String(lastNotebookEntry.circuitUsed.connectionsCount))}
@@ -97,8 +97,8 @@ export default function ElectricityLabReportPanel() {
 
       {lastNotebookEntry.measurements.length > 0 && (
         <div className="mb-3">
-          <h4 className="mb-1 font-mono text-xs uppercase tracking-widest text-text-muted">{r.measurementsHeading}</h4>
-          <ul className="space-y-1 font-mono text-xs text-text-secondary" data-testid="electricity-report-measurements">
+          <h4 className="mb-1 font-mono text-ds-caption uppercase tracking-widest text-text-muted">{r.measurementsHeading}</h4>
+          <ul className="space-y-1 font-mono text-ds-caption text-text-secondary" data-testid="electricity-report-measurements">
             {lastNotebookEntry.measurements.map((m, i) => (
               <li key={i}>
                 U = {m.voltageV.toFixed(2)} {r.unitVolt} · I = {m.currentA.toFixed(3)} {r.unitAmpere} · R = {m.resistanceOhm.toFixed(1)} {r.unitOhm} · P ={" "}
@@ -111,8 +111,8 @@ export default function ElectricityLabReportPanel() {
 
       {lastNotebookEntry.questionResults.length > 0 && (
         <div className="mb-3">
-          <h4 className="mb-1 font-mono text-xs uppercase tracking-widest text-text-muted">{r.analysisHeading}</h4>
-          <ul className="space-y-1 text-sm text-text-secondary" data-testid="electricity-report-questions">
+          <h4 className="mb-1 font-mono text-ds-caption uppercase tracking-widest text-text-muted">{r.analysisHeading}</h4>
+          <ul className="space-y-1 text-ds-body text-text-secondary" data-testid="electricity-report-questions">
             {lastNotebookEntry.questionResults.map((q) => (
               <li key={q.questionId} className="flex items-start gap-1.5">
                 {q.correct ? (
@@ -130,25 +130,25 @@ export default function ElectricityLabReportPanel() {
 
       {lastNotebookEntry.observations && (
         <div className="mb-3">
-          <h4 className="mb-1 font-mono text-xs uppercase tracking-widest text-text-muted">{r.observationsHeading}</h4>
-          <p className="text-sm text-text-secondary">{lastNotebookEntry.observations}</p>
+          <h4 className="mb-1 font-mono text-ds-caption uppercase tracking-widest text-text-muted">{r.observationsHeading}</h4>
+          <p className="text-ds-body text-text-secondary">{lastNotebookEntry.observations}</p>
         </div>
       )}
 
       <div className="mb-3">
-        <h4 className="mb-1 font-mono text-xs uppercase tracking-widest text-text-muted">{r.conclusionHeading}</h4>
-        <p className="text-sm text-text-secondary">{lastNotebookEntry.conclusion || r.conclusionFallback}</p>
+        <h4 className="mb-1 font-mono text-ds-caption uppercase tracking-widest text-text-muted">{r.conclusionHeading}</h4>
+        <p className="text-ds-body text-text-secondary">{lastNotebookEntry.conclusion || r.conclusionFallback}</p>
       </div>
 
       <div className="mb-3 rounded-ds-control border border-border/[0.08] bg-surface-elevated p-3">
-        <h4 className="mb-1 font-mono text-xs uppercase tracking-widest text-text-muted">{r.teacherNoteHeading}</h4>
-        <p className="text-sm text-text-secondary" data-testid="electricity-report-teacher-note">
+        <h4 className="mb-1 font-mono text-ds-caption uppercase tracking-widest text-text-muted">{r.teacherNoteHeading}</h4>
+        <p className="text-ds-body text-text-secondary" data-testid="electricity-report-teacher-note">
           {lastNotebookEntry.teacherNote}
         </p>
       </div>
 
       {recommended && (
-        <p className="text-sm text-text-secondary" data-testid="electricity-report-recommendation">
+        <p className="text-ds-body text-text-secondary" data-testid="electricity-report-recommendation">
           {r.recommendation}: <span className="text-accent">{recommended.title}</span>
         </p>
       )}

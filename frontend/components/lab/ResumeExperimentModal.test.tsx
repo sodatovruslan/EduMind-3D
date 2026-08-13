@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import ResumeExperimentModal from "./ResumeExperimentModal";
 import type { ChemistrySaveSnapshotV1 } from "@/lib/chemistry-save-schema";
 import { LocaleProvider } from "@/lib/locale-context";
+import { ru } from "@/lib/i18n/dictionaries/ru";
 
 // D6.2 — ResumeExperimentModal now reads copy from useLocale(), so every
 // render needs a LocaleProvider ancestor (default locale "ru" keeps the
@@ -108,7 +109,8 @@ describe("Stage S-8.4 — Resume Experiment Modal UI Tests", () => {
     expect(onResume).toHaveBeenCalledTimes(1);
   });
 
-  it("4. Clicking Restart triggers onRestart callback", () => {
+  it("4. Clicking Restart triggers onRestart callback only after a destructive confirmation is accepted", () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     const onRestart = vi.fn();
     renderModal(
       <ResumeExperimentModal
@@ -122,7 +124,28 @@ describe("Stage S-8.4 — Resume Experiment Modal UI Tests", () => {
     );
 
     fireEvent.click(screen.getByTestId("resume-modal-restart"));
+    expect(window.confirm).toHaveBeenCalledWith(ru.chemistry.resume.restartConfirm);
     expect(onRestart).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
+  });
+
+  it("D10: declining the destructive confirmation does NOT discard the save", () => {
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const onRestart = vi.fn();
+    renderModal(
+      <ResumeExperimentModal
+        isOpen={true}
+        experimentTitle="Нагрев воды"
+        saveSnapshot={sampleSnapshot}
+        onResume={vi.fn()}
+        onRestart={onRestart}
+        onCancel={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId("resume-modal-restart"));
+    expect(onRestart).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
   });
 
   it("5. Clicking Cancel triggers onCancel callback", () => {

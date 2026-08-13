@@ -14,10 +14,30 @@ import { useLocale } from "@/lib/locale-context";
  * collapsed-by-default floating chrome instead (see D6 notes in
  * EDUMIND_DESIGN_SYSTEM_V2.md for why — brief explicitly calls out "should
  * not permanently consume an absurd amount of 3D viewport").
+ *
+ * D10 — `triggerLabel`/`expandAria`/`collapseAria` are optional so
+ * `AIAssistantChat` (GeoWorld/SimLab's generic lab-hint assistant, a
+ * different persona/backend contract from "AI Teacher") can reuse this
+ * exact same floating-chrome pattern with its own copy instead of
+ * inheriting the "AI Teacher" label, without a second chat-dock
+ * implementation. Default (no props) is byte-identical to before.
  */
-export default function AITeacherDock({ children }: { children: React.ReactNode }) {
+export default function AITeacherDock({
+  children,
+  triggerLabel,
+  expandAria,
+  collapseAria,
+}: {
+  children: React.ReactNode;
+  triggerLabel?: string;
+  expandAria?: string;
+  collapseAria?: string;
+}) {
   const { t } = useLocale();
   const [open, setOpen] = useState(false);
+  const label = triggerLabel ?? t.simulation.aiTeacher.trigger;
+  const expand = expandAria ?? t.simulation.aiTeacher.expand;
+  const collapse = collapseAria ?? t.simulation.aiTeacher.collapse;
 
   if (!open) {
     return (
@@ -25,11 +45,11 @@ export default function AITeacherDock({ children }: { children: React.ReactNode 
         <button
           type="button"
           onClick={() => setOpen(true)}
-          aria-label={t.simulation.aiTeacher.expand}
+          aria-label={expand}
           className="ds-glass ds-focus-ring pointer-events-auto flex items-center gap-2 rounded-ds-panel px-4 py-3 text-ds-body font-medium text-text-primary shadow-ds-md"
         >
           <Bot size={18} className="text-accent" />
-          {t.simulation.aiTeacher.trigger}
+          {label}
         </button>
       </div>
     );
@@ -41,7 +61,7 @@ export default function AITeacherDock({ children }: { children: React.ReactNode 
         <button
           type="button"
           onClick={() => setOpen(false)}
-          aria-label={t.simulation.aiTeacher.collapse}
+          aria-label={collapse}
           className="ds-focus-ring absolute -right-2 -top-2 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-surface-elevated text-text-primary shadow-ds-md"
         >
           <X size={14} />

@@ -30,6 +30,7 @@ import AIAssistantChat from "@/components/ai/AIAssistantChat";
 import { apiFetch, ApiError } from "@/lib/api";
 import type { Simulation } from "@/lib/types";
 import { latLngToVector3, vector3ToLatLng } from "@/lib/geo/coordinates";
+import { useLocale } from "@/lib/locale-context";
 
 type LayerKey = "crust" | "mantle" | "outer_core" | "inner_core";
 
@@ -386,6 +387,7 @@ interface GeoWorldSceneProps {
 }
 
 export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
+  const { t } = useLocale();
   const [isCutaway, setIsCutaway] = useState(false);
   const [selectedLayer, setSelectedLayer] = useState<LayerInfo | null>(null);
   const [selectedContinent, setSelectedContinent] = useState<ContinentInfo | null>(null);
@@ -581,7 +583,7 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
         <div
           data-testid="gibs-attribution"
           title={`${GIBS_ATTRIBUTION}\n\n${TERRARIUM_ATTRIBUTION}\n\n${NATURAL_EARTH_ATTRIBUTION}\n\n${TECTONIC_PLATES_ATTRIBUTION}\n\n${VOLCANOES_ATTRIBUTION}\n\n${EARTHQUAKES_ATTRIBUTION}`}
-          className="pointer-events-none absolute bottom-2 right-2 max-w-[70%] truncate rounded bg-surface-deep/70 px-2 py-1 text-[10px] text-slate-400 backdrop-blur"
+          className="pointer-events-none absolute bottom-2 right-2 max-w-[70%] truncate rounded-ds-control bg-surface-elevated/90 px-2 py-1 text-ds-caption text-text-muted backdrop-blur"
         >
           Imagery: NASA GIBS · Terrain: AWS Open Data · Borders/Cities: Natural Earth · Plates: PB2002 · Volcanoes/Quakes: NOAA/USGS
         </div>
@@ -611,33 +613,31 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
         )}
       </div>
 
-      <div className="glass-panel mt-4 grid grid-cols-1 gap-4 rounded-2xl p-4 sm:grid-cols-2">
+      <div className="ds-glass mt-4 grid grid-cols-1 gap-4 rounded-ds-panel p-4 sm:grid-cols-2">
         <div className="sm:col-span-2 flex flex-wrap gap-2">
           <button
             onClick={() => setIsCutaway((prev) => !prev)}
-            className="neon-glow-cyan flex items-center gap-2 rounded-full bg-neon-cyan px-4 py-2 text-sm font-medium text-surface-deep transition hover:brightness-110"
+            className="ds-focus-ring flex items-center gap-2 rounded-full bg-accent-geo px-4 py-2 text-ds-body font-medium text-white transition-all hover:brightness-110"
           >
             <Layers size={18} />
-            {isCutaway ? "Скрыть разрез слоев" : "Показать разрез слоев"}
+            {isCutaway ? t.geo.hud.hideCutaway : t.geo.hud.showCutaway}
           </button>
 
           <button
             onClick={() => setShowTileDebug((prev) => !prev)}
             data-testid="tile-debug-toggle"
-            className={`flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition ${
-              showTileDebug
-                ? "border-neon-violet/60 bg-neon-violet/20 text-neon-violet"
-                : "border-glass-border text-slate-400 hover:text-slate-200"
+            className={`ds-focus-ring flex items-center gap-2 rounded-full border px-4 py-2 text-ds-body font-medium transition-colors ${
+              showTileDebug ? "border-accent/60 bg-accent/20 text-accent" : "border-border/[0.12] text-text-muted hover:text-text-primary"
             }`}
-            title="G3: debug-визуализация тайлового/LOD-движка"
+            title={t.geo.hud.tileDebugTitle}
           >
             <Layers size={18} />
-            {showTileDebug ? "Скрыть Tile/LOD debug" : "Показать Tile/LOD debug"}
+            {showTileDebug ? t.geo.hud.hideTileDebug : t.geo.hud.showTileDebug}
           </button>
 
           <div
-            className="flex items-center gap-1 rounded-full border border-glass-border p-1"
-            title="G4: визуальная экзагерация рельефа — множитель ПОВЕРХ реальных данных высот, не подменяет их"
+            className="flex items-center gap-1 rounded-full border border-border/[0.12] p-1"
+            title={t.geo.hud.exaggerationTitle}
             data-testid="terrain-exaggeration-control"
           >
             {(Object.entries(EXAGGERATION_PRESETS) as Array<[ExaggerationPreset, number]>).map(([presetName, value]) => (
@@ -645,8 +645,8 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
                 key={presetName}
                 onClick={() => setExaggeration(value)}
                 data-testid={`exaggeration-${presetName}`}
-                className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                  exaggeration === value ? "bg-neon-violet/30 text-neon-violet" : "text-slate-400 hover:text-slate-200"
+                className={`ds-focus-ring rounded-full px-3 py-1.5 text-ds-caption font-medium transition-colors ${
+                  exaggeration === value ? "bg-accent/30 text-accent" : "text-text-muted hover:text-text-primary"
                 }`}
               >
                 {value}×
@@ -655,18 +655,18 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
             <button
               onClick={() => setExaggeration(0)}
               data-testid="exaggeration-off"
-              className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                exaggeration === 0 ? "bg-neon-violet/30 text-neon-violet" : "text-slate-400 hover:text-slate-200"
+              className={`ds-focus-ring rounded-full px-3 py-1.5 text-ds-caption font-medium transition-colors ${
+                exaggeration === 0 ? "bg-accent/30 text-accent" : "text-text-muted hover:text-text-primary"
               }`}
             >
-              Рельеф выкл.
+              {t.geo.hud.terrainOff}
             </button>
           </div>
         </div>
 
         <div className="sm:col-span-2">
-          <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
-            Глобальное потепление: +{temperatureAnomaly.toFixed(1)}°C
+          <label className="mb-1 block font-mono text-ds-caption uppercase tracking-widest text-text-muted">
+            {t.geo.hud.warmingLabel.replace("{value}", temperatureAnomaly.toFixed(1))}
           </label>
           <input
             type="range"
@@ -675,72 +675,68 @@ export default function GeoWorldScene({ simulation }: GeoWorldSceneProps) {
             step={0.5}
             value={temperatureAnomaly}
             onChange={(e) => handleTemperatureChange(Number(e.target.value))}
-            className="w-full accent-neon-cyan"
+            className="w-full accent-accent-geo"
           />
         </div>
 
         {climateResult && (
           <div
-            className={`rim-light rounded-xl border p-3 text-sm sm:col-span-2 ${
-              climateResult.triggered
-                ? "border-amber-500/40 bg-amber-950/30 text-amber-200"
-                : "border-glass-border bg-surface-container-lowest/60 text-slate-300"
+            className={`rounded-ds-panel border p-3 text-ds-body sm:col-span-2 ${
+              climateResult.triggered ? "border-warning/40 bg-warning/10 text-warning" : "border-border/[0.1] bg-surface-elevated text-text-secondary"
             }`}
           >
             {climateResult.triggered && (
-              <p className="font-headline font-semibold">
+              <p className="font-semibold">
                 ⚠ {climateResult.phenomenon} — {climateResult.location}
               </p>
             )}
-            <p className={climateResult.triggered ? "text-amber-300/90" : "text-slate-400"}>
-              {climateResult.description}
-            </p>
+            <p className={climateResult.triggered ? "text-warning/90" : "text-text-muted"}>{climateResult.description}</p>
           </div>
         )}
 
-        <div className="rim-light rounded-xl border border-glass-border bg-surface-container-lowest/60 p-3 text-sm text-slate-300 sm:col-span-2">
-          {isLoadingLayer && <p className="text-slate-400">Загружаем данные...</p>}
+        <div className="rounded-ds-panel border border-border/[0.1] bg-surface-elevated p-3 text-ds-body text-text-secondary sm:col-span-2">
+          {isLoadingLayer && <p className="text-text-muted">{t.geo.hud.loadingData}</p>}
           {!isLoadingLayer && selectedContinent && (
             <>
-              <p className="font-headline font-semibold text-slate-100">{selectedContinent.name}</p>
-              <p className="text-slate-400">
-                Площадь: {selectedContinent.area_million_km2} млн км² · Население:{" "}
-                {selectedContinent.population_millions} млн чел.
+              <p className="font-semibold text-text-primary">{selectedContinent.name}</p>
+              <p className="text-text-muted">
+                {t.geo.hud.areaPopulationLabel
+                  .replace("{area}", String(selectedContinent.area_million_km2))
+                  .replace("{population}", String(selectedContinent.population_millions))}
               </p>
-              <p className="text-slate-400">{selectedContinent.fact}</p>
+              <p className="text-text-muted">{selectedContinent.fact}</p>
             </>
           )}
           {!isLoadingLayer && !selectedContinent && selectedLayer && (
             <>
-              <p className="font-headline font-semibold text-slate-100">{selectedLayer.name}</p>
-              <p className="text-slate-400">
-                Глубина: {selectedLayer.depth_km} км · Температура: {selectedLayer.temperature_c}°C
+              <p className="font-semibold text-text-primary">{selectedLayer.name}</p>
+              <p className="text-text-muted">
+                {t.geo.hud.depthTemperatureLabel
+                  .replace("{depth}", String(selectedLayer.depth_km))
+                  .replace("{temp}", String(selectedLayer.temperature_c))}
               </p>
-              <p className="text-slate-400">
-                Состояние: {selectedLayer.state} · Состав: {selectedLayer.composition}
+              <p className="text-text-muted">
+                {t.geo.hud.stateCompositionLabel.replace("{state}", selectedLayer.state).replace("{composition}", selectedLayer.composition)}
               </p>
             </>
           )}
-          {!isLoadingLayer && !selectedContinent && !selectedLayer && (
-            <p className="text-slate-400">
-              Кликни по поверхности Земли, чтобы узнать о континенте, а затем включи разрез слоев — так откроется
-              доступ к мантии и ядру.
-            </p>
-          )}
+          {!isLoadingLayer && !selectedContinent && !selectedLayer && <p className="text-text-muted">{t.geo.hud.clickPrompt}</p>}
         </div>
 
-        {error && <p className="text-sm text-red-400 sm:col-span-2">{error}</p>}
+        {error && <p className="text-ds-body text-danger sm:col-span-2">{error}</p>}
 
         <div className="flex items-center gap-3 sm:col-span-2">
           <button
             onClick={handleComplete}
             disabled={actionsLog.length === 0}
-            className="rounded-full border border-glass-border px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/5 disabled:opacity-50"
+            className="ds-focus-ring rounded-full border border-border/[0.12] px-4 py-2 text-ds-body font-medium text-text-primary transition-colors hover:bg-text-primary/5 disabled:opacity-50"
           >
-            Завершить попытку
+            {t.geo.hud.completeAttempt}
           </button>
           {completionScore !== null && (
-            <span className="font-mono text-sm font-medium text-slate-100">Оценка: {completionScore}/100</span>
+            <span className="font-mono text-ds-body font-medium text-text-primary">
+              {t.geo.hud.scoreLabel.replace("{score}", String(completionScore))}
+            </span>
           )}
         </div>
       </div>

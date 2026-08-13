@@ -74,7 +74,7 @@ export default function GuidedLabPanel() {
 
       <div className="mb-3 flex items-center justify-between">
         <div>
-          <h3 className="font-headline text-base font-semibold text-text-primary">{selectedExperiment.title}</h3>
+          <h3 className="text-ds-title text-text-primary">{selectedExperiment.title}</h3>
           <p className="font-mono text-ds-caption uppercase tracking-widest text-text-muted" data-testid="guided-lab-progress-label">
             {g.stepCounter.replace("{current}", String(currentStepIndex + 1)).replace("{total}", String(totalSteps))}
           </p>
@@ -117,7 +117,7 @@ export default function GuidedLabPanel() {
       {modeConfig.showSafetyReminders && selectedExperiment.safetyNotes.length > 0 && (
         <div className="mb-3 rounded-ds-control border border-warning/40 bg-warning/10 p-3 text-ds-body text-warning" data-testid="guided-lab-safety">
           <div className="mb-1 flex items-center gap-1 font-medium">
-            <AlertTriangle size={14} /> {g.safetyHeading}
+            <AlertTriangle size={14} aria-hidden="true" /> {g.safetyHeading}
           </div>
           <ul className="space-y-0.5">
             {selectedExperiment.safetyNotes.map((n) => (
@@ -139,9 +139,9 @@ export default function GuidedLabPanel() {
           data-testid="guided-lab-current-step"
         >
           {isIntroStep ? (
-            <Target size={14} className="mr-1.5 inline text-accent-geo" />
+            <Target size={14} className="mr-1.5 inline text-accent-geo" aria-hidden="true" />
           ) : isStepDone && modeConfig.showStepHighlighting ? (
-            <CheckCircle2 size={14} className="mr-1.5 inline text-success" />
+            <CheckCircle2 size={14} className="mr-1.5 inline text-success" aria-hidden="true" />
           ) : null}
           {currentStep.instruction}
         </div>

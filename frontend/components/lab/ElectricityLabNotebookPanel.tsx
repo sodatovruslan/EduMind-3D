@@ -25,11 +25,11 @@ export default function ElectricityLabNotebookPanel() {
 
   return (
     <div className="rounded-ds-panel border border-border/[0.08] bg-surface p-4" data-testid="electricity-lab-notebook-panel">
-      <h3 className="mb-3 flex items-center gap-2 font-headline text-lg font-semibold text-text-primary">
+      <h3 className="mb-3 flex items-center gap-2 text-ds-title text-text-primary">
         <BookOpen size={18} /> {n.heading}
       </h3>
 
-      {notebookEntries.length === 0 && <p className="text-sm text-text-muted">{n.empty}</p>}
+      {notebookEntries.length === 0 && <p className="text-ds-body text-text-muted">{n.empty}</p>}
 
       <ul className="space-y-2">
         {notebookEntries.map((entry) => {
@@ -45,15 +45,15 @@ export default function ElectricityLabNotebookPanel() {
                 className="ds-focus-ring flex w-full items-center justify-between gap-2 p-3 text-left"
               >
                 <div>
-                  <div className="text-sm font-medium text-text-primary">{entry.experimentTitle}</div>
-                  <div className="font-mono text-[10px] uppercase tracking-widest text-text-muted">
+                  <div className="text-ds-body font-medium text-text-primary">{entry.experimentTitle}</div>
+                  <div className="font-mono text-ds-caption uppercase tracking-widest text-text-muted">
                     {new Date(entry.dateIso).toLocaleString(INTL_LOCALE_TAG[locale])} · {entry.score}/100
                   </div>
                 </div>
                 {expanded ? <ChevronUp size={16} className="shrink-0 text-text-secondary" /> : <ChevronDown size={16} className="shrink-0 text-text-secondary" />}
               </button>
               {expanded && (
-                <div id={`electricity-notebook-entry-${entry.id}-details`} className="space-y-2 border-t border-border/[0.08] p-3 text-sm text-text-secondary">
+                <div id={`electricity-notebook-entry-${entry.id}-details`} className="space-y-2 border-t border-border/[0.08] p-3 text-ds-body text-text-secondary">
                   <div>
                     <span className="text-text-muted">{n.goalLabel}</span> {entry.objective}
                   </div>
@@ -78,7 +78,7 @@ export default function ElectricityLabNotebookPanel() {
                   )}
                   {/* Stage S9.6 — Teacher Analytics: реальные счётчики попытки,
                       те же данные, что и в детальном отчёте (ElectricityLabReportPanel) */}
-                  <div className="font-mono text-xs text-text-muted" data-testid={`electricity-notebook-entry-${entry.id}-evidence`}>
+                  <div className="font-mono text-ds-caption text-text-muted" data-testid={`electricity-notebook-entry-${entry.id}-evidence`}>
                     {n.hintsLabel} {entry.hintsUsed} · {n.mistakesLabel} {entry.mistakesCount} · {n.safetyIncidentsLabel} {entry.safetyIncidentsCount}
                     {entry.durationMs !== null && ` · ${n.durationLabel.replace("{seconds}", String(Math.round(entry.durationMs / 1000)))}`}
                   </div>

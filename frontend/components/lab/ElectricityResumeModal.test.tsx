@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import ElectricityResumeModal from "./ElectricityResumeModal";
 import type { ElectricitySaveSnapshotV1 } from "@/lib/electricity-save-schema";
 import { LocaleProvider } from "@/lib/locale-context";
+import { ru } from "@/lib/i18n/dictionaries/ru";
 
 afterEach(cleanup);
 
@@ -52,9 +53,19 @@ function sampleSnapshot(overrides: Partial<ElectricitySaveSnapshotV1> = {}): Ele
 }
 
 describe("ElectricityResumeModal — Stage S9.7 UI", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("рендерит название работы, номер шага (currentStepIndex+1) и ревизию", () => {
     renderModal(
-      <ElectricityResumeModal experimentTitle="Измерение тока" snapshot={sampleSnapshot()} onContinue={() => {}} onStartOver={() => {}} />
+      <ElectricityResumeModal
+        experimentTitle="Измерение тока"
+        snapshot={sampleSnapshot()}
+        onContinue={() => {}}
+        onStartOver={() => {}}
+        onCancel={() => {}}
+      />
     );
     expect(screen.getByTestId("electricity-resume-modal")).toBeTruthy();
     expect(screen.getByText("Измерение тока")).toBeTruthy();
@@ -62,18 +73,75 @@ describe("ElectricityResumeModal — Stage S9.7 UI", () => {
     expect(screen.getByText("#4")).toBeTruthy();
   });
 
-  it("Продолжить вызывает onContinue, Начать заново вызывает onStartOver", () => {
+  it("Продолжить вызывает onContinue", () => {
     const onContinue = vi.fn();
-    const onStartOver = vi.fn();
     renderModal(
-      <ElectricityResumeModal experimentTitle="Измерение тока" snapshot={sampleSnapshot()} onContinue={onContinue} onStartOver={onStartOver} />
+      <ElectricityResumeModal
+        experimentTitle="Измерение тока"
+        snapshot={sampleSnapshot()}
+        onContinue={onContinue}
+        onStartOver={vi.fn()}
+        onCancel={vi.fn()}
+      />
     );
 
     fireEvent.click(screen.getByTestId("electricity-resume-continue"));
     expect(onContinue).toHaveBeenCalledTimes(1);
-    expect(onStartOver).not.toHaveBeenCalled();
+  });
+
+  it("D10: Начать заново calls onStartOver only after a destructive confirmation is accepted", () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const onStartOver = vi.fn();
+    renderModal(
+      <ElectricityResumeModal
+        experimentTitle="Измерение тока"
+        snapshot={sampleSnapshot()}
+        onContinue={vi.fn()}
+        onStartOver={onStartOver}
+        onCancel={vi.fn()}
+      />
+    );
 
     fireEvent.click(screen.getByTestId("electricity-resume-restart"));
+    expect(window.confirm).toHaveBeenCalledWith(ru.electricity.resume.restartConfirm);
     expect(onStartOver).toHaveBeenCalledTimes(1);
+  });
+
+  it("D10: declining the destructive confirmation does NOT discard the save", () => {
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const onStartOver = vi.fn();
+    renderModal(
+      <ElectricityResumeModal
+        experimentTitle="Измерение тока"
+        snapshot={sampleSnapshot()}
+        onContinue={vi.fn()}
+        onStartOver={onStartOver}
+        onCancel={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId("electricity-resume-restart"));
+    expect(onStartOver).not.toHaveBeenCalled();
+  });
+
+  it("D10: has a real Cancel action (close X and Cancel button), unifying with Chemistry's resume modal — does not discard the save", () => {
+    const onCancel = vi.fn();
+    const onStartOver = vi.fn();
+    renderModal(
+      <ElectricityResumeModal
+        experimentTitle="Измерение тока"
+        snapshot={sampleSnapshot()}
+        onContinue={vi.fn()}
+        onStartOver={onStartOver}
+        onCancel={onCancel}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId("electricity-resume-cancel"));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onStartOver).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("electricity-resume-close"));
+    expect(onCancel).toHaveBeenCalledTimes(2);
   });
 });

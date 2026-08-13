@@ -45,7 +45,7 @@ export default function ElectricityExperimentCatalogBrowser() {
 
   return (
     <div className="rounded-ds-panel border border-border/[0.08] bg-surface p-4" data-testid="electricity-experiment-catalog-browser">
-      <h3 className="mb-3 font-headline text-lg font-semibold text-text-primary">{c.heading}</h3>
+      <h3 className="mb-3 text-ds-title text-text-primary">{c.heading}</h3>
 
       <div className="mb-4 flex flex-col gap-2 sm:flex-row">
         <label className="relative flex-1">
@@ -101,7 +101,7 @@ export default function ElectricityExperimentCatalogBrowser() {
                   <span className="font-medium text-text-primary">{exp.title}</span>
                   {!unlocked && <Lock size={14} className="shrink-0 text-text-muted" aria-label={c.lockedAria} />}
                 </div>
-                <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-text-muted">
+                <div className="flex items-center gap-2 font-mono text-ds-caption uppercase tracking-widest text-text-muted">
                   <span>{DIFFICULTY_LABEL[exp.difficulty]}</span>
                   <span>·</span>
                   <span>{exp.estimatedMinutes} {c.minutesSuffix}</span>
@@ -109,12 +109,12 @@ export default function ElectricityExperimentCatalogBrowser() {
                   <span>{exp.xpReward} {c.xpSuffix}</span>
                   {completed && <span className="text-success">· {c.completedSuffix}</span>}
                 </div>
-                <p className="text-xs text-text-secondary">{exp.description}</p>
+                <p className="text-ds-caption text-text-secondary">{exp.description}</p>
                 {!unlocked && UNLOCK_HINT[exp.difficulty] && (
-                  <p className="mt-1 text-[11px] italic text-text-muted">{UNLOCK_HINT[exp.difficulty]}</p>
+                  <p className="mt-1 text-ds-caption italic text-text-muted">{UNLOCK_HINT[exp.difficulty]}</p>
                 )}
                 {best !== null && (
-                  <div className="mt-1 font-mono text-[10px] text-accent">
+                  <div className="mt-1 font-mono text-ds-caption text-accent">
                     {c.bestScore.replace("{best}", String(best)).replace("{attempts}", String(attempts))}
                   </div>
                 )}
@@ -122,7 +122,7 @@ export default function ElectricityExperimentCatalogBrowser() {
             </li>
           );
         })}
-        {results.length === 0 && <li className="text-sm text-text-muted sm:col-span-2">{c.empty}</li>}
+        {results.length === 0 && <li className="text-ds-body text-text-muted sm:col-span-2">{c.empty}</li>}
       </ul>
     </div>
   );

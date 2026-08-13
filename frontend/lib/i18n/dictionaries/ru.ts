@@ -375,6 +375,7 @@ export const ru = {
       revisionLabel: "Ревизия:",
       cancelButton: "Отмена",
       restartButton: "Начать заново",
+      restartConfirm: "Начать заново? Текущий сохранённый прогресс будет потерян.",
       continueButton: "Продолжить",
     },
     tutorial: {
@@ -542,7 +543,9 @@ export const ru = {
       progressLabel: "Прогресс:",
       stepValue: "Шаг {step}",
       revisionLabel: "Ревизия:",
+      cancelButton: "Позже",
       restartButton: "Начать заново",
+      restartConfirm: "Начать заново? Текущий сохранённый прогресс будет потерян.",
       continueButton: "Продолжить",
     },
     tutorial: {
@@ -570,6 +573,26 @@ export const ru = {
     controlsLook: "Обзор мышью",
     controlsMode: "Режим камеры",
   },
+  geo: {
+    hud: {
+      hideCutaway: "Скрыть разрез слоёв",
+      showCutaway: "Показать разрез слоёв",
+      hideTileDebug: "Скрыть Tile/LOD debug",
+      showTileDebug: "Показать Tile/LOD debug",
+      tileDebugTitle: "Debug-визуализация тайлового движка и уровня детализации",
+      exaggerationTitle: "Визуальная экзагерация рельефа — множитель поверх реальных данных высот, не подменяет их",
+      terrainOff: "Рельеф выкл.",
+      warmingLabel: "Глобальное потепление: +{value}°C",
+      loadingData: "Загружаем данные...",
+      clickPrompt:
+        "Кликни по поверхности Земли, чтобы узнать о континенте, а затем включи разрез слоёв — так откроется доступ к мантии и ядру.",
+      areaPopulationLabel: "Площадь: {area} млн км² · Население: {population} млн чел.",
+      depthTemperatureLabel: "Глубина: {depth} км · Температура: {temp}°C",
+      stateCompositionLabel: "Состояние: {state} · Состав: {composition}",
+      completeAttempt: "Завершить попытку",
+      scoreLabel: "Оценка: {score}/100",
+    },
+  },
   simulation: {
     back: "Назад",
     notFound: "Симуляция не найдена.",
@@ -579,6 +602,19 @@ export const ru = {
       expand: "Открыть ИИ-наставника",
       collapse: "Свернуть ИИ-наставника",
     },
+  },
+  aiAssistant: {
+    trigger: "AI-лаборант",
+    expand: "Открыть AI-лаборанта",
+    collapse: "Свернуть AI-лаборанта",
+    header: "AI-лаборант",
+    greeting: "Спроси подсказку по текущему шагу — я подскажу, не выдавая прямой ответ.",
+    thinking: "Думаю...",
+    inputPlaceholder: "Спросить про текущий шаг...",
+    sendAria: "Отправить вопрос",
+    defaultQuestion: "Дай подсказку по текущему состоянию",
+    studentQuestionPrefix: "Вопрос ученика:",
+    unavailable: "AI-ассистент временно недоступен",
   },
   shell: {
     nav: {

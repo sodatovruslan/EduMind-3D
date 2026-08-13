@@ -377,6 +377,7 @@ export const en: typeof ru = {
       revisionLabel: "Revision:",
       cancelButton: "Cancel",
       restartButton: "Start over",
+      restartConfirm: "Start over? Your current saved progress will be lost.",
       continueButton: "Continue",
     },
     tutorial: {
@@ -544,7 +545,9 @@ export const en: typeof ru = {
       progressLabel: "Progress:",
       stepValue: "Step {step}",
       revisionLabel: "Revision:",
+      cancelButton: "Later",
       restartButton: "Start over",
+      restartConfirm: "Start over? Your current saved progress will be lost.",
       continueButton: "Continue",
     },
     tutorial: {
@@ -572,6 +575,25 @@ export const en: typeof ru = {
     controlsLook: "Look around",
     controlsMode: "Camera mode",
   },
+  geo: {
+    hud: {
+      hideCutaway: "Hide layer cutaway",
+      showCutaway: "Show layer cutaway",
+      hideTileDebug: "Hide Tile/LOD debug",
+      showTileDebug: "Show Tile/LOD debug",
+      tileDebugTitle: "Debug visualization of the tile engine and level of detail",
+      exaggerationTitle: "Visual terrain exaggeration — a multiplier on top of real elevation data, not a replacement for it",
+      terrainOff: "Terrain off",
+      warmingLabel: "Global warming: +{value}°C",
+      loadingData: "Loading data...",
+      clickPrompt: "Click on Earth's surface to learn about a continent, then enable the layer cutaway to reach the mantle and core.",
+      areaPopulationLabel: "Area: {area}M km² · Population: {population}M",
+      depthTemperatureLabel: "Depth: {depth} km · Temperature: {temp}°C",
+      stateCompositionLabel: "State: {state} · Composition: {composition}",
+      completeAttempt: "Complete attempt",
+      scoreLabel: "Score: {score}/100",
+    },
+  },
   simulation: {
     back: "Back",
     notFound: "Simulation not found.",
@@ -581,6 +603,19 @@ export const en: typeof ru = {
       expand: "Open AI Teacher",
       collapse: "Collapse AI Teacher",
     },
+  },
+  aiAssistant: {
+    trigger: "AI Lab Assistant",
+    expand: "Open AI Lab Assistant",
+    collapse: "Collapse AI Lab Assistant",
+    header: "AI Lab Assistant",
+    greeting: "Ask for a hint about the current step — I'll nudge you without giving the answer away.",
+    thinking: "Thinking...",
+    inputPlaceholder: "Ask about the current step...",
+    sendAria: "Send question",
+    defaultQuestion: "Give me a hint about the current state",
+    studentQuestionPrefix: "Student's question:",
+    unavailable: "AI assistant is temporarily unavailable",
   },
   shell: {
     nav: {
