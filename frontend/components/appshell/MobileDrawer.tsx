@@ -8,7 +8,9 @@ import { Box, LogOut, User as UserIcon, X } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { useLocale } from "@/lib/locale-context";
 import { getNavItems, isNavItemActive } from "@/lib/appshell-nav";
+import { useUnreadMessagesCount } from "@/lib/useUnreadMessagesCount";
 import { LocaleSwitcher, Surface, ThemeToggle } from "@/components/design-system";
+import UnreadBadge from "@/components/messaging/UnreadBadge";
 
 /**
  * D4 — mobile navigation (drawer/sheet pattern, not a shrunk desktop rail,
@@ -24,6 +26,7 @@ export default function MobileDrawer({ open, onClose }: { open: boolean; onClose
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const items = getNavItems(user?.role);
+  const unreadCount = useUnreadMessagesCount();
 
   useEffect(() => {
     if (!open) return;
@@ -124,7 +127,10 @@ export default function MobileDrawer({ open, onClose }: { open: boolean; onClose
                       }`}
                     >
                       <Icon size={20} />
-                      {t.shell.nav[key]}
+                      <span className="flex flex-1 items-center justify-between gap-2">
+                        {t.shell.nav[key]}
+                        {key === "messages" && <UnreadBadge count={unreadCount} />}
+                      </span>
                     </Link>
                   );
                 })}

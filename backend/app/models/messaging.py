@@ -57,6 +57,19 @@ class Message(Base):
     sender_id = Column(String(36), ForeignKey("users.id"), nullable=False)
     content = Column(String(MESSAGE_MAX_LENGTH), nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    # T6 — status is derived from these timestamps, not a separate enum:
+    # sent = created_at (always set); delivered = delivered_at is not null;
+    # read = read_at is not null. delivered_at is set either when the
+    # recipient had a live WebSocket connection at send time (see
+    # ws_manager.ConnectionManager.has_connection_for_user) or when they
+    # later fetch this message via REST history (messaging_service.
+    # mark_delivered_via_history) — both are real, provable delivery
+    # signals, never assumed. read_at is only ever set by the explicit
+    # mark-read action (messaging_service.mark_read), which also backfills
+    # delivered_at if it was somehow still null, keeping "read implies
+    # delivered" true as actual DB state, not just a computed rule.
+    delivered_at = Column(DateTime, nullable=True)
+    read_at = Column(DateTime, nullable=True)
 
     conversation = relationship("Conversation", back_populates="messages")
     sender = relationship("User")

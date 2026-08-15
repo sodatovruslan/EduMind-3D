@@ -642,6 +642,18 @@ export const tg: typeof ru = {
     teacherLabel: "Муаллим",
     studentLabel: "Хонанда",
     messageTooLong: "Паём хеле дароз аст",
+    statusSent: "Фиристода шуд",
+    statusDelivered: "Расонида шуд",
+    statusRead: "Хонда шуд",
+    online: "Онлайн",
+    lastSeenAt: (relative: string) => `Дар шабака буд: ${relative}`,
+    justNow: "ҳозир",
+    minutesAgo: (n: number) => `${n} дақиқа пеш`,
+    hoursAgo: (n: number) => `${n} соат пеш`,
+    yesterday: "Дирӯз",
+    today: "Имрӯз",
+    typingIndicator: (name: string) => `${name} менависад...`,
+    unreadBadgeLabel: (n: number) => `${n} паёми хонданашуда`,
   },
   shell: {
     nav: {

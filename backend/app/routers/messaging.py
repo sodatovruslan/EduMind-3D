@@ -16,7 +16,15 @@ from app.database import get_db
 from app.models.classroom import ClassMembership, Classroom
 from app.models.messaging import Conversation
 from app.models.user import User, UserRole
-from app.schemas.messaging import ConversationCreate, ConversationParticipant, ConversationRead, MessageCreate, MessagePage, MessageRead
+from app.schemas.messaging import (
+    ConversationCreate,
+    ConversationParticipant,
+    ConversationRead,
+    MarkReadResult,
+    MessageCreate,
+    MessagePage,
+    MessageRead,
+)
 from app.services import messaging_service
 
 router = APIRouter(prefix="/api/conversations", tags=["messaging"])
@@ -59,7 +67,20 @@ async def list_conversations(db: AsyncSession = Depends(get_db), current_user: U
     if current_user.role not in (UserRole.STUDENT, UserRole.TEACHER):
         return []
     conversations = await messaging_service.list_conversations_for_user(db, current_user)
-    return [messaging_service.conversation_to_read(c, current_user.id) for c in conversations]
+    ids = [c.id for c in conversations]
+    # Both single queries covering every conversation in the list — no
+    # per-conversation round trip (brief's explicit no-N+1 requirement).
+    unread_counts = await messaging_service.get_unread_counts(db, current_user.id, ids)
+    last_messages = await messaging_service.get_last_messages(db, ids)
+    return [
+        messaging_service.conversation_to_read(
+            c,
+            current_user.id,
+            unread_count=unread_counts.get(c.id, 0),
+            last_message=last_messages.get(c.id),
+        )
+        for c in conversations
+    ]
 
 
 @router.get("/counterparts", response_model=list[ConversationParticipant])
@@ -110,7 +131,14 @@ async def get_conversation(
     conversation_id: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
     conversation = await _get_authorized_conversation(db, current_user, conversation_id)
-    return messaging_service.conversation_to_read(conversation, current_user.id)
+    unread_counts = await messaging_service.get_unread_counts(db, current_user.id, [conversation.id])
+    last_messages = await messaging_service.get_last_messages(db, [conversation.id])
+    return messaging_service.conversation_to_read(
+        conversation,
+        current_user.id,
+        unread_count=unread_counts.get(conversation.id, 0),
+        last_message=last_messages.get(conversation.id),
+    )
 
 
 @router.get("/{conversation_id}/messages", response_model=MessagePage)
@@ -122,8 +150,27 @@ async def get_messages(
     current_user: User = Depends(get_current_user),
 ):
     await _get_authorized_conversation(db, current_user, conversation_id)
+    # Offline-delivery semantics (brief §21): fetching history is itself a
+    # real, provable delivery signal for any of the counterpart's messages
+    # that hadn't reached a live connection yet — see messaging_service.
+    # mark_delivered_via_history's own docstring. Applied before the page
+    # is read back so the response already reflects it.
+    await messaging_service.mark_delivered_via_history(db, conversation_id, current_user.id)
     messages, has_more = await messaging_service.list_messages(db, conversation_id, before, limit)
     return MessagePage(messages=[MessageRead.model_validate(m) for m in messages], has_more=has_more)
+
+
+@router.post("/{conversation_id}/read", response_model=MarkReadResult)
+async def mark_conversation_read(
+    conversation_id: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)
+):
+    """The explicit, bounded mark-read action — never implied merely by
+    being online or connected (brief §5/§25). The frontend calls this only
+    when the conversation is actually visible and scrolled to the bottom
+    (see ConversationView's read-on-open logic)."""
+    conversation = await _get_authorized_conversation(db, current_user, conversation_id)
+    ids = await messaging_service.mark_read(db, conversation, current_user.id)
+    return MarkReadResult(message_ids=ids)
 
 
 @router.post("/{conversation_id}/messages", response_model=MessageRead, status_code=status.HTTP_201_CREATED)

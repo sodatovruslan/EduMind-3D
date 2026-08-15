@@ -6,9 +6,11 @@ import { MessageCircle, Plus } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { useLocale } from "@/lib/locale-context";
 import { listConversations, listCounterparts, openConversation } from "@/lib/messaging-client";
-import { INTL_LOCALE_TAG } from "@/lib/i18n/locales";
+import { formatRelativeTime } from "@/lib/messaging-time";
 import { Button, Skeleton, Surface } from "@/components/design-system";
 import NewConversationPicker from "./NewConversationPicker";
+import UnreadBadge from "./UnreadBadge";
+import MessageStatusTicks from "./MessageStatusTicks";
 
 /**
  * T5 — real conversations only (`GET /api/conversations`, classroom-scoped
@@ -84,14 +86,28 @@ export default function ConversationList({
                   }`}
                 >
                   <span className="flex items-center justify-between gap-2">
-                    <span className="truncate text-ds-body font-medium text-text-primary">{c.counterpart.full_name}</span>
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="truncate text-ds-body font-medium text-text-primary">{c.counterpart.full_name}</span>
+                      {c.counterpart.online && (
+                        <span
+                          role="img"
+                          aria-label={t.messaging.online}
+                          title={t.messaging.online}
+                          className="h-1.5 w-1.5 shrink-0 rounded-full bg-success"
+                        />
+                      )}
+                    </span>
                     {c.last_message_at && (
-                      <span className="shrink-0 text-ds-caption text-text-muted">
-                        {new Date(c.last_message_at).toLocaleDateString(INTL_LOCALE_TAG[locale])}
-                      </span>
+                      <span className="shrink-0 text-ds-caption text-text-muted">{formatRelativeTime(c.last_message_at, locale, t)}</span>
                     )}
                   </span>
-                  <span className="truncate text-ds-caption text-text-muted">{c.last_message_preview ?? t.messaging.noMessagesTitle}</span>
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-1 truncate text-ds-caption text-text-muted">
+                      {c.last_message_own_status && <MessageStatusTicks status={c.last_message_own_status} className="shrink-0" />}
+                      <span className="truncate">{c.last_message_preview ?? t.messaging.noMessagesTitle}</span>
+                    </span>
+                    <UnreadBadge count={c.unread_count} />
+                  </span>
                 </button>
               </li>
             ))}

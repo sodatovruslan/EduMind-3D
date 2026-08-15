@@ -593,6 +593,12 @@ export const en: typeof ru = {
       completeAttempt: "Complete attempt",
       scoreLabel: "Score: {score}/100",
     },
+    maplibre: {
+      loading: "Loading map...",
+      error: "Map initialization error: {message}",
+      experimentalNotice:
+        "Experimental MapLibre renderer for GeoWorld. Educational content (layer cutaway, climate scenario, attempt scoring) is still only available in the main renderer.",
+    },
   },
   simulation: {
     back: "Back",
@@ -642,6 +648,18 @@ export const en: typeof ru = {
     teacherLabel: "Teacher",
     studentLabel: "Student",
     messageTooLong: "Message is too long",
+    statusSent: "Sent",
+    statusDelivered: "Delivered",
+    statusRead: "Read",
+    online: "Online",
+    lastSeenAt: (relative: string) => `Last seen ${relative}`,
+    justNow: "just now",
+    minutesAgo: (n: number) => `${n} min ago`,
+    hoursAgo: (n: number) => `${n} h ago`,
+    yesterday: "Yesterday",
+    today: "Today",
+    typingIndicator: (name: string) => `${name} is typing...`,
+    unreadBadgeLabel: (n: number) => `${n} unread message${n === 1 ? "" : "s"}`,
   },
   shell: {
     nav: {

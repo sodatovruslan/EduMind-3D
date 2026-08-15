@@ -1,6 +1,19 @@
 // Русский — исходный (эталонный) словарь. Его структура (typeof ru) задает
 // тип Dictionary — en.ts/tg.ts типизируются от него, поэтому пропущенный
 // ключ в переводе — ошибка компиляции, а не молчаливый пробел в UI.
+
+// T6 — русское склонение числительных (1 минуту / 2 минуты / 5 минут) для
+// relative-time и unread-badge строк. Используется только здесь — en/tg
+// используют неизменяемую форму, т.к. в этих языках нет того же трёхвариантного
+// склонения.
+function pluralRu(n: number, one: string, few: string, many: string): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
+  return many;
+}
+
 export const ru = {
   common: {
     getStarted: "Начать",
@@ -592,6 +605,12 @@ export const ru = {
       completeAttempt: "Завершить попытку",
       scoreLabel: "Оценка: {score}/100",
     },
+    maplibre: {
+      loading: "Загрузка карты...",
+      error: "Ошибка инициализации карты: {message}",
+      experimentalNotice:
+        "Экспериментальный MapLibre-рендерер GeoWorld. Образовательный контент (разрез слоёв, климатический сценарий, оценка попытки) пока доступен только в основном рендерере.",
+    },
   },
   simulation: {
     back: "Назад",
@@ -641,6 +660,18 @@ export const ru = {
     teacherLabel: "Учитель",
     studentLabel: "Ученик",
     messageTooLong: "Сообщение слишком длинное",
+    statusSent: "Отправлено",
+    statusDelivered: "Доставлено",
+    statusRead: "Прочитано",
+    online: "В сети",
+    lastSeenAt: (relative: string) => `Был(а) в сети ${relative}`,
+    justNow: "только что",
+    minutesAgo: (n: number) => `${n} ${pluralRu(n, "минуту", "минуты", "минут")} назад`,
+    hoursAgo: (n: number) => `${n} ${pluralRu(n, "час", "часа", "часов")} назад`,
+    yesterday: "Вчера",
+    today: "Сегодня",
+    typingIndicator: (name: string) => `${name} печатает...`,
+    unreadBadgeLabel: (n: number) => `${n} ${pluralRu(n, "непрочитанное сообщение", "непрочитанных сообщения", "непрочитанных сообщений")}`,
   },
   shell: {
     nav: {

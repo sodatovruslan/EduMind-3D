@@ -2557,3 +2557,60 @@ Student может открыть беседу только с teacher-влад�
 
 ### Статус на конец продолжения №40
 **T5 (Student ↔ Teacher Real-Time Messaging Foundation) — завершён, код верифицирован (backend+frontend suites зелёные), архитектура готова как фундамент для T6+.** GeoWorld/Design/Teacher-Classroom-management (T2/T3) не тронуты. Известное последствие для интеграции: миграция `f1a2b3c4d5e6` создаёт второй Alembic head параллельно с perf-миграцией `0f12aa5fce35` — потребуется `alembic merge heads` при объединении веток. T6 не начат — ждёт ручной проверки владельцем продукта в браузере.
+
+## Обновление 2026-08-14 (продолжение №41) — T6: Presence + Delivery/Read Receipts + Last Seen
+
+### Задача
+T5 одобрен вручную владельцем продукта в браузере (Student→Teacher, Teacher→Student, realtime без reload, история сохраняется после reload). T6 доводит messaging до уровня современного мессенджера ФУНКЦИОНАЛЬНО (не визуально — Design V2 заморожен с D10, никакого редизайна): ✓/✓✓/READ статусы, online/last seen присутствие, typing indicator, реальные unread-счётчики, date separators, human-friendly relative time.
+
+### Alembic heads перед стартом (критическая проверка по брифу)
+`git status`/`alembic heads` подтвердили: `0f12aa5fce35` (perf-сессия) **всё ещё uncommitted** — только файл в рабочем дереве, никогда не применён к dev-БД. `alembic current` подтвердил, что реальная dev Postgres стоит на `f1a2b3c4d5e6` (мой собственный T5 head). По явному правилу брифа ("uncommitted чужая миграция → не гадать, не мержить") новая T6-миграция `a7c9e1f2b3d4_add_message_status_and_presence.py` создана от `f1a2b3c4d5e6`, НЕ от perf-миграции. Это воссоздаёт двух-headed ситуацию, уже предвиденную и задокументированную в T5-записи выше — ожидаемо, не ошибка.
+
+### Модель статуса — без отдельного enum
+`Message.delivered_at`/`Message.read_at` (оба `DateTime | None`) вместо enum + timestamp дублирования: sent = `created_at` всегда есть; delivered = `delivered_at is not None`; read = `read_at is not None`. "read влечёт delivered" — реальный факт в БД, не только вычисляемое правило: `mark_read` бэкфиллит `delivered_at`, если он почему-то ещё пуст, в том же UPDATE.
+
+### Delivered semantics
+Устанавливается в момент отправки, если у получателя ЕСТЬ живое WS-соединение на этой беседе прямо сейчас (`ConnectionManager.has_connection_for_user`, новый метод — сокеты теперь хранят user_id) — проверка синхронная, broadcast идёт сразу следом в той же корутине. Если получатель офлайн — сообщение остаётся `sent`; при следующем REST-запросе истории получателем (`GET .../messages`) offline-бэклог помечается delivered (`mark_delivered_via_history`) — задокументированная brief-разрешённая семантика, никогда не read.
+
+### Read semantics — explicit action, не presence
+`POST /api/conversations/{id}/read` — bulk UPDATE (не цикл по сообщениям), помечает read_at на всех сообщениях НЕ от текущего пользователя. Никогда не вызывается просто по факту онлайн/подключения. Frontend вызывает его только когда conversation реально видима (`document.visibilityState === "visible"`) И прочитано до низа истории (`shouldStickToBottom`).
+
+### Unread count и last-message own-status — без N+1
+`get_unread_counts` (одна GROUP BY на весь список бесед) и `get_last_messages` (одна window-function query `ROW_NUMBER() OVER (PARTITION BY conversation_id ...)` вместо denormalизации на Conversation или подзапроса на беседу) — оба переиспользуются и в списке, и в одиночном GET.
+
+### Presence — по пользователю, не по беседе
+Новый `PresenceManager` в `ws_manager.py`: online = у пользователя есть ХОТЯ БЫ ОДНО открытое соединение где угодно (не привязано к conversation_id — второй таб на ДРУГОЙ беседе не путает статус). `User.last_seen_at` пишется **только** на переход последнего соединения в закрытое состояние (`went_offline`), никогда по таймеру и никогда на каждое открытие — переживает рестарт бэкенда честно (persisted в Postgres).
+
+### Реальная гонка найдена и исправлена (не тривиальная)
+Первая попытка (`asyncio.shield`) НЕ решила проблему полностью — реальная причина: Starlette `TestClient`'s `WebSocketTestSession.__exit__` шлёт disconnect-сообщение и ПОЧТИ ОДНОВРЕМЕННО отменяет task, гоняющий ASGI-обработчик, через `cancel_scope.cancel()`. После отмены КАЖДЫЙ следующий `await` в том же task немедленно поднимает `CancelledError` — это ломало commit последней записи `last_seen_at` на середине транзакции, оставляя общее SQLite-соединение теста в невалидном состоянии (тест-инфраструктурная проблема, не продовая — в проде каждое WS-соединение получает свою собственную сессию). Исправлено `Task.uncancel()` (Python 3.11+) — снимает один pending cancellation request перед финальной записью, плюс отдельная, независимая сессия через новый DI-провайдер `get_session_factory()` (не переиспользует request-scoped `db`, у которого может быть параллельно завершающийся жизненный цикл). Итог: WS-тесты стабильны на 2 полных прогонах подряд.
+
+### Typing indicator — эфемерный, никогда не персистится
+Relay через тот же `/ws/conversations/{id}` сокет: клиент шлёт `{"type": "typing:start"}`/`"typing:stop"`, сервер ретранслирует ДРУГИМ соединениям на этой же беседе с id, которым сокет аутентифицировался (никогда не доверяя присланному в payload `user_id` — защита от спуфинга, покрыта тестом). Сервер не хранит "кто печатает" как состояние — фронтенд сам чистит индикатор таймаутом (6с), если stop-событие потерялось; composer шлёт start один раз и debounced stop через 3с бездействия, не на каждое нажатие клавиши.
+
+### Realtime-протокол (типизированный)
+`message` | `message:delivered` | `message:read` | `typing:start` | `typing:stop` | `presence:update` — структурированный union-тип на фронтенде (`ConversationSocketEvent`), не произвольный JSON. Reconnect sync: при переходе `disconnected → connected` фронтенд принудительно перезапрашивает REST (историю + conversation), не полагаясь на то, что все realtime-события долетели за время разрыва.
+
+### Frontend
+`lib/messaging-time.ts` (relative time + date separators, локальный calendar-day, не UTC), `components/messaging/{MessageStatusTicks,PresenceLabel,TypingIndicator,UnreadBadge}.tsx` — все из существующих Design V2 токенов (`bg-accent`, `rounded-full`, `text-ds-caption`, `bg-success`), никакого нового визуального языка. Unread-бейдж в `Rail`/`MobileDrawer` через `useUnreadMessagesCount` — расшарен с `ConversationList` через один и тот же SWR-ключ `"conversations"`, поэтому обновляется бесплатно при любой mutate() без отдельного polling. Полная a11y: у каждого чек-статуса `aria-label`+`title`, presence передаётся текстом (не только цветом), typing indicator — `aria-live="polite"`, обновляется только при реальной смене состояния (не на каждое сообщение).
+
+### RU/EN/TG
+Все новые ключи (`statusSent/Delivered/Read`, `online`, `lastSeenAt`, `justNow`, `minutesAgo`/`hoursAgo` — с корректным русским склонением 1/2-4/5+, `yesterday`, `today`, `typingIndicator`, `unreadBadgeLabel`) типизированы от `ru` — пропуск в EN/TG ловится компилятором. Изолированный `tsc` по трём файлам словарей запускался до и после мержа с параллельной GeoWorld-правкой того же файла (см. ниже).
+
+### Параллельная работа — реальный конфликт словаря, разрешён без потерь
+Во время сессии GeoWorld-сессия параллельно (и в реальном времени, файл менялся между двумя моими прочтениями) добавляла ключ `maplibre` в тот же `tg.ts`. Слияние сделано вручную построчно (два разных, не пересекающихся участка файла — geo-секция и messaging-секция), финальный коммит стейджит T6-хунк через `git hash-object`/`update-index` (минуя `git add -p`, недоступный в неинтерактивной сессии), не трогая незакоммиченный GeoWorld-хунк в рабочем дереве. `git status`/`git log` перед каждым крупным шагом — GeoWorld (`5785682`, `3189028`, плюс текущая незакоммиченная работа над `maplibre`) и backend performance-сессия (`ai_log.py`/`lab_result.py`/`learning_event.py` + `0f12aa5fce35`) видны в рабочем дереве, ни один файл не включён в коммит.
+
+### Результаты проверок
+| Проверка | Результат |
+|---|---|
+| Backend `pytest` (полный) | **119/119** — все зелёные, включая ранее наблюдавшийся pre-existing flake в `test_chemistry_saves.py` (не мой код, не тронут) |
+| Backend `test_messaging.py` | **35/35**, стабильно на 2 прогонах подряд — статус (sent/delivered offline/delivered online/read/read⇒delivered), unread (increment/own-exclusion/reset/cross-conversation/denial), presence (multi-tab open/close-one/close-last, last_seen persistence, broadcast), typing (start/stop/anti-spoof/non-persistence) |
+| Frontend `npx vitest run` (полный) | **953/953** — 20 новых тестов (тики статусов, presence, typing indicator, read-on-open gating, relative-time thresholds, unread badge) |
+| `npx tsc --noEmit` (frontend) | 0 ошибок |
+| `eslint` (T6-изменённые файлы) | 0 ошибок |
+| Alembic | `upgrade` на реальном dev Postgres выполнен и подтверждён (`alembic current` = `a7c9e1f2b3d4`); `heads` показывает ожидаемые два head'а (мой + всё ещё uncommitted perf) |
+
+### Честная оговорка
+Ручная двух-пользовательская проверка ✓/✓✓/READ, online/last seen, typing, unread badge в браузере **не выполнена** — браузерной автоматизации в этой сессии не было. Владелец продукта проверит лично, как и после T5.
+
+### Статус на конец продолжения №41
+**T6 (Presence + Delivery/Read Receipts + Last Seen) — завершён, код верифицирован (backend 119/119, frontend 953/953, tsc/lint чистые).** GeoWorld/Design/Teacher-Classroom-management/T5-контракты не тронуты. Известное последствие для интеграции (не изменилось с T5): `alembic merge heads` потребуется, когда perf-сессия закоммитит `0f12aa5fce35`. T7 не начат — ждёт ручной проверки владельцем продукта в браузере.

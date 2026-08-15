@@ -6,6 +6,8 @@ import { Box, ChevronLeft, ChevronRight } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { useLocale } from "@/lib/locale-context";
 import { getNavItems, isNavItemActive } from "@/lib/appshell-nav";
+import { useUnreadMessagesCount } from "@/lib/useUnreadMessagesCount";
+import UnreadBadge from "@/components/messaging/UnreadBadge";
 
 export const RAIL_WIDTH_EXPANDED = "15rem";
 export const RAIL_WIDTH_COLLAPSED = "4.5rem";
@@ -21,6 +23,7 @@ export default function Rail({ collapsed, onToggleCollapsed }: { collapsed: bool
   const { t } = useLocale();
   const pathname = usePathname();
   const items = getNavItems(user?.role);
+  const unreadCount = useUnreadMessagesCount();
 
   return (
     <aside
@@ -48,8 +51,18 @@ export default function Rail({ collapsed, onToggleCollapsed }: { collapsed: bool
                 isActive ? "bg-accent/10 font-medium text-accent" : "text-text-secondary hover:bg-text-primary/5 hover:text-text-primary"
               } ${collapsed ? "justify-center" : ""}`}
             >
-              <Icon size={20} className="shrink-0" />
-              {!collapsed && <span>{label}</span>}
+              <span className="relative shrink-0">
+                <Icon size={20} />
+                {key === "messages" && collapsed && unreadCount > 0 && (
+                  <UnreadBadge count={unreadCount} className="absolute -right-1.5 -top-1.5 h-4 min-w-[1rem] px-1 text-[0.625rem]" />
+                )}
+              </span>
+              {!collapsed && (
+                <span className="flex flex-1 items-center justify-between gap-2">
+                  {label}
+                  {key === "messages" && <UnreadBadge count={unreadCount} />}
+                </span>
+              )}
             </Link>
           );
         })}

@@ -1,30 +1,75 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Send } from "lucide-react";
 import { useLocale } from "@/lib/locale-context";
 import { ApiError } from "@/lib/api";
 
 const MAX_LENGTH = 4000;
+// T6 — typing:stop fires automatically after this long without a
+// keystroke; NOT sent per keypress (brief's explicit throttle/debounce
+// requirement) — a fresh keystroke just resets this timer instead of
+// sending another typing:start.
+const TYPING_STOP_DELAY_MS = 3000;
 
 /**
  * T5 — text-only composer. Enter sends, Shift+Enter inserts a newline
  * (brief §21's explicit Enter/Shift+Enter semantics). No attachments, no
  * markdown — deliberately out of scope for this stage.
+ *
+ * T6 — `onTyping`, when given, is called at most once per typing
+ * "session" (true when the user starts typing, false after
+ * TYPING_STOP_DELAY_MS of inactivity or on send/unmount) — never per
+ * keystroke.
  */
-export default function MessageComposer({ onSend }: { onSend: (content: string) => Promise<void> }) {
+export default function MessageComposer({
+  onSend,
+  onTyping,
+}: {
+  onSend: (content: string) => Promise<void>;
+  onTyping?: (isTyping: boolean) => void;
+}) {
   const { t } = useLocale();
   const [value, setValue] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isTypingRef = useRef(false);
 
   const trimmed = value.trim();
   const isTooLong = value.length > MAX_LENGTH;
   const canSend = trimmed.length > 0 && !isTooLong && !isSending;
 
+  function stopTyping() {
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    typingTimerRef.current = null;
+    if (isTypingRef.current) {
+      isTypingRef.current = false;
+      onTyping?.(false);
+    }
+  }
+
+  function handleChange(next: string) {
+    setValue(next);
+    if (!onTyping) return;
+    if (next.trim().length === 0) {
+      stopTyping();
+      return;
+    }
+    if (!isTypingRef.current) {
+      isTypingRef.current = true;
+      onTyping(true);
+    }
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    typingTimerRef.current = setTimeout(stopTyping, TYPING_STOP_DELAY_MS);
+  }
+
+  useEffect(() => stopTyping, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function handleSend() {
     if (!canSend) return;
+    stopTyping();
     setIsSending(true);
     setError(null);
     try {
@@ -46,7 +91,7 @@ export default function MessageComposer({ onSend }: { onSend: (content: string) 
           <textarea
             ref={textareaRef}
             value={value}
-            onChange={(e) => setValue(e.target.value)}
+            onChange={(e) => handleChange(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();

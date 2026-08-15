@@ -57,10 +57,12 @@ describe("ConversationList — T5", () => {
     mockConversations = [
       {
         id: "conv-1",
-        counterpart: { id: "teacher-1", full_name: "Мария Иванова" },
+        counterpart: { id: "teacher-1", full_name: "Мария Иванова", online: false, last_seen_at: null },
         created_at: "2026-01-01T00:00:00Z",
         last_message_at: "2026-01-02T10:00:00Z",
         last_message_preview: "Здравствуйте, у меня вопрос",
+        unread_count: 0,
+        last_message_own_status: null,
       },
     ];
     renderList();
@@ -70,13 +72,15 @@ describe("ConversationList — T5", () => {
   });
 
   it("opens a new conversation via the picker using a real classroom-derived counterpart", async () => {
-    mockCounterparts = [{ id: "teacher-1", full_name: "Мария Иванова" }];
+    mockCounterparts = [{ id: "teacher-1", full_name: "Мария Иванова", online: false, last_seen_at: null }];
     openConversationMock.mockResolvedValue({
       id: "conv-new",
-      counterpart: { id: "teacher-1", full_name: "Мария Иванова" },
+      counterpart: { id: "teacher-1", full_name: "Мария Иванова", online: false, last_seen_at: null },
       created_at: "2026-01-01T00:00:00Z",
       last_message_at: null,
       last_message_preview: null,
+      unread_count: 0,
+      last_message_own_status: null,
     });
     renderList();
     await screen.findByText(ru.messaging.emptyStudent);
@@ -88,5 +92,86 @@ describe("ConversationList — T5", () => {
     });
 
     expect(openConversationMock).toHaveBeenCalledWith("teacher-1");
+  });
+});
+
+describe("ConversationList — T6 unread badge, own-message status, presence", () => {
+  beforeEach(() => {
+    mockUser = { id: "student-1", email: "s@b.com", full_name: "Student One", role: "student", created_at: "2026-01-01" };
+    mockConversations = [];
+    mockCounterparts = [];
+    openConversationMock.mockReset();
+  });
+
+  afterEach(() => cleanup());
+
+  it("shows a real unread count badge with an accessible label", async () => {
+    mockConversations = [
+      {
+        id: "conv-1",
+        counterpart: { id: "teacher-1", full_name: "Мария Иванова", online: false, last_seen_at: null },
+        created_at: "2026-01-01T00:00:00Z",
+        last_message_at: "2026-01-02T10:00:00Z",
+        last_message_preview: "hi",
+        unread_count: 3,
+        last_message_own_status: null,
+      },
+    ];
+    renderList();
+
+    expect(await screen.findByText("3")).toBeDefined();
+    expect(screen.getByLabelText(ru.messaging.unreadBadgeLabel(3))).toBeDefined();
+  });
+
+  it("hides the badge entirely when there is nothing unread", async () => {
+    mockConversations = [
+      {
+        id: "conv-1",
+        counterpart: { id: "teacher-1", full_name: "Мария Иванова", online: false, last_seen_at: null },
+        created_at: "2026-01-01T00:00:00Z",
+        last_message_at: "2026-01-02T10:00:00Z",
+        last_message_preview: "hi",
+        unread_count: 0,
+        last_message_own_status: null,
+      },
+    ];
+    renderList();
+    await screen.findByText("Мария Иванова");
+
+    expect(screen.queryByTestId("unread-badge")).toBeNull();
+  });
+
+  it("shows the own-message status tick only when the newest message is the current user's own", async () => {
+    mockConversations = [
+      {
+        id: "conv-1",
+        counterpart: { id: "teacher-1", full_name: "Мария Иванова", online: false, last_seen_at: null },
+        created_at: "2026-01-01T00:00:00Z",
+        last_message_at: "2026-01-02T10:00:00Z",
+        last_message_preview: "my last message",
+        unread_count: 0,
+        last_message_own_status: "delivered",
+      },
+    ];
+    renderList();
+
+    expect(await screen.findByLabelText(ru.messaging.statusDelivered)).toBeDefined();
+  });
+
+  it("shows an online indicator for a counterpart who is currently online", async () => {
+    mockConversations = [
+      {
+        id: "conv-1",
+        counterpart: { id: "teacher-1", full_name: "Мария Иванова", online: true, last_seen_at: null },
+        created_at: "2026-01-01T00:00:00Z",
+        last_message_at: null,
+        last_message_preview: null,
+        unread_count: 0,
+        last_message_own_status: null,
+      },
+    ];
+    renderList();
+
+    expect(await screen.findByLabelText(ru.messaging.online)).toBeDefined();
   });
 });

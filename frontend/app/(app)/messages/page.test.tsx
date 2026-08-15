@@ -28,6 +28,9 @@ vi.mock("@/lib/messaging-client", () => ({
   getConversation: (id: string) => Promise.resolve(mockConversations.find((c) => c.id === id)),
   getMessages: () => Promise.resolve({ messages: [], has_more: false }),
   sendMessage: vi.fn(),
+  markConversationRead: vi.fn().mockResolvedValue({ message_ids: [] }),
+  getMessageStatus: (m: { delivered_at: string | null; read_at: string | null }) =>
+    m.read_at ? "read" : m.delivered_at ? "delivered" : "sent",
 }));
 
 class FakeWebSocket {
@@ -88,10 +91,12 @@ describe("MessagesPage — T5", () => {
     mockConversations = [
       {
         id: "conv-1",
-        counterpart: { id: "teacher-1", full_name: "Мария Иванова" },
+        counterpart: { id: "teacher-1", full_name: "Мария Иванова", online: false, last_seen_at: null },
         created_at: "2026-01-01T00:00:00Z",
         last_message_at: null,
         last_message_preview: null,
+        unread_count: 0,
+        last_message_own_status: null,
       },
     ];
     renderPage();

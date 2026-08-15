@@ -31,6 +31,15 @@ class User(Base):
     full_name = Column(String(255), nullable=False)
     role = Column(Enum(UserRole), nullable=False, default=UserRole.STUDENT)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # T6 — persisted presence: written ONLY on the online->offline transition
+    # (last WebSocket connection for this user closing), never on a timer
+    # and never per-connection-open, so this survives a backend restart
+    # without turning into a per-second write. While the user has at least
+    # one open connection, presence is "online" (derived live from
+    # app.core.ws_manager.presence, not from this column) and this value is
+    # simply stale-but-harmless, since the frontend only displays it when
+    # the user is currently offline.
+    last_seen_at = Column(DateTime, nullable=True)
 
     lab_results = relationship("LabResult", back_populates="user", cascade="all, delete-orphan")
     ai_logs = relationship("AILog", back_populates="user", cascade="all, delete-orphan")
