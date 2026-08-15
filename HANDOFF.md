@@ -2614,3 +2614,34 @@ Relay через тот же `/ws/conversations/{id}` сокет: клиент �
 
 ### Статус на конец продолжения №41
 **T6 (Presence + Delivery/Read Receipts + Last Seen) — завершён, код верифицирован (backend 119/119, frontend 953/953, tsc/lint чистые).** GeoWorld/Design/Teacher-Classroom-management/T5-контракты не тронуты. Известное последствие для интеграции (не изменилось с T5): `alembic merge heads` потребуется, когда perf-сессия закоммитит `0f12aa5fce35`. T7 не начат — ждёт ручной проверки владельцем продукта в браузере.
+
+---
+
+## Обновление 2026-08-15 (продолжение №42) — GeoWorld G6.10: MapLibre production foundation
+
+### Задача
+G6.9 одобрен владельцем продукта в реальном браузере. G6.10 — PROVE→EXTRACT→INTEGRATE→VERIFY: вынести проверенную spike-логику (G6.7-G6.9) в reusable production-модули и подключить реверсивно к настоящему GeoWorld (`/geo3d/[id]`), НЕ удаляя старый рендерер и НЕ мигрируя весь GeoWorld разом.
+
+### Честная находка перед началом работы
+Изучение production `GeoWorldScene.tsx` (745 строк, до этого не читался подробно в текущей ветке работы) показало: это НЕ "полетать над спутниковыми снимками", а структурированный урок о строении Земли — cutaway-разрез кора/мантия/ядро с кликабельным контентом, климатический сценарий (таяние ледников/сель у Памира), backend-scoring попытки (`/api/simulations/{id}/action|complete`), AI-ассистент со scene-state awareness. У MapLibre-спайка ничего из этой конкретной педагогики нет. Это прямо и честно задокументировано как compatibility audit (таблица FEATURE/CURRENT/COMPATIBILITY/ACTION/BLOCKER в `GEOWORLD_ROADMAP.md`), не скрыто и не подменено.
+
+### Архитектурное решение
+Spike (`/geoworld-maplibre-spike/page.tsx`) оставлен НЕТРОНУТЫМ — только что прошёл полный цикл одобрения (G6.7→G6.9), рефакторинг ради DRY создавал риск регрессии без пользы (dev-инструмент, не production). Вместо этого: та же самая логика СКОПИРОВАНА (не переписана) в новые модули `lib/geo/maplibre/*` (tile-math, camera-presets, imagery-sources, terrain, labels, engine-loader, style, useMapLibreGlobe-хук) + `components/geo/maplibre/MapLibreGlobeCanvas.tsx` (Design V2 токены, dev-only diagnostics) + `components/scenes/GeoWorldSceneMapLibre.tsx` (альтернативная сцена).
+
+### Production integration
+`app/(immersive)/geo3d/[id]/page.tsx` — реверсивный `?engine=maplibre` query-param switch. Default (без параметра) — старый `GeoWorldScene` без изменений. Оба варианта под одним `SimulationShell`.
+
+### Georeferencing regression guard
+Новый `lib/geo/maplibre/georeferencing.test.ts` (6 тестов) — детерминированная проверка Web Mercator tile-математики на трёх verified-точках (не screenshot-тест), включая x/y-swap sanity check и проверку порядка подстановки в Esri URL template (ту самую регрессию, из-за которой первый прогон G6.8.x теста ошибочно выглядел как offset).
+
+### Тесты и smoke test
+`tsc`/`eslint` чисто. Полный `vitest run` — **953/953 passed, 110/110 файлов**. Реальный authenticated browser smoke test (зарегистрирован/залогинен тестовый пользователь через `/api/auth/register`+`/api/auth/login`, токены внедрены в Playwright-контекст, тестовый пользователь удалён после через `/api/auth/dev/cleanup-test-users`) на настоящей странице `/geo3d/{real-simulation-id}`: default-рендерер — старый UI без изменений, `?engine=maplibre` — реально монтирует `.maplibregl-canvas` + fly-to кнопки, **ноль console errors на обоих**.
+
+### Честная оговорка
+Повторный headless performance-замер production-интеграции НЕ проводился — владелец продукта попросил больше не поднимать/останавливать серверы в рамках этой сессии (backend поднимался мной для smoke-теста, был честно остановлен, что вызвало недопонимание — оказалось, ничего чужого при этом не пострадало, порт был свободен до старта, но по прямой просьбе дальше серверы не трогал). Вывод о наследовании G6.9-характеристик производительности основан на идентичности скопированного кода, не на новом замере.
+
+### Параллельная работа
+`ru.ts`/`en.ts` (новые ключи `geo.maplibre.*`) редактировались одновременно с T6-сессией (та добавляла `pluralRu`-хелпер в те же файлы) — их коммит `8155c74` подхватил и мои ключи тоже, контент корректен, просто атрибуция коммита смешанная (не переписывал их коммит). `tg.ts` не был задет и вошёл в коммит G6.10. Backend messaging/calls/classroom-файлы (несколько новых роутеров/моделей T6+) видны в рабочем дереве, не тронуты.
+
+### Статус на конец продолжения №42
+**GeoWorld G6.10 (MapLibre production foundation) — завершён.** Compatibility audit честно показывает: базовый globe/imagery/terrain/borders/cities — паритет или превосходство; педагогическое ядро урока (cutaway/climate/scoring) — не перенесено, отдельное архитектурное решение для G6.11+. Production не мигрирован необратимо — старый рендерер остаётся default, новый доступен только через явный query-param. G6.11 не начат — ждёт решения владельца продукта после его собственной проверки в браузере.

@@ -593,6 +593,12 @@ export const tg: typeof ru = {
       completeAttempt: "Ба итмом расонидани кӯшиш",
       scoreLabel: "Балл: {score}/100",
     },
+    maplibre: {
+      loading: "Харита бор карда мешавад...",
+      error: "Хатогии оғози харита: {message}",
+      experimentalNotice:
+        "Муҳаррики таҷрибавии MapLibre барои GeoWorld. Мазмуни таълимӣ (буриши қабатҳо, сенарияи иқлим, баҳодиҳии кӯшиш) ҳоло танҳо дар муҳаррики асосӣ дастрас аст.",
+    },
   },
   simulation: {
     back: "Бозгашт",

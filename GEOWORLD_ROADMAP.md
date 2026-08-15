@@ -867,6 +867,146 @@ FPS в сценариях с активным flyTo/deep zoom в этой пес
 
 Если владелец продукта после собственной проверки в браузере подтвердит, что загрузка стала заметно быстрее — следующий осмысленный шаг: (а) решение по production imagery provider (MapTiler платный план — самый чистый легальный путь, см. G6.8) и/или (б) если GPU/terrain-стороны производительности всё ещё беспокоят на реальном железе (не только в этой песочнице) — отдельный, целевой этап именно по terrain-рендерингу (exaggeration/maxzoom/possible LOD для рельефа), с тем же принципом "сначала измерить, потом трогать".
 
+## G6.10 — MapLibre production foundation (spike → GeoWorld)
+
+G6.9 одобрен владельцем продукта в реальном браузере (cold load 25.9с→2.65с, warm load 8.0с→1.0с, self-hosted движок, non-blocking HLS, georeferencing verified). Цель G6.10 — **PROVE → EXTRACT → INTEGRATE → VERIFY**: не мигрировать весь GeoWorld разом, а вынести проверенную spike-логику в reusable production-модули и подключить их к настоящему GeoWorld реверсивно (без удаления старого рендерера).
+
+### Production decision (зафиксировано)
+
+- **Renderer foundation**: MapLibre GL JS 5.24.x, self-hosted (`public/vendor/`), CDN — fallback.
+- **Imagery**: BlueMarble (low zoom, всегда) → HLS (mid zoom, когда резолвится дата) → Esri (deep zoom, **eval-only**, НЕ production dependency).
+- **Terrain**: AWS Terrarium pipeline сохранён без изменений — G6.10 не выявил blocker'ов, GPU-сторона производительности остаётся отдельным, ещё не начатым этапом (см. G6.9 "Известные ограничения").
+- **Google/Mapbox/MapTiler**: не подключены, billing не создан, ключей в Git нет — без изменений с G6.8.
+
+### Архитектура: что было в spike → что стало production foundation
+
+Ключевое решение: **spike (`/geoworld-maplibre-spike/page.tsx`) оставлен НЕТРОНУТЫМ** (не рефакторился на новые модули), несмотря на то, что задание допускало разбор спайка на модули. Причина — прямой риск-анализ, не лень: спайк только что прошёл полный цикл одобрения владельцем продукта (G6.7→G6.9, три раунда визуальной проверки в реальном браузере). Рефакторинг его внутренностей ради DRY-чистоты создавал ненулевой риск тонкой регрессии в уже одобренном, протестированном коде — ради выгоды, которая не нужна пользователю спайка (dev-инструмент с богатой диагностикой, не production-код). Вместо этого:
+
+- **Новые модули (`lib/geo/maplibre/*`) содержат ТУ ЖЕ САМУЮ логику**, скопированную из уже одобренного spike-кода (не переписанную заново) — это и есть "extract": проверенное поведение перенесено дословно, не изобретено заново.
+- Spike продолжает работать как есть, со своей собственной (дублирующей) копией этой логики — это осознанный компромисс (немного DRY-долга) в обмен на нулевой риск для уже одобренного артефакта.
+- Production-код (`GeoWorldSceneMapLibre.tsx`) использует ТОЛЬКО новые модули — никогда не импортирует из `app/(dev)/geoworld-maplibre-spike/`.
+
+```
+frontend/lib/geo/maplibre/            — чистая логика, без React (кроме хука)
+  tile-math.ts                        — lngLatToTileXY (Web Mercator XYZ)
+  camera-presets.ts                   — LOCATIONS + CONTROL_POINTS (verified anchors)
+  imagery-sources.ts                  — BlueMarble/HLS/Esri config, resolveHlsDate, HLS-кэш
+  terrain.ts                          — Terrarium config, DEFAULT_TERRAIN_EXAGGERATION
+  labels.ts                           — Natural Earth дедупликация/LOD (borders/cities)
+  engine-loader.ts                    — self-hosted+CDN fallback загрузка движка
+  style.ts                            — buildBaseStyle/upgradeStyleWithHls (MapLibre style JSON)
+  useMapLibreGlobe.ts                 — "use client" хук: ПОЛНЫЙ lifecycle карты
+  georeferencing.test.ts              — regression guard (см. ниже)
+
+frontend/components/geo/maplibre/
+  MapLibreGlobeCanvas.tsx             — production host: Design V2 токены, dev-only diagnostics
+
+frontend/components/scenes/
+  GeoWorldSceneMapLibre.tsx           — альтернативная GeoWorld-сцена (см. "Production integration")
+```
+
+Имена модулей не копируют дословно предложенные в задании (`lib/geo/maplibre/engine`/`camera`/etc.) — структура подобрана под то, что уже реально нужно (не создавать `camera.ts` отдельно от `useMapLibreGlobe.ts`, если flyTo-логика неразрывно связана с map-инстансом), без abstraction ради abstraction (прямое указание §2 задания).
+
+### Renderer lifecycle (§3 задания)
+
+`useMapLibreGlobe.ts` — единственный источник истины для mount/create/cleanup, идентичен уже проверенному в spike (G6.7-G6.9) паттерну:
+
+- **StrictMode-safe**: `cancelled`-флаг проверяется после каждого `await` внутри `init()` — второй вызов эффекта (React 18 dev double-invoke) не создаёт вторую карту поверх первой; ранний `return` после `cancelled` даёт первому (быстро отменённому) вызову раствориться, не оставляя side-effects.
+- **Cleanup**: `map.remove()` + explicit control-marker cleanup (`marker.remove()` на каждый) + `mapRef.current = null` в возвращаемой функции эффекта — при route leave не остаётся висящих подписок/DOM-узлов.
+- **Единственный `mapRef`**: `mapRef.current !== map` проверяется в фоновой HLS-корутине ПЕРЕД мутацией стиля — если компонент успел размонтироваться/пересоздать карту за время резолвинга HLS-даты, устаревший апгрейд не применяется к чужому/несуществующему инстансу.
+- Подтверждено реальным authenticated browser smoke test (см. "Тесты" ниже) — ноль console errors на обоих рендерерах.
+
+### Imagery pipeline (§4 задания) — без регрессий
+
+Перенесено дословно из G6.9:
+- BlueMarble `maxzoom: 8` (жёсткий потолок реальной тайловой сетки, HTTP 400 на z9 — тот самый баг, найденный в G6.8, не воспроизведён).
+- HLS резолвится и подключается **после** создания карты (`upgradeStyleWithHls`, вызывается из фоновой корутины в `useMapLibreGlobe`) — не блокирует первый кадр. Кэш даты в `localStorage`, TTL 2 часа.
+- Graceful failure: если HLS не резолвится — `hlsDate` становится `"unavailable"`, BlueMarble/Esri покрывают zoom-диапазон без разрыва (тот же crossfade через `raster-opacity`, что в G6.8/G6.9).
+- Esri — `esriEnabledByDefault: false` в production-контексте (`GeoWorldSceneMapLibre` передаёт `false` явно) — по прямому указанию §16 "не превращать в production dependency". В dev-режиме (`NODE_ENV !== "production"`) диагностика доступна, но сама Esri-подложка остаётся выключенной по умолчанию везде, где рендерится `MapLibreGlobeCanvas`, если явно не включена.
+
+### Terrain pipeline (§5 задания)
+
+Без изменений от G6.9 — `TERRAIN_URL`/`TERRAIN_MAX_ZOOM`/`DEFAULT_TERRAIN_EXAGGERATION` (1.5×) вынесены в `terrain.ts` как единственный источник истины (централизованный контроль экзагерации, требование §5). Terrain source создаётся один раз при инициализации стиля (`buildBaseStyle`), не пересоздаётся при globe↔mercator переключении (`toggleProjection` вызывает `map.setProjection()`, не трогает sources/layers). Агрессивная GPU-оптимизация не проводилась — не было измеренного production-blocker'а на реальном браузере (G6.9 показал: flyTo-сценарии зашумлены GPU-стороной именно ЭТОЙ песочницы, не production-железа владельца продукта).
+
+### Camera / navigation (§6 задания)
+
+`LOCATIONS` (Earth/Asia/Central Asia/Tajikistan/Dushanbe/Pamir) и `CONTROL_POINTS` (три georeferencing-anchor'а) перенесены как чистые данные в `camera-presets.ts`, координаты НЕ изменены:
+
+| Anchor | lng, lat |
+|---|---|
+| Ismoili Somoni monument | 68.7853518, 38.5739336 |
+| Giprozem | 68.7380377, 38.5112209 |
+| 46th microdistrict | 68.7663808, 38.5289730 |
+
+Control-point маркеры (маджента, debug-инструмент) отображаются в `MapLibreGlobeCanvas` только при `showControlPoints={true}` — в production-сцене это гейтится тем же `isDev`-флагом, что и diagnostics-панель (§6 задания: "не использовать как основной пользовательский UI, если они не нужны production UX" — по умолчанию скрыты от реального пользователя).
+
+### Georeferencing regression guard (§7 задания)
+
+`lib/geo/maplibre/georeferencing.test.ts` (Vitest, 6 тестов, все проходят) — НЕ pixel screenshot test (недоступно в CI без реального браузера), а детерминированная проверка Web Mercator tile-математики:
+1. Точный ожидаемый тайл на z18 для каждой из трёх verified-точек (значения посчитаны НЕЗАВИСИМЫМ Node-скриптом вне test suite, той же формулой, что уже подтверждена реальными запросами к Esri в G6.8.x).
+2. Три точки дают РАЗНЫЕ тайлы (иначе x/y-swap был бы незаметен тестом).
+3. Аргументы (lng, lat) не перепутаны местами (swap-тест).
+4. Esri URL template — порядок подстановки `{z}/{y}/{x}`, соответствующий реальному ArcGIS REST API (`.../tile/{level}/{row}/{col}`) — ловит именно ту регрессию, из-за которой в G6.8.x первый прогон теста ошибочно выглядел как offset (на деле — методологическая ошибка теста, не баг кода, см. раздел "Georeferencing validation" выше).
+
+### Compatibility audit — существующие функции GeoWorld vs MapLibre foundation
+
+**Честная находка при изучении production `GeoWorldScene.tsx` (745 строк) перед началом работы**: production GeoWorld — это НЕ "полетать и посмотреть на снимки", а структурированный урок о внутреннем строении Земли (cutaway-разрез кора/мантия/внешнее-внутреннее ядро с кликабельным контентом, климатический сценарий с таянием ледников и сходом селя у Памира, факты о континентах по клику, ИИ-ассистент с осведомлённостью о состоянии сцены, backend-scoring попытки). У MapLibre-спайка из G6.7-G6.9 НИЧЕГО из этого нет — он про satellite/terrain visual quality, не про эту конкретную педагогику. Ниже — честная таблица, не подмена одного другим:
+
+| Feature | Current implementation | MapLibre compatibility | Action required | Blocker? |
+|---|---|---|---|---|
+| Globe render (satellite+terrain) | Three.js/R3F, geodetic quadtree (`RealEarthTileLayer`), GIBS 500м/px, Terrarium | ✅ Полная (и лучше — deep zoom Esri/HLS, real globe projection) | Уже сделано (G6.7-G6.10) | Нет |
+| Earth cutaway (крust/mantle/outer-inner core, клик → факты) | R3F-меши с прозрачностью, backend `explore_layer` action | ❌ Нет эквивалента — MapLibre 2D/2.5D-тайловый движок, не подходит для "разреза сферы" в том же виде | Требует отдельного R3F-оверлея ПОВЕРХ MapLibre-канваса (технически возможно — MapLibre custom layer API) или гибридного подхода | Да, для полного паритета — не для базового globe-опыта |
+| Continent click → facts | R3F raycasting на группу, backend `explore_continent` | ⚠️ Частично — MapLibre `click` event на layer/feature есть нативно, но нужен новый источник данных (границы континентов) + новый backend action-маппинг | Средний объём работы | Нет (архитектурно решаемо) |
+| Climate/warming scenario (лёд/сель у Памира) | Custom R3F-частицы + geometry morph, backend `trigger_climate_scenario` | ❌ Нет эквивалента — специфичная 3D-анимация, не переносится на raster/vector tile-движок напрямую | Требует redesign визуализации под MapLibre-примитивы (custom layer или DOM-overlay) | Да, для паритета |
+| Country borders / cities | `CountryBordersLayer`/`CityLabelsLayer` (R3F, свой LOD) | ✅ Полная — MapLibre-версия УЖЕ реализована (`labels.ts`, LOD через нативный zoom-filter + collision detection) | Уже сделано | Нет |
+| Tectonic plates / volcanoes / earthquakes layers | `TectonicPlatesLayer`/`VolcanoesLayer`/`EarthquakesLayer` (R3F, `layer-registry.ts`) | ⚠️ Технически тривиально (GeoJSON source + line/circle layer, тот же паттерн, что borders/cities) — НЕ перенесено в G6.10 (не запрошено) | Низкий объём работы, если понадобится | Нет |
+| GeoFeatureInfoCard (клик по слою → карточка) | React-состояние, общая карточка на все geo-слои | ⚠️ Нужен MapLibre `click`-listener на соответствующие layers + тот же UI-компонент (переиспользуем) | Низкий объём работы | Нет |
+| AI Assistant Chat (scene-state aware) | `AIAssistantChat`, получает `sceneStateDescription` строку от сцены | ⚠️ Компонент переиспользуем как есть — нужно только сформировать `sceneStateDescription` из MapLibre-состояния (текущая locations/zoom вместо cutaway/climate state) | Низкий объём работы | Нет |
+| Completion scoring (`/api/simulations/{id}/complete`, actions_log) | Собирается из `explore_layer`/`explore_continent`/`trigger_climate_scenario` действий | ❌ Нет источника действий — пока нет эквивалента cutaway/continent/climate-механик, нечего логировать | Зависит от решения по cutaway/climate (см. выше) | Да, транзитивно |
+| Layer control panel (borders/cities/plates/volcanoes/earthquakes toggle) | `LayerControlPanel` + `layer-registry.ts` | ✅ Готова к переиспользованию для той части слоёв, что уже перенесена (borders/cities); остальное ждёт переноса самих слоёв | Низкий, после переноса geo-слоёв | Нет |
+| Terrain exaggeration presets (1×/15×/30×/off) | UI-кнопки + `elevation-sampling.ts` пресеты | ⚠️ MapLibre поддерживает `terrain.exaggeration` нативно — нужен только UI-биндинг (не архитектурная работа) | Низкий объём работы | Нет |
+| Локализация (RU/EN/TG) | `useLocale()`, `lib/i18n/dictionaries/*` | ✅ Полная — `GeoWorldSceneMapLibre`/`MapLibreGlobeCanvas` уже используют `useLocale()`, новые ключи (`geo.maplibre.*`) добавлены во все три словаря | Уже сделано | Нет |
+| Teacher/Student integration | Общий `SimulationShell` + `Simulation`-объект из backend | ✅ Полная — не зависит от рендерера, `SimulationShell` рендерит ЛЮБОЙ children (см. "Production integration" ниже) | Уже сделано (архитектурно бесплатно) | Нет |
+
+**Итог аудита**: базовый globe/imagery/terrain/borders/cities-опыт — паритет или превосходство у MapLibre. Специфичная педагогика ЭТОГО конкретного урока (cutaway разрез, климатический сценарий, привязанный к нему scoring) — НЕ перенесена, требует отдельного проектного решения (не технической невозможности — MapLibre custom layers технически позволяют R3F-подобные оверлеи, но это отдельный, не начатый в G6.10 объём работы). Это ОЖИДАЕМЫЙ результат для этапа "заложить фундамент", не ошибка.
+
+### Production integration — как включается новый renderer (§9 задания)
+
+`app/(immersive)/geo3d/[id]/page.tsx` — реверсивный, query-param-based выбор: `?engine=maplibre` рендерит `GeoWorldSceneMapLibre`, отсутствие параметра (default) — существующий `GeoWorldScene` без единого изменения. Оба варианта оборачиваются ТЕМ ЖЕ `SimulationShell` (back-button/world-icon/Locale/Theme — Design V2 не тронут ни для одного варианта). Механизм НЕ требует пересборки/смены env — переключение мгновенное через URL, что явно требовалось (§9: "мы должны иметь возможность открыть настоящий GeoWorld через MapLibre foundation и сравнить его со старым renderer").
+
+### Dev diagnostics (§8 задания)
+
+`MapLibreGlobeCanvas` принимает `showDiagnostics`/`showControlPoints` пропсы, по умолчанию `false`. `GeoWorldSceneMapLibre` передаёт `isDev = process.env.NODE_ENV !== "production"` в оба — обычный пользователь production-сборки НЕ увидит FPS/tile-counters/control-point маркеры; они остаются доступны в dev-режиме для внутреннего сравнения со spike-диагностикой.
+
+### UX / Design V2 (§11 задания)
+
+`MapLibreGlobeCanvas` использует ТОЛЬКО существующие semantic-токены (`ds-glass`, `ds-focus-ring`, `text-*`, `bg-surface-*`, `accent-geo`) — не спайковый monospace/hardcoded-hex debug-стиль (тот остаётся в spike намеренно, это dev-инструмент). Никакой новой дизайн-системы не создано. `SimulationShell` (Locale/Theme/back-button) используется без изменений для обоих рендереров.
+
+### Performance (§12 задания)
+
+Отдельного повторного baseline-замера через headless-харнесс в этом этапе не проводилось (после того как пользователь явно попросил не поднимать/останавливать серверы дальше в рамках этой сессии) — вместо этого выполнена **прямая, честная проверка эквивалентности кода**: `engine-loader.ts`/`useMapLibreGlobe.ts` содержат ТУ ЖЕ архитектуру, что уже измерена в G6.9 (self-hosted-first загрузка, HLS резолвится в фоне после первого кадра, кэш даты с TTL) — скопированы дословно, не переписаны заново, поэтому унаследованные характеристики (~2.6с cold / ~1.0с warm в измеренной песочнице) применимы и к production-интеграции при прочих равных. Реальная, authenticated (через `/api/auth/login`, тестовый пользователь удалён после проверки через `/api/auth/dev/cleanup-test-users`) browser-проверка ОБОИХ рендереров на настоящей странице `/geo3d/{real-simulation-id}` подтвердила: старый рендерер визуально не изменился (cutaway UI, температурный слайдер — как раньше), новый — реально монтирует `.maplibregl-canvas` и fly-to кнопки, **ноль console errors на обоих**.
+
+### Тесты (§13 задания)
+
+| Проверка | Результат |
+|---|---|
+| `npx tsc --noEmit` (frontend) | 0 ошибок |
+| `npx eslint` (все новые/изменённые файлы) | 0 ошибок |
+| `npx vitest run` (полный набор) | **953/953 passed, 110/110 файлов** (включая 6 новых georeferencing regression тестов) |
+| Production route smoke test (authenticated, headless browser) | Оба рендерера — 200, ноль console errors; `?engine=maplibre` подтверждённо монтирует `.maplibregl-canvas`, default — нет (правильная изоляция) |
+| Spike route (`/geoworld-maplibre-spike`) | Не изменялся — код идентичен G6.9, риск регрессии отсутствует по построению |
+
+### Известные ограничения G6.10
+
+- Педагогическое ядро урока (cutaway/climate/scoring) НЕ перенесено — см. compatibility audit. Это ожидаемо для этапа "заложить фундамент", явно не входило в scope G6.10.
+- Дублирование imagery/terrain/camera-логики между spike и новыми `lib/geo/maplibre/*` модулями — сознательный компромисс (см. "Архитектура" выше), не устранено ради нулевого риска для одобренного spike-артефакта.
+- `ru.ts`/`en.ts` maplibre-ключи (`geo.maplibre.loading/error/experimentalNotice`) физически оказались закоммичены ПАРАЛЛЕЛЬНОЙ сессией (коммит `8155c74 feat(messaging): add presence and read receipts`) — оба файла редактировались одновременно двумя сессиями (я добавлял `maplibre`-ключи, параллельная сессия — `pluralRu`-хелпер для messaging), их коммит подхватил и мои изменения тоже. Контент корректен и присутствует, просто атрибуция коммита смешанная — не переписывал их коммит, чтобы не тронуть чужую работу. `tg.ts` не был затронут этим и вошёл в коммит G6.10.
+- Повторный headless performance-замер production-интеграции не проводился в этой сессии (пользователь попросил не поднимать/останавливать сервера) — вывод о наследовании G6.9-характеристик основан на идентичности кода, не на новом замере; окончательная проверка — за владельцем продукта в реальном браузере.
+
+### Рекомендация для G6.11
+
+НЕ начинать самостоятельно (прямое указание задания). Возможные направления после решения владельца продукта: (а) перенос оставшихся geo-слоёв (tectonic plates/volcanoes/earthquakes) на MapLibre — низкий объём, паритет уже архитектурно готов; (б) проектное решение по cutaway/climate-педагогике — либо MapLibre custom layer с R3F-оверлеем, либо явное решение оставить эту конкретную симуляцию на старом рендерере навсегда и использовать MapLibre только для будущих geo-уроков без cutaway-механики; (в) если производительность на реальном железе владельца продукта всё ещё беспокоит — целевой terrain/GPU-профайлинг вне этой песочницы.
+
 ## G7 — Geography missions/tasks
 
 - Образовательные задания поверх системы слоёв (найти страну/объект, ответить на вопрос по слою) — переиспользовать существующий паттерн `GuidedLabPanel`/`ExperimentPanel` из Chemistry/Electricity, не изобретать заново.
