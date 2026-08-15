@@ -2645,3 +2645,54 @@ Spike (`/geoworld-maplibre-spike/page.tsx`) оставлен НЕТРОНУТЫ�
 
 ### Статус на конец продолжения №42
 **GeoWorld G6.10 (MapLibre production foundation) — завершён.** Compatibility audit честно показывает: базовый globe/imagery/terrain/borders/cities — паритет или превосходство; педагогическое ядро урока (cutaway/climate/scoring) — не перенесено, отдельное архитектурное решение для G6.11+. Production не мигрирован необратимо — старый рендерер остаётся default, новый доступен только через явный query-param. G6.11 не начат — ждёт решения владельца продукта после его собственной проверки в браузере.
+
+## Обновление 2026-08-15 (продолжение №43) — T7: Student ↔ Teacher Call Signaling Foundation
+
+### Задача
+T6 одобрен вручную владельцем продукта после browser-проверки (✓/✓✓/READ, online/last seen, typing, unread — всё подтверждено). T7 строит СИГНАЛЬНЫЙ фундамент для будущих звонков: ringing/accept/decline/cancel/busy/timeout/end/history. **Явно НЕ входит в T7**: WebRTC, RTCPeerConnection, SDP/ICE/STUN/TURN, camera/microphone, video/audio stream, screen sharing, group calls, push-уведомления — всё это T8+.
+
+### Alembic heads перед стартом
+Проверено заново (не предположено): `git status` подтвердил `0f12aa5fce35` (perf-сессия) **всё ещё uncommitted** — файл в рабочем дереве, никогда не закоммичен, никогда не применён к dev-БД. `alembic current` = `a7c9e1f2b3d4` (мой T6 head). По тому же правилу, что и в T6: новая миграция строится от `a7c9e1f2b3d4`, НЕ от perf-миграции. Merge не создавался.
+
+### Domain model
+`Call` (id, conversation_id, caller_id, callee_id, call_type: audio|video, status, created_at, answered_at, ended_at) + служебное поле `active_conversation_id` (nullable, UNIQUE) — установлено в `conversation_id` пока звонок RINGING/ACCEPTED, обнулено на любом terminal-переходе. Это даёт race-safe "не более одного активного звонка на беседу" через обычный UNIQUE constraint на nullable-колонке — портируемо между Postgres и SQLite одинаково, в отличие от dialect-specific partial index с `WHERE status IN (...)`: эмпирически проверено, что SQLAlchemy `Enum(PyEnum)` хранит `.name` ("RINGING"), а не `.value` ("ringing") — хардкодить это в сырой SQL-фрагмент индекса было бы тихой миной.
+
+### State machine — на сервере, не только на фронтенде
+`RINGING → ACCEPTED | DECLINED | CANCELLED | MISSED`, `ACCEPTED → ENDED`. Всё остальное (`declined→accepted`, `ended→accepted`, `ringing→ended` напрямую и т.д.) отклоняется бэкендом (`ALLOWED_TRANSITIONS` в `models/call.py`, применяется в `call_service._apply_transition`) — 409 Conflict, не 200 с тихим no-op.
+
+### Busy — НЕ отдельный persisted статус
+Решение: "busy" — это синхронный REST 409 в момент `start_call`, без создания строки `Call` вообще (не засоряет историю фиктивными попытками). Два уровня защиты: (1) DB-level — `active_conversation_id` UNIQUE constraint ловит гонку "оба звонят друг другу в одну секунду" (бриф §14) стопроцентно корректно, поскольку это ОДИН и тот же `conversation_id` в обоих направлениях; (2) application-level — pre-check "есть ли у caller/callee активный звонок В ЛЮБОЙ ДРУГОЙ беседе", честно задокументирован как best-effort (не race-proof через РАЗНЫЕ conversation_id), а не как вторая DB-гарантия.
+
+### Timeout/missed
+`CALL_RING_TIMEOUT_SECONDS = 45` (выбрано и задокументировано, не Celery/Redis ради одного таймера). Двухуровневая реконсиляция: (1) lazy — `reconcile_timeout()` вызывается на КАЖДОМ read/mutate-пути, конвертирует просроченный RINGING в MISSED прямо там, независимо от того, жив ли процесс, который изначально принял звонок — переживает рестарт бэкенда честно; (2) frontend-driven realtime — клиент звонящего (и, defensively, принимающего) сам считает локальный таймер от `created_at` и по истечении дергает `GET /api/calls/{id}`, что триггерит ту же реконсиляцию и реальный broadcast — НЕ фейковый локальный таймаут, звонок реально становится MISSED на сервере.
+
+### Realtime — переиспользован существующий transport, но логически отделён
+Новый метод `PresenceManager.broadcast_to_user()` (в `ws_manager.py`) — шлёт payload на ВСЕ открытые сокеты пользователя (не только на сокет конкретной беседы звонка), в отличие от `ConnectionManager.broadcast()`, который остаётся conversation-scoped для message/typing/presence-событий. Типизированный протокол `call:ringing | call:accepted | call:declined | call:cancelled | call:missed | call:ended` (имя события = новый статус звонка). Второго WebSocket-эндпоинта НЕ создавалось — всё идёт через тот же `/ws/conversations/{id}`, который уже проходит ту же авторизацию, что и messaging.
+
+### Авторизация — переиспользована, не изобретена заново
+`_get_authorized_conversation` из `routers/messaging.py` вынесена в `messaging_service.get_authorized_conversation()` (публичная), используется И messaging-роутером, И новым `routers/calls.py` — единый access-control mechanism, как и требовал бриф. Звонок можно начать только внутри уже авторизованной Conversation; каждое действие над звонком (`accept`/`decline`/`cancel`/`end`) отдельно проверяет, что текущий пользователь — реальный участник ИМЕННО этого звонка, с правильной ролью (только callee может accept/decline, только caller может cancel, любая сторона может end).
+
+### Frontend
+`lib/call-client.ts` (REST), `lib/useCallSession.ts` (state machine + локальный ring-timeout + auto-dismiss terminal-состояний через 4с), `components/messaging/{CallPanel,CallButtons,CallHistoryEntry}.tsx` — только существующие Design V2 токены. Call actions — в хедере ConversationView (не в случайном месте продукта). Call-история смёржена ПРЯМО в timeline беседы (не отдельная страница) — сортировка по timestamp вместе с сообщениями, honest simplification: история звонков грузится целиком (не постранично, звонков реалистично меньше, чем сообщений), задокументировано в коде. **Multi-tab** работает "бесплатно" — оба таба получают ОДИН И ТОТ ЖЕ broadcast от `broadcast_to_user`, никакого отдельного merge-протокола не потребовалось. **Reconnect/refresh restoration** — `GET /api/conversations/{id}/call` вызывается и на mount, и при переходе `disconnected→connected` (тот же код-путь, что уже был протестирован в T6 для сообщений). Никакого `getUserMedia`/`getDisplayMedia` нигде в коде — только честный "Соединение установлено, аудио/видео будет подключено следующим этапом".
+
+### Известный, задокументированный scope boundary (не баг)
+Backend шлёт `call:*` события на ВСЕ сокеты пользователя, но ЕДИНСТВЕННЫЙ способ иметь открытый сокет во фронтенде — это иметь открытую `ConversationView` с КАКОЙ-ТО беседой. Если событие приходит для ДРУГОЙ беседы, чем та, что сейчас открыта, T7 его игнорирует (не показывает cross-conversation уведомление) — явное, задокументированное решение по scope, не пропущенный кейс: реальный продукт пока не имеет глобального notification-слоя вне Messages, и все сценарии ручной проверки в брифе — про двух пользователей с ОДНОЙ открытой общей беседой.
+
+### Результаты проверок
+| Проверка | Результат |
+|---|---|
+| Backend `pytest` (полный) | **149/150** — 1 pre-existing flake в `test_chemistry_saves.py` (не мой код, задокументирован с T5) |
+| Backend `test_calls.py` | **31/31**, стабильно на 2 прогонах подряд — авторизация (own/unrelated/removed-membership/admin/random-user/caller-spoofing), state machine (все валидные и невалидные переходы), race (double-start idempotent, busy same-conversation, busy other-conversation, accept/end дважды), timeout/missed, история, realtime (broadcast на разные сокеты того же пользователя, accept/end доходят до обеих сторон) |
+| Frontend `npx vitest run` (полный) | **966/966** — 26 тестов в `ConversationView.test.tsx` для T7 (кнопки, outgoing/incoming ringing, accept/decline/cancel/busy/end/duration, refresh restoration, multi-tab reconciliation, cross-conversation ignore, history) |
+| `npx tsc --noEmit` (frontend) | 0 ошибок |
+| `eslint` (T7-изменённые файлы) | 0 ошибок, 0 warnings (после дестрейчеринга `useCallSession()` для стабильных hook-deps) |
+| Alembic | `upgrade → downgrade → upgrade` на реальном dev Postgres — все три шага чистые; `heads` показывает два ожидаемых head'а |
+
+### Честная оговорка
+Ручная двух-пользовательская проверка (5 сценариев из брифа: A — полный цикл video-звонка, B — decline, C — timeout/missed, D — offline callee, E — multi-tab) **не выполнена** — браузерной автоматизации в этой сессии не было. Владелец продукта проверит лично, как и после T5/T6.
+
+### Параллельная работа
+GeoWorld-сессия параллельно вела G6.10/G6.11 работу (видно в `git log`, HANDOFF.md продолжение №42, плюс live-редактирование `tg.ts` — снова смёржено вручную через staging блоба в индекс, не трогая их незакоммиченный хунк). Perf-сессия (`ai_log.py`/`lab_result.py`/`learning_event.py` + всё ещё uncommitted `0f12aa5fce35`) и 5 удалённых артефактов остались нетронуты. `git status`/`git log` проверялись перед стартом и перед коммитом.
+
+### Статус на конец продолжения №43
+**T7 (Student ↔ Teacher Call Signaling Foundation) — завершён, код верифицирован (backend 149/150 с известным pre-existing flake, frontend 966/966, tsc/lint чистые).** Media (WebRTC/audio/video/screen sharing) сознательно НЕ реализовано — фундамент подготовлен (call_type уже поддерживает audio/video, conversation-scoped realtime канал уже есть) для T8. GeoWorld/Design/Teacher-Classroom-management/T5/T6-контракты не тронуты. Известное последствие для интеграции (не изменилось с T5/T6): `alembic merge heads` потребуется, когда perf-сессия закоммитит `0f12aa5fce35`. T8 не начат — ждёт ручной проверки владельцем продукта в браузере (ringing/accept/decline/cancel/busy/timeout/end/history).

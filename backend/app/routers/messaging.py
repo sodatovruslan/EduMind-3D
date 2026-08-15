@@ -14,7 +14,6 @@ from app.core.classroom_scope import accessible_student_ids, classroom_link_exis
 from app.core.deps import get_current_user
 from app.database import get_db
 from app.models.classroom import ClassMembership, Classroom
-from app.models.messaging import Conversation
 from app.models.user import User, UserRole
 from app.schemas.messaging import (
     ConversationCreate,
@@ -48,18 +47,6 @@ async def _resolve_pair(db: AsyncSession, current_user: User, counterpart_id: st
     if counterpart is None or counterpart.role != expected_role:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return teacher_id, student_id
-
-
-async def _get_authorized_conversation(db: AsyncSession, current_user: User, conversation_id: str) -> Conversation:
-    conversation = await messaging_service.get_conversation_by_id(db, conversation_id)
-    if conversation is None or current_user.id not in (conversation.teacher_id, conversation.student_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
-    # Re-checked on every access, not just at creation: a removed classroom
-    # membership must immediately close the conversation, even one that
-    # already existed — see roadmap T5 notes for the documented rationale.
-    if not await classroom_link_exists(db, conversation.teacher_id, conversation.student_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
-    return conversation
 
 
 @router.get("", response_model=list[ConversationRead])
@@ -130,7 +117,7 @@ async def open_conversation(
 async def get_conversation(
     conversation_id: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
-    conversation = await _get_authorized_conversation(db, current_user, conversation_id)
+    conversation = await messaging_service.get_authorized_conversation(db, current_user, conversation_id)
     unread_counts = await messaging_service.get_unread_counts(db, current_user.id, [conversation.id])
     last_messages = await messaging_service.get_last_messages(db, [conversation.id])
     return messaging_service.conversation_to_read(
@@ -149,7 +136,7 @@ async def get_messages(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    await _get_authorized_conversation(db, current_user, conversation_id)
+    await messaging_service.get_authorized_conversation(db, current_user, conversation_id)
     # Offline-delivery semantics (brief §21): fetching history is itself a
     # real, provable delivery signal for any of the counterpart's messages
     # that hadn't reached a live connection yet — see messaging_service.
@@ -168,7 +155,7 @@ async def mark_conversation_read(
     being online or connected (brief §5/§25). The frontend calls this only
     when the conversation is actually visible and scrolled to the bottom
     (see ConversationView's read-on-open logic)."""
-    conversation = await _get_authorized_conversation(db, current_user, conversation_id)
+    conversation = await messaging_service.get_authorized_conversation(db, current_user, conversation_id)
     ids = await messaging_service.mark_read(db, conversation, current_user.id)
     return MarkReadResult(message_ids=ids)
 
@@ -180,6 +167,6 @@ async def post_message(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    conversation = await _get_authorized_conversation(db, current_user, conversation_id)
+    conversation = await messaging_service.get_authorized_conversation(db, current_user, conversation_id)
     message = await messaging_service.send_message(db, conversation, current_user.id, payload.content)
     return MessageRead.model_validate(message)

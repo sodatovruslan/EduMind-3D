@@ -5,7 +5,12 @@ whether it actually reached the RECIPIENT, not just "someone"), a global
 PresenceManager (online = at least one open connection anywhere, not
 scoped to one conversation), and typing-event relay support (typing state
 itself is never stored here — see routers/ws_messaging.py, this module
-only tracks connections).
+only tracks connections). T7 adds PresenceManager.broadcast_to_user,
+reusing that SAME per-user socket set for call signaling — a call is
+between two specific people, not scoped to whichever single
+conversation's WS connection happens to be open, so it's pushed to
+EVERY open socket a user has (any conversation, any tab), not just the
+one the call's own conversation_id belongs to.
 
 SINGLE-PROCESS ONLY, on purpose, documented rather than hidden: connections
 live in this process's memory, so a broadcast only reaches clients
@@ -109,6 +114,19 @@ class PresenceManager:
 
     def is_online(self, user_id: str) -> bool:
         return bool(self._connections.get(user_id))
+
+    async def broadcast_to_user(self, user_id: str, payload: dict[str, Any]) -> None:
+        """T7 — pushes to EVERY open socket this user has, regardless of
+        which conversation each one is connected to (unlike
+        ConnectionManager.broadcast, which is scoped to one
+        conversation_id). Used for call signaling: the callee should see
+        an incoming call whichever conversation tab they currently have
+        open, not only if it happens to be the caller's own conversation."""
+        for websocket in list(self._connections.get(user_id, ())):
+            try:
+                await websocket.send_json(payload)
+            except Exception:
+                self.disconnect(user_id, websocket)
 
 
 presence = PresenceManager()

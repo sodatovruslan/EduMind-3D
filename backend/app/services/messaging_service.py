@@ -12,11 +12,13 @@ docstring (models/messaging.py) for the delivered/read semantics.
 """
 from datetime import datetime, timedelta
 
+from fastapi import HTTPException, status
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
+from app.core.classroom_scope import classroom_link_exists
 from app.core.ws_manager import manager, presence
 from app.models.messaging import Conversation, Message
 from app.models.user import User
@@ -306,3 +308,19 @@ async def mark_read(db: AsyncSession, conversation: Conversation, user_id: str) 
         {"type": "message:read", "conversation_id": conversation.id, "message_ids": ids, "read_at": now.isoformat()},
     )
     return ids
+
+
+async def get_authorized_conversation(db: AsyncSession, current_user: User, conversation_id: str) -> Conversation:
+    """The one "does this user actually get to touch this conversation"
+    check — used by every messaging AND call endpoint (T7 calls reuse this
+    directly rather than re-implementing conversation access, per the
+    brief's own "don't build a second access-control mechanism" rule).
+    Re-checked on every access, not just at creation: a removed classroom
+    membership must immediately close the conversation (and any calls in
+    it), even one that already existed."""
+    conversation = await get_conversation_by_id(db, conversation_id)
+    if conversation is None or current_user.id not in (conversation.teacher_id, conversation.student_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+    if not await classroom_link_exists(db, conversation.teacher_id, conversation.student_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+    return conversation

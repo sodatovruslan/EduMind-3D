@@ -7,6 +7,7 @@ import { LocaleProvider } from "@/lib/locale-context";
 import { ru } from "@/lib/i18n/dictionaries/ru";
 import type { User } from "@/lib/types";
 import type { Conversation, Message, MessagePage } from "@/lib/messaging-client";
+import type { Call } from "@/lib/call-client";
 
 // jsdom has no Element.scrollTo — same stub pattern used by the AI chat
 // components' auto-scroll effect (see components/ai/AIAssistantChat.test.tsx).
@@ -39,6 +40,34 @@ vi.mock("@/lib/messaging-client", () => ({
   getMessageStatus: (m: { delivered_at: string | null; read_at: string | null }) =>
     m.read_at ? "read" : m.delivered_at ? "delivered" : "sent",
 }));
+
+const startCallMock = vi.fn();
+const getCurrentCallMock = vi.fn();
+const getCallMock = vi.fn();
+const acceptCallMock = vi.fn();
+const declineCallMock = vi.fn();
+const cancelCallMock = vi.fn();
+const endCallMock = vi.fn();
+const listCallHistoryMock = vi.fn();
+vi.mock("@/lib/call-client", () => {
+  class MockCallBusyError extends Error {
+    constructor() {
+      super("busy");
+    }
+  }
+  return {
+    startCall: (...args: unknown[]) => startCallMock(...args),
+    getCurrentCall: (...args: unknown[]) => getCurrentCallMock(...args),
+    getCall: (...args: unknown[]) => getCallMock(...args),
+    acceptCall: (...args: unknown[]) => acceptCallMock(...args),
+    declineCall: (...args: unknown[]) => declineCallMock(...args),
+    cancelCall: (...args: unknown[]) => cancelCallMock(...args),
+    endCall: (...args: unknown[]) => endCallMock(...args),
+    listCallHistory: (...args: unknown[]) => listCallHistoryMock(...args),
+    CallBusyError: MockCallBusyError,
+    isActiveCallStatus: (status: string) => status === "ringing" || status === "accepted",
+  };
+});
 
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
@@ -78,6 +107,8 @@ describe("ConversationView — T5", () => {
     getConversationMock.mockReset().mockResolvedValue(CONVERSATION);
     getMessagesMock.mockReset().mockResolvedValue({ messages: [], has_more: false } satisfies MessagePage);
     sendMessageMock.mockReset();
+    getCurrentCallMock.mockReset().mockResolvedValue(null);
+    listCallHistoryMock.mockReset().mockResolvedValue([]);
     FakeWebSocket.instances = [];
     window.localStorage.setItem("edumind_access_token", "fake-token");
   });
@@ -199,6 +230,8 @@ describe("ConversationView — T6 status ticks, presence, typing, read-on-open",
     getMessagesMock.mockReset().mockResolvedValue({ messages: [], has_more: false } satisfies MessagePage);
     sendMessageMock.mockReset();
     markConversationReadMock.mockReset().mockResolvedValue({ message_ids: [] });
+    getCurrentCallMock.mockReset().mockResolvedValue(null);
+    listCallHistoryMock.mockReset().mockResolvedValue([]);
     FakeWebSocket.instances = [];
     window.localStorage.setItem("edumind_access_token", "fake-token");
     Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
@@ -311,5 +344,237 @@ describe("ConversationView — T6 status ticks, presence, typing, read-on-open",
 
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(markConversationReadMock).not.toHaveBeenCalled();
+  });
+});
+
+function makeCall(overrides: Partial<Call> = {}): Call {
+  return {
+    id: "call-1",
+    conversation_id: "conv-1",
+    caller: { id: "student-1", full_name: "Student One" },
+    callee: { id: "teacher-1", full_name: "Teacher One" },
+    call_type: "audio",
+    status: "ringing",
+    created_at: new Date().toISOString(),
+    answered_at: null,
+    ended_at: null,
+    ...overrides,
+  };
+}
+
+describe("ConversationView — T7 call signaling", () => {
+  beforeEach(() => {
+    mockUser = { id: "student-1", email: "s@b.com", full_name: "Student One", role: "student", created_at: "2026-01-01" };
+    getConversationMock.mockReset().mockResolvedValue(CONVERSATION);
+    getMessagesMock.mockReset().mockResolvedValue({ messages: [], has_more: false } satisfies MessagePage);
+    sendMessageMock.mockReset();
+    markConversationReadMock.mockReset().mockResolvedValue({ message_ids: [] });
+    startCallMock.mockReset();
+    getCurrentCallMock.mockReset().mockResolvedValue(null);
+    getCallMock.mockReset();
+    acceptCallMock.mockReset();
+    declineCallMock.mockReset();
+    cancelCallMock.mockReset();
+    endCallMock.mockReset();
+    listCallHistoryMock.mockReset().mockResolvedValue([]);
+    FakeWebSocket.instances = [];
+    window.localStorage.setItem("edumind_access_token", "fake-token");
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+  });
+
+  afterEach(() => {
+    cleanup();
+    window.localStorage.clear();
+  });
+
+  it("shows accessible call buttons in the header and starts an outgoing audio call", async () => {
+    startCallMock.mockResolvedValue(makeCall({ call_type: "audio" }));
+    renderView();
+    await screen.findByText(ru.messaging.noMessagesTitle);
+
+    fireEvent.click(screen.getByLabelText(ru.calls.callAudioAria));
+
+    expect(startCallMock).toHaveBeenCalledWith("conv-1", "audio");
+    await screen.findByText(ru.calls.calling);
+    expect(screen.getByTestId("call-cancel")).toBeDefined();
+  });
+
+  it("starts an outgoing video call from the video button", async () => {
+    startCallMock.mockResolvedValue(makeCall({ call_type: "video" }));
+    renderView();
+    await screen.findByText(ru.messaging.noMessagesTitle);
+
+    fireEvent.click(screen.getByLabelText(ru.calls.callVideoAria));
+
+    expect(startCallMock).toHaveBeenCalledWith("conv-1", "video");
+    await screen.findByText(ru.calls.calling);
+  });
+
+  it("shows a busy toast instead of a call panel when starting a call is rejected as busy", async () => {
+    const { CallBusyError } = await import("@/lib/call-client");
+    startCallMock.mockRejectedValue(new CallBusyError());
+    renderView();
+    await screen.findByText(ru.messaging.noMessagesTitle);
+
+    fireEvent.click(screen.getByLabelText(ru.calls.callAudioAria));
+
+    await screen.findByTestId("call-busy-toast");
+    expect(screen.queryByTestId("call-panel")).toBeNull();
+  });
+
+  it("shows incoming-call UI with Accept/Decline when a call:ringing event names the current user as callee", async () => {
+    renderView();
+    await screen.findByText(ru.messaging.noMessagesTitle);
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBe(1));
+
+    const incoming = makeCall({ caller: { id: "teacher-1", full_name: "Teacher One" }, callee: { id: "student-1", full_name: "Student One" } });
+    act(() => {
+      FakeWebSocket.instances[0].emitMessage({ type: "call:ringing", call: incoming });
+    });
+
+    expect(await screen.findByText(ru.calls.incomingCall, { exact: false })).toBeDefined();
+    expect(screen.getByLabelText(ru.calls.accept)).toBeDefined();
+    expect(screen.getByLabelText(ru.calls.decline)).toBeDefined();
+  });
+
+  it("accepting an incoming call calls acceptCall and moves to the connected state", async () => {
+    renderView();
+    await screen.findByText(ru.messaging.noMessagesTitle);
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBe(1));
+
+    const incoming = makeCall({ caller: { id: "teacher-1", full_name: "Teacher One" }, callee: { id: "student-1", full_name: "Student One" } });
+    act(() => {
+      FakeWebSocket.instances[0].emitMessage({ type: "call:ringing", call: incoming });
+    });
+    await screen.findByTestId("call-accept");
+
+    acceptCallMock.mockResolvedValue({ ...incoming, status: "accepted", answered_at: new Date().toISOString() });
+    fireEvent.click(screen.getByTestId("call-accept"));
+
+    expect(acceptCallMock).toHaveBeenCalledWith("call-1");
+    await screen.findByText(ru.calls.connected, { exact: false });
+    expect(screen.getByTestId("call-end")).toBeDefined();
+  });
+
+  it("declining an incoming call calls declineCall", async () => {
+    renderView();
+    await screen.findByText(ru.messaging.noMessagesTitle);
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBe(1));
+
+    const incoming = makeCall({ caller: { id: "teacher-1", full_name: "Teacher One" }, callee: { id: "student-1", full_name: "Student One" } });
+    act(() => {
+      FakeWebSocket.instances[0].emitMessage({ type: "call:ringing", call: incoming });
+    });
+    await screen.findByTestId("call-decline");
+
+    declineCallMock.mockResolvedValue({ ...incoming, status: "declined", ended_at: new Date().toISOString() });
+    fireEvent.click(screen.getByTestId("call-decline"));
+
+    expect(declineCallMock).toHaveBeenCalledWith("call-1");
+    await screen.findByText(ru.calls.declined);
+  });
+
+  it("cancelling an outgoing call calls cancelCall", async () => {
+    startCallMock.mockResolvedValue(makeCall());
+    renderView();
+    await screen.findByText(ru.messaging.noMessagesTitle);
+    fireEvent.click(screen.getByLabelText(ru.calls.callAudioAria));
+    await screen.findByTestId("call-cancel");
+
+    cancelCallMock.mockResolvedValue({ ...makeCall(), status: "cancelled", ended_at: new Date().toISOString() });
+    fireEvent.click(screen.getByTestId("call-cancel"));
+
+    expect(cancelCallMock).toHaveBeenCalledWith("call-1");
+    await screen.findByText(ru.calls.cancelled);
+  });
+
+  it("ending an accepted call calls endCall", async () => {
+    renderView();
+    await screen.findByText(ru.messaging.noMessagesTitle);
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBe(1));
+
+    const accepted = makeCall({ status: "accepted", answered_at: new Date().toISOString() });
+    act(() => {
+      FakeWebSocket.instances[0].emitMessage({ type: "call:accepted", call: accepted });
+    });
+    await screen.findByTestId("call-end");
+
+    endCallMock.mockResolvedValue({ ...accepted, status: "ended", ended_at: new Date().toISOString() });
+    fireEvent.click(screen.getByTestId("call-end"));
+
+    expect(endCallMock).toHaveBeenCalledWith("call-1");
+    await screen.findByText(ru.calls.callEnded);
+  });
+
+  it("shows a live ticking duration once a call is connected", async () => {
+    renderView();
+    await screen.findByText(ru.messaging.noMessagesTitle);
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBe(1));
+
+    const accepted = makeCall({ status: "accepted", answered_at: new Date(Date.now() - 5000).toISOString() });
+    act(() => {
+      FakeWebSocket.instances[0].emitMessage({ type: "call:accepted", call: accepted });
+    });
+
+    const duration = await screen.findByTestId("call-duration");
+    expect(duration.textContent).toMatch(/^\d+:\d{2}$/);
+  });
+
+  it("restores an already-active call on mount (refresh restoration)", async () => {
+    getCurrentCallMock.mockResolvedValue(makeCall({ status: "accepted", answered_at: new Date().toISOString() }));
+    renderView();
+
+    await screen.findByTestId("call-end");
+    expect(getCurrentCallMock).toHaveBeenCalledWith("conv-1");
+  });
+
+  it("multi-tab: an accepted event the local user never clicked still moves the panel to connected", async () => {
+    // Simulates a SECOND tab (or the callee's own device) having accepted
+    // — this tab only ever RECEIVES the broadcast, never calls acceptCall
+    // itself, and must still converge to the same state (brief §21).
+    renderView();
+    await screen.findByText(ru.messaging.noMessagesTitle);
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBe(1));
+
+    const incoming = makeCall({ caller: { id: "teacher-1", full_name: "Teacher One" }, callee: { id: "student-1", full_name: "Student One" } });
+    act(() => {
+      FakeWebSocket.instances[0].emitMessage({ type: "call:ringing", call: incoming });
+    });
+    await screen.findByTestId("call-decline");
+
+    act(() => {
+      FakeWebSocket.instances[0].emitMessage({
+        type: "call:accepted",
+        call: { ...incoming, status: "accepted", answered_at: new Date().toISOString() },
+      });
+    });
+
+    await screen.findByText(ru.calls.connected, { exact: false });
+    expect(acceptCallMock).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("call-decline")).toBeNull();
+  });
+
+  it("ignores a call:* event for a different conversation than the one currently open", async () => {
+    renderView();
+    await screen.findByText(ru.messaging.noMessagesTitle);
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBe(1));
+
+    const otherConversationCall = makeCall({ conversation_id: "conv-other" });
+    act(() => {
+      FakeWebSocket.instances[0].emitMessage({ type: "call:ringing", call: otherConversationCall });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByTestId("call-panel")).toBeNull();
+  });
+
+  it("shows real call history entries in the conversation timeline", async () => {
+    listCallHistoryMock.mockResolvedValue([
+      makeCall({ id: "call-old", status: "missed", created_at: "2026-01-01T09:00:00Z" }),
+    ]);
+    renderView();
+
+    expect(await screen.findByTestId("call-history-call-old")).toBeDefined();
+    expect(screen.getByText(ru.calls.missed)).toBeDefined();
   });
 });

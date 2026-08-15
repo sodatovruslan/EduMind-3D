@@ -13,13 +13,18 @@ import {
   sendMessage,
   type Message,
 } from "@/lib/messaging-client";
-import { useConversationSocket, type ConversationSocketEvent } from "@/lib/useConversationSocket";
+import { isCallSocketEvent, useConversationSocket, type ConversationSocketEvent } from "@/lib/useConversationSocket";
 import { formatBubbleTime, formatDateSeparator, formatFullDateTime } from "@/lib/messaging-time";
+import { listCallHistory, type Call } from "@/lib/call-client";
+import { useCallSession } from "@/lib/useCallSession";
 import { Skeleton, Surface } from "@/components/design-system";
 import MessageComposer from "./MessageComposer";
 import MessageStatusTicks from "./MessageStatusTicks";
 import PresenceLabel from "./PresenceLabel";
 import TypingIndicator from "./TypingIndicator";
+import CallButtons from "./CallButtons";
+import CallPanel from "./CallPanel";
+import CallHistoryEntry from "./CallHistoryEntry";
 
 // T6 — if no typing:stop (and no new message) arrives within this long,
 // the indicator clears itself client-side (brief: "auto-stop timeout if
@@ -28,7 +33,10 @@ import TypingIndicator from "./TypingIndicator";
 // event always wins the race.
 const TYPING_INDICATOR_TIMEOUT_MS = 6000;
 
-type RenderItem = { kind: "separator"; key: string; label: string } | { kind: "message"; key: string; message: Message };
+type RenderItem =
+  | { kind: "separator"; key: string; label: string }
+  | { kind: "message"; key: string; message: Message; timestamp: string }
+  | { kind: "call"; key: string; call: Call; timestamp: string };
 
 /**
  * T5 — REST is the source of truth for history/sending; the WebSocket
@@ -54,6 +62,17 @@ export default function ConversationView({ conversationId, onBack }: { conversat
     conversationId ? `conversation-${conversationId}` : null,
     () => getConversation(conversationId!)
   );
+  const {
+    activeCall,
+    busy: callBusy,
+    start: startCall,
+    accept: acceptCall,
+    decline: declineCall,
+    cancel: cancelCall,
+    end: endCall,
+    handleCallEvent,
+    resyncAfterReconnect,
+  } = useCallSession(conversationId, user?.id);
   const [messages, setMessages] = useState<Message[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [isLoadingInitial, setIsLoadingInitial] = useState(true);
@@ -61,6 +80,7 @@ export default function ConversationView({ conversationId, onBack }: { conversat
   const [loadError, setLoadError] = useState(false);
   const [presence, setPresence] = useState<{ online: boolean; last_seen_at: string | null } | null>(null);
   const [counterpartTyping, setCounterpartTyping] = useState(false);
+  const [callHistory, setCallHistory] = useState<Call[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const seenIds = useRef<Set<string>>(new Set());
   const shouldStickToBottom = useRef(true);
@@ -74,15 +94,28 @@ export default function ConversationView({ conversationId, onBack }: { conversat
     if (conversation) setPresence({ online: conversation.counterpart.online, last_seen_at: conversation.counterpart.last_seen_at });
   }, [conversation]);
 
+  // A finished call (declined/cancelled/missed/ended) joins the
+  // permanent inline history the moment it's over — CallPanel itself only
+  // shows it briefly, this is what keeps it in the timeline afterward.
+  useEffect(() => {
+    const call = activeCall;
+    if (!call || call.status === "ringing" || call.status === "accepted") return;
+    setCallHistory((prev) => (prev.some((c) => c.id === call.id) ? prev.map((c) => (c.id === call.id ? call : c)) : [...prev, call]));
+  }, [activeCall]);
+
   const loadInitial = useCallback(async () => {
     if (!conversationId) return;
     setIsLoadingInitial(true);
     setLoadError(false);
     try {
-      const page = await getMessages(conversationId);
+      const [page, calls] = await Promise.all([
+        getMessages(conversationId),
+        listCallHistory(conversationId).catch(() => [] as Call[]),
+      ]);
       seenIds.current = new Set(page.messages.map((m) => m.id));
       setMessages(page.messages);
       setHasMore(page.has_more);
+      setCallHistory(calls);
     } catch {
       setLoadError(true);
     } finally {
@@ -92,6 +125,7 @@ export default function ConversationView({ conversationId, onBack }: { conversat
 
   useEffect(() => {
     setMessages([]);
+    setCallHistory([]);
     seenIds.current = new Set();
     shouldStickToBottom.current = true;
     setCounterpartTyping(false);
@@ -186,6 +220,10 @@ export default function ConversationView({ conversationId, onBack }: { conversat
 
   const handleSocketEvent = useCallback(
     (event: ConversationSocketEvent) => {
+      if (isCallSocketEvent(event)) {
+        handleCallEvent(event.call);
+        return;
+      }
       switch (event.type) {
         case "message": {
           if (seenIds.current.has(event.message.id)) return;
@@ -221,7 +259,7 @@ export default function ConversationView({ conversationId, onBack }: { conversat
           return;
       }
     },
-    [counterpartId, mutateGlobal]
+    [counterpartId, mutateGlobal, handleCallEvent]
   );
 
   const { status, sendEvent } = useConversationSocket(conversationId, handleSocketEvent);
@@ -235,8 +273,9 @@ export default function ConversationView({ conversationId, onBack }: { conversat
       hadDisconnectedRef.current = false;
       loadInitial();
       mutateConversation();
+      resyncAfterReconnect();
     }
-  }, [status, loadInitial, mutateConversation]);
+  }, [status, loadInitial, mutateConversation, resyncAfterReconnect]);
 
   useEffect(() => clearTypingTimeout, []);
 
@@ -256,18 +295,33 @@ export default function ConversationView({ conversationId, onBack }: { conversat
   }
 
   const renderItems = useMemo<RenderItem[]>(() => {
+    // Calls merged into the SAME timeline as messages (brief §17), sorted
+    // by their own timestamp — call history is fetched once, unpaginated
+    // (a conversation realistically has far fewer calls than messages),
+    // so a call older than the currently-loaded message page can appear
+    // above the "load earlier messages" button; a documented simplification,
+    // not incorrect data.
+    const merged: Array<{ timestamp: string } & ({ kind: "message"; message: Message } | { kind: "call"; call: Call })> = [
+      ...messages.map((message) => ({ kind: "message" as const, message, timestamp: message.created_at })),
+      ...callHistory.map((call) => ({ kind: "call" as const, call, timestamp: call.created_at })),
+    ].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
     const items: RenderItem[] = [];
     let lastDay: string | null = null;
-    for (const m of messages) {
-      const day = new Date(m.created_at).toDateString();
+    for (const entry of merged) {
+      const day = new Date(entry.timestamp).toDateString();
       if (day !== lastDay) {
-        items.push({ kind: "separator", key: `sep-${m.id}`, label: formatDateSeparator(m.created_at, locale, t) });
+        items.push({ kind: "separator", key: `sep-${entry.kind}-${entry.timestamp}`, label: formatDateSeparator(entry.timestamp, locale, t) });
         lastDay = day;
       }
-      items.push({ kind: "message", key: m.id, message: m });
+      if (entry.kind === "message") {
+        items.push({ kind: "message", key: entry.message.id, message: entry.message, timestamp: entry.timestamp });
+      } else {
+        items.push({ kind: "call", key: entry.call.id, call: entry.call, timestamp: entry.timestamp });
+      }
     }
     return items;
-  }, [messages, locale, t]);
+  }, [messages, callHistory, locale, t]);
 
   if (!conversationId) {
     return (
@@ -297,6 +351,29 @@ export default function ConversationView({ conversationId, onBack }: { conversat
             </p>
           )}
         </div>
+        <CallButtons
+          disabled={!!activeCall}
+          onStartAudio={() => startCall("audio")}
+          onStartVideo={() => startCall("video")}
+        />
+      </div>
+
+      <div className="px-3 pt-3">
+        {callBusy && (
+          <div className="mb-3 rounded-ds-control bg-warning/10 px-3 py-2 text-ds-caption text-warning" role="alert" data-testid="call-busy-toast">
+            {t.calls.busy}
+          </div>
+        )}
+        {activeCall && (
+          <CallPanel
+            call={activeCall}
+            currentUserId={user?.id}
+            onAccept={acceptCall}
+            onDecline={declineCall}
+            onCancel={cancelCall}
+            onEnd={endCall}
+          />
+        )}
       </div>
 
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 space-y-2 overflow-y-auto p-3">
@@ -316,7 +393,7 @@ export default function ConversationView({ conversationId, onBack }: { conversat
           <Skeleton className="h-full min-h-[16rem] w-full" />
         ) : loadError ? (
           <p className="text-center text-ds-body text-danger">{t.messaging.loadError}</p>
-        ) : messages.length === 0 ? (
+        ) : messages.length === 0 && callHistory.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-1 p-6 text-center">
             <p className="text-ds-body text-text-primary">{t.messaging.noMessagesTitle}</p>
             <p className="text-ds-caption text-text-muted">{t.messaging.noMessagesBody}</p>
@@ -327,6 +404,8 @@ export default function ConversationView({ conversationId, onBack }: { conversat
               <div key={item.key} className="py-1 text-center text-ds-caption text-text-muted">
                 {item.label}
               </div>
+            ) : item.kind === "call" ? (
+              <CallHistoryEntry key={item.key} call={item.call} />
             ) : (
               <div
                 key={item.key}

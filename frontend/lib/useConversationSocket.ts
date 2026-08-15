@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getAccessToken } from "@/lib/token-storage";
 import type { Message } from "@/lib/messaging-client";
+import type { Call, CallStatus } from "@/lib/call-client";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const WS_URL = API_URL.replace(/^http/, "ws");
@@ -19,14 +20,28 @@ export type SocketStatus = "connecting" | "connected" | "disconnected";
  * Mirrors the shapes broadcast by backend/app/routers/ws_messaging.py and
  * app/services/messaging_service.py — see those for the authoritative
  * definition of when each one fires.
+ *
+ * T7 — adds `call:<status>` events (see app/services/call_service.py's
+ * `_broadcast_call`). These are pushed to EVERY open socket a user has
+ * (not just the one on the call's own conversation_id — see
+ * ws_manager.PresenceManager.broadcast_to_user), so a `call:*` event can
+ * arrive here even for a conversation other than the one this socket was
+ * opened for; useCallSession.ts is what filters by conversation_id.
  */
+export type CallSocketEvent = { type: `call:${CallStatus}`; call: Call };
+
 export type ConversationSocketEvent =
   | { type: "message"; message: Message }
   | { type: "message:delivered"; conversation_id: string; message_ids: string[]; delivered_at: string }
   | { type: "message:read"; conversation_id: string; message_ids: string[]; read_at: string }
   | { type: "typing:start"; user_id: string }
   | { type: "typing:stop"; user_id: string }
-  | { type: "presence:update"; user_id: string; online: boolean; last_seen_at: string | null };
+  | { type: "presence:update"; user_id: string; online: boolean; last_seen_at: string | null }
+  | CallSocketEvent;
+
+export function isCallSocketEvent(event: ConversationSocketEvent): event is CallSocketEvent {
+  return event.type.startsWith("call:");
+}
 
 /**
  * T5 — realtime delivery for one open conversation. REST
