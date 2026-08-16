@@ -1,10 +1,25 @@
 "use client";
 
 import { useChemistryLabExperience } from "@/components/core/ChemistryLabExperienceProvider";
-import { getModeConfig, LEARNING_MODES } from "@/lib/chemistry-lab-modes";
+import { LEARNING_MODES, type LearningMode } from "@/lib/chemistry-lab-modes";
+import { useLocale } from "@/lib/locale-context";
 
+/**
+ * D6.2 — moved from `neon-violet`/`glass-border`/`slate-*` onto D1 tokens.
+ * Mode labels moved onto `useLocale()`/t.chemistry.hud.labMode* instead of
+ * `getModeConfig(m).label` (which is hardcoded Russian in
+ * lib/chemistry-lab-modes.ts) — that file itself isn't touched, only this
+ * component's own display mapping, since only 3 short fixed labels
+ * (Guided/Practice/Exam) are involved, not per-experiment catalog data.
+ */
 export default function LabModeSelector() {
+  const { t } = useLocale();
   const { mode, setMode } = useChemistryLabExperience();
+  const MODE_LABEL: Record<LearningMode, string> = {
+    guided: t.chemistry.hud.labModeGuided,
+    practice: t.chemistry.hud.labModePractice,
+    exam: t.chemistry.hud.labModeExam,
+  };
   return (
     <div className="flex items-center gap-1 font-mono text-xs" data-testid="lab-mode-selector">
       {LEARNING_MODES.map((m) => (
@@ -14,11 +29,11 @@ export default function LabModeSelector() {
           onClick={() => setMode(m)}
           data-testid={`lab-mode-${m}`}
           aria-pressed={mode === m}
-          className={`rounded-full border px-3 py-1 uppercase transition focus:outline-none focus-visible:ring-2 focus-visible:ring-neon-violet ${
-            mode === m ? "border-neon-violet text-neon-violet" : "border-glass-border text-slate-500 hover:text-slate-300"
+          className={`ds-focus-ring rounded-full border px-3 py-1 uppercase transition-colors ${
+            mode === m ? "border-accent text-accent" : "border-border/[0.12] text-text-muted hover:text-text-primary"
           }`}
         >
-          {getModeConfig(m).label}
+          {MODE_LABEL[m]}
         </button>
       ))}
     </div>

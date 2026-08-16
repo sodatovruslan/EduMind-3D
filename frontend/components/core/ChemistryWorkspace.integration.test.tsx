@@ -180,6 +180,28 @@ describe("Heating (реальный heatTick + isContainerOnStand)", () => {
     expect(result.current.state.containers.find((container) => container.id === "beaker-1")!.data.temperatureC).toBe(32);
   });
 
+  it("Immersive interaction acceptance fix — сосуд, поставленный НЕ идеально по центру штатива, но в пределах разумного радиуса (0.4м, ранее срабатывало только до 0.25м), всё равно считается стоящим на штативе", () => {
+    const { result } = renderHook(() => useChemistryWorkspace(), { wrapper: workspaceWrapper });
+    const stand = result.current.state.tools.find((t) => t.kind === "stand")!;
+    const offsetPosition: [number, number] = [stand.position[0] + 0.4, stand.position[1]];
+
+    act(() => result.current.moveItem("beaker-1", offsetPosition));
+
+    const beaker = result.current.state.containers.find((c) => c.id === "beaker-1")!;
+    expect(isContainerOnStand(beaker, result.current.state.tools)).toBe(true);
+  });
+
+  it("сосуд, реально далеко от штатива (за пределами даже расширенного радиуса), НЕ считается стоящим на нём", () => {
+    const { result } = renderHook(() => useChemistryWorkspace(), { wrapper: workspaceWrapper });
+    const stand = result.current.state.tools.find((t) => t.kind === "stand")!;
+    const farPosition: [number, number] = [stand.position[0] + 2, stand.position[1]];
+
+    act(() => result.current.moveItem("beaker-1", farPosition));
+
+    const beaker = result.current.state.containers.find((c) => c.id === "beaker-1")!;
+    expect(isContainerOnStand(beaker, result.current.state.tools)).toBe(false);
+  });
+
   it("нагревает только сосуд, реально стоящий на штативе, и только если горелка включена", () => {
     const { result } = renderHook(() => useChemistryWorkspace(), { wrapper: workspaceWrapper });
 

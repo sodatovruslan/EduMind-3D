@@ -10,6 +10,7 @@ import {
   RoomInteriorBounds,
   Vector2D,
 } from "@/lib/sandbox-locomotion";
+import { isTypingTarget } from "@/lib/dom-input-utils";
 
 interface SandboxLocomotionControllerProps {
   active: boolean;
@@ -84,13 +85,6 @@ export function SandboxLocomotionController({
       if (code === "KeyD" || key === "d" || key === "в" || key === "arrowright") return "d";
 
       return null;
-    }
-
-    function isTypingTarget(target: EventTarget | null): boolean {
-      if (!(target instanceof HTMLElement)) return false;
-      const tag = target.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable) return true;
-      return false;
     }
 
     function updateInputFromKeys() {

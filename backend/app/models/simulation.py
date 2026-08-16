@@ -15,12 +15,24 @@ class SimulationModule(str, enum.Enum):
     CHEMISTRY_WORLD = "chemistry_world"
 
 
+class SimulationVisibility(str, enum.Enum):
+    # видна обычному пользователю в dashboard
+    PUBLIC = "public"
+    # внутренняя разработка — не показывать пользователю
+    INTERNAL = "internal"
+    # доступна E2E по прямому ID/API, но не отображается в пользовательском каталоге
+    TEST = "test"
+    # устаревшая/дублирующая запись — не показывать, но не удалять из БД
+    ARCHIVED = "archived"
+
+
 class Simulation(Base):
     __tablename__ = "simulations"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     title = Column(String(255), nullable=False)
     module = Column(Enum(SimulationModule), nullable=False)
+    visibility = Column(Enum(SimulationVisibility), nullable=False, default=SimulationVisibility.PUBLIC)
     subject = Column(String(100), nullable=False)
     # config хранит сценарий: эталонные шаги для Auto-Grader (expected_steps),
     # параметры сцены для фронтенда и т.д. — гибкая JSON-структура,

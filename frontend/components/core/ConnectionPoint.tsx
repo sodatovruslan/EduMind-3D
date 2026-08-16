@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import { useWireDrag } from "@/components/core/WireDragProvider";
+import { useComponentDrag } from "@/components/core/ComponentDragProvider";
 
 interface ConnectionPointProps {
   id: string;
@@ -26,6 +27,13 @@ interface ConnectionPointProps {
 export default function ConnectionPoint({ id, position, color = "#c9a227", suggested = false }: ConnectionPointProps) {
   const { draggingFrom, hoveredTerminal, startDrag, setHoveredTerminal, commitDrag, registerTerminalPosition } =
     useWireDrag();
+  // post-S9.9 acceptance fix — sandbox component repositioning: пока ЛЮБОЙ
+  // компонент перетаскивается, мировые позиции клемм могут меняться каждый
+  // кадр (клемма — дочерний узел перемещаемой группы), поэтому регистрация
+  // ниже переключается на покадровый пересчёт ТОЛЬКО на время активного
+  // драга компонента — в состоянии покоя (99% времени) остаётся прежний
+  // разовый useEffect ниже, никаких дополнительных затрат в простое.
+  const { draggingComponentId } = useComponentDrag();
   const meshRef = useRef<THREE.Mesh>(null);
   const visibleRef = useRef<THREE.Mesh>(null);
   const glowRef = useRef<THREE.Mesh>(null);
@@ -46,6 +54,14 @@ export default function ConnectionPoint({ id, position, color = "#c9a227", sugge
   const highlighted = isHovered || isActive;
 
   useFrame(({ clock: r3fClock }, delta) => {
+    // post-S9.9: покадровое обновление мировой позиции клеммы ТОЛЬКО пока
+    // идёт перетаскивание какого-либо компонента — вне этого окна ветка не
+    // выполняется вообще (обычная проверка булева, без аллокаций)
+    if (draggingComponentId && meshRef.current) {
+      const worldPos = new THREE.Vector3();
+      meshRef.current.getWorldPosition(worldPos);
+      registerTerminalPosition(id, worldPos);
+    }
     if (visibleRef.current) {
       const targetScale = highlighted ? 1.7 : 1;
       const lerpFactor = Math.min(1, delta * 10);

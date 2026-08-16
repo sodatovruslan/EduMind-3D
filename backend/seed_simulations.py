@@ -1,6 +1,10 @@
 """
-Разовый сид-скрипт для dev-БД: создает по одной демонстрационной
-симуляции на каждый модуль, чтобы было что открыть на дашборде.
+Разовый сид-скрипт для dev-БД: создает по одной РЕАЛЬНОЙ пользовательской
+симуляции на модуль, чтобы было что открыть на дашборде. Все записи здесь —
+visibility=PUBLIC. Устаревшие demo-заглушки (например старый SimLab-пример)
+сюда сознательно не добавляются — если такие записи уже есть в БД с прошлых
+запусков, их видимость правится вручную (или отдельной миграцией), а не
+пересозданием отсюда.
 Запуск: python seed_simulations.py
 """
 import asyncio
@@ -8,19 +12,13 @@ import asyncio
 from sqlalchemy import select
 
 from app.database import SessionLocal
-from app.models.simulation import Simulation, SimulationModule
+from app.models.simulation import Simulation, SimulationModule, SimulationVisibility
 
 SEED_SIMULATIONS = [
     {
-        "title": "Нейтрализация HCl + NaOH",
-        "module": SimulationModule.SIMLAB,
-        "subject": "Химия",
-        "config": {"expected_steps": ["mix_reagents"]},
-        "difficulty": 1,
-    },
-    {
         "title": "Строение Земли: кора, мантия, ядро",
         "module": SimulationModule.GEO3D,
+        "visibility": SimulationVisibility.PUBLIC,
         "subject": "География и геология",
         "config": {"expected_steps": ["explore_layer", "explore_layer", "explore_layer", "explore_layer"]},
         "difficulty": 1,
@@ -28,6 +26,7 @@ SEED_SIMULATIONS = [
     {
         "title": "Собери электрическую цепь",
         "module": SimulationModule.ELECTRICITY_LAB,
+        "visibility": SimulationVisibility.PUBLIC,
         "subject": "Физика",
         "config": {"expected_steps": ["connect_circuit", "close_switch", "read_meters"]},
         "difficulty": 1,
@@ -35,6 +34,7 @@ SEED_SIMULATIONS = [
     {
         "title": "Chemistry World: первые эксперименты",
         "module": SimulationModule.CHEMISTRY_WORLD,
+        "visibility": SimulationVisibility.PUBLIC,
         "subject": "Химия",
         "config": {"expected_steps": ["dissolve_salt", "neutralize", "precipitate", "heat_water"]},
         "difficulty": 1,

@@ -8,6 +8,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { AlertOctagon, Flame, Lock, RotateCcw, RotateCw, Unlock, Volume2, VolumeX } from "lucide-react";
 import CanvasShell from "@/components/scenes/CanvasShell";
 import { CameraMode } from "@/lib/chemistry-lab-modes";
+import { useFullscreen } from "@/lib/useFullscreen";
 import { SandboxModeOverlay } from "@/components/chemistry/sandbox/SandboxModeOverlay";
 import { RoomInteriorBounds, RegisteredCollider, checkPlayerReach, evaluateUnifiedInteraction, DynamicPlacementSurface } from "@/lib/sandbox-locomotion";
 import {
@@ -98,6 +99,8 @@ import ExperimentCatalogBrowser from "@/components/lab/ExperimentCatalogBrowser"
 import GuidedLabPanel from "@/components/lab/GuidedLabPanel";
 import CompletionScreen from "@/components/lab/CompletionScreen";
 import LabNotebookPanel from "@/components/lab/LabNotebookPanel";
+import AITeacherDock from "@/components/simulation/AITeacherDock";
+import { useLocale } from "@/lib/locale-context";
 
 // Stage 5.5 v2 — Hazard Simulation: доступность, без учета prefers-reduced-motion
 // нельзя показывать тряску камеры/агрессивные эффекты
@@ -2909,6 +2912,7 @@ function ChemistryCanvas({
 } & ChemistrySceneProps) {
   const { draggingId } = useChemistryDrag();
   const { heldId } = useChemistryInteraction();
+  const { t } = useLocale();
   const wrapperRef = useRef<HTMLDivElement>(null);
   const prevShakeCounter = useRef(shakeCounter);
 
@@ -3007,38 +3011,22 @@ function ChemistryCanvas({
   const [cameraMode, setCameraMode] = useState<CameraMode>("orbit");
   const isInteractionActive = !!draggingId || !!heldId;
 
-  const [isFullscreen, setIsFullscreen] = useState(false);
-
-  useEffect(() => {
-    function handleFullscreenChange() {
-      setIsFullscreen(Boolean(document.fullscreenElement));
-    }
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
-    return () => {
-      document.removeEventListener("fullscreenchange", handleFullscreenChange);
-    };
-  }, []);
-
-  const handleToggleFullscreen = useCallback(() => {
-    if (!wrapperRef.current) return;
-    if (!document.fullscreenElement) {
-      wrapperRef.current.requestFullscreen?.().catch((err) => {
-        console.warn("Fullscreen request error:", err);
-      });
-    } else {
-      document.exitFullscreen?.().catch((err) => {
-        console.warn("Exit fullscreen error:", err);
-      });
-    }
-  }, []);
+  const { isFullscreen, toggleFullscreen: handleToggleFullscreen } = useFullscreen(wrapperRef);
 
   return (
     <SandboxReachContext.Provider value={{ cameraMode, playerXZ, obstacles: colliders, heldId }}>
       <div
         ref={wrapperRef}
         className={
+          // Manual-acceptance bug fix: `inset-0` alone already pins all four
+          // edges to the viewport exactly — the redundant `h-screen w-screen`
+          // (100vh/100vw) was measuring the LAYOUT viewport, which some
+          // browsers compute inclusive of the scrollbar-gutter reservation,
+          // conflicting with `inset-0`'s own (scrollbar-exclusive) box. Two
+          // different width sources on the same element was the first real
+          // contributor to the stray-scrollbar-on-exit bug.
           isFullscreen
-            ? "fixed inset-0 z-50 h-screen w-screen bg-slate-950 flex flex-col justify-center select-none"
+            ? "fixed inset-0 z-50 bg-slate-950 flex flex-col justify-center select-none"
             : "relative w-full"
         }
       >
@@ -3048,8 +3036,8 @@ function ChemistryCanvas({
           disabled={isInteractionActive || !registryReady}
           disabledReason={
             isInteractionActive
-              ? "Переключение режимов недоступно во время активного взаимодействия с предметом"
-              : `Переключение недоступно: коллизионный реестр стен сцены инициализируется (${registeredWallCount}/4 стен)`
+              ? t.chemistry.hud.sandboxDisabledInteraction
+              : t.chemistry.hud.sandboxDisabledWalls.replace("{count}", String(registeredWallCount))
           }
           diagnostics={{
             wallBoxes,
@@ -3116,6 +3104,7 @@ const QUALITY_LABEL: Record<QualityLevel, string> = { low: "Низкое", mediu
 function EmergencyStopResetButton() {
   const { resetExperiment } = useChemistryWorkspace();
   const { resetLabSession } = useChemistryLabExperience();
+  const { t } = useLocale();
   return (
     <motion.button
       whileHover={{ scale: 1.03 }}
@@ -3125,10 +3114,10 @@ function EmergencyStopResetButton() {
         resetLabSession();
       }}
       data-testid="emergency-stop-reset"
-      className="flex items-center gap-2 rounded-full bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-500"
+      className="ds-focus-ring flex items-center gap-2 rounded-full bg-danger px-4 py-2 text-ds-body font-medium text-white transition-all hover:brightness-110"
     >
       <RotateCcw size={16} />
-      Сбросить эксперимент
+      {t.chemistry.emergencyStop.resetButton}
     </motion.button>
   );
 }
@@ -3186,12 +3175,14 @@ function ChemistryTeacherChatPanel({ simulationId, safetyWarnings }: { simulatio
   // которые не зависят от этой панели.
   if (!context || !modeConfig.showAIExplanations) return null;
   return (
-    <ChemistryTeacherChat
-      simulationId={simulationId}
-      context={context}
-      onMessageSent={recordHintUsed}
-      showFullHints={modeConfig.showFullHints}
-    />
+    <AITeacherDock>
+      <ChemistryTeacherChat
+        simulationId={simulationId}
+        context={context}
+        onMessageSent={recordHintUsed}
+        showFullHints={modeConfig.showFullHints}
+      />
+    </AITeacherDock>
   );
 }
 
@@ -3228,6 +3219,7 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
     detachFromHeatingSlot,
   } = useChemistryWorkspace();
   const { quality, setQuality } = useQuality();
+  const { t } = useLocale();
   const [pourAnimation, setPourAnimation] = useState<PourAnimationState | null>(null);
   const [addAnimation, setAddAnimation] = useState<AddAnimationState | null>(null);
   const [debugMode, setDebugMode] = useState(false);
@@ -3545,7 +3537,7 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
           onStoreInCabinet={storeItemInCabinet}
         >
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-            <div className="flex-1 rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">
+            <div className="min-w-0 flex-1 rounded-ds-panel border border-border/[0.08] bg-surface p-3 sm:p-5">
               <ChemistryCanvas
                 quality={quality}
                 onDrop={handleDrop}
@@ -3563,49 +3555,46 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
                     initial={{ opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
-                    className="mt-4 rounded-2xl border border-red-500/60 bg-red-950/40 p-4"
+                    className="mt-4 rounded-ds-panel border border-danger/60 bg-danger/10 p-4"
                     data-testid="emergency-stop-panel"
                   >
-                    <div className="mb-2 flex items-center gap-2 text-red-300">
+                    <div className="mb-2 flex items-center gap-2 text-danger">
                       <AlertOctagon size={20} />
-                      <span className="font-mono text-sm font-semibold uppercase tracking-widest">
-                        Аварийная остановка — {state.emergencyStop.level}
+                      <span className="font-mono text-ds-body font-semibold uppercase tracking-widest">
+                        {t.chemistry.emergencyStop.titlePrefix} — {state.emergencyStop.level}
                       </span>
                     </div>
-                    <ul className="mb-3 space-y-0.5 text-sm text-red-200" data-testid="emergency-stop-causes">
+                    <ul className="mb-3 space-y-0.5 text-ds-body text-danger" data-testid="emergency-stop-causes">
                       {state.emergencyStop.causes.map((cause) => (
                         <li key={cause.code}>⚠ {cause.message}</li>
                       ))}
                     </ul>
-                    <p className="mb-3 text-xs text-red-300/80">
-                      Эксперимент остановлен. Новые действия (добавление веществ, переливание, нагрев) заблокированы.
+                    <p className="mb-3 text-ds-caption text-danger/80">
+                      {t.chemistry.emergencyStop.stoppedMessage}
                     </p>
                     <EmergencyStopResetButton />
                   </motion.div>
                 )}
               </AnimatePresence>
 
-              <div className="glass-panel mt-4 grid grid-cols-1 gap-4 rounded-2xl p-4 sm:grid-cols-2">
-                <div className="flex items-center gap-2 text-xs text-slate-500 sm:col-span-2">
-                  Перетаскивай бутылки с реактивами на сосуды, сосуды — друг на друга (чтобы перелить), нажми на горелку,
-                  чтобы включить нагрев. Выбранный сосуд отмечен фиолетовым кольцом — именно его проверяет текущий
-                  эксперимент. Выбери сосуд, чтобы запечатать его (иконка замка) — герметичный сосуд накапливает
-                  давление при кипении.
+              <div className="ds-glass mt-4 grid grid-cols-1 gap-4 rounded-ds-panel p-4 sm:grid-cols-2">
+                <div className="flex items-center gap-2 text-ds-caption text-text-muted sm:col-span-2">
+                  {t.chemistry.hud.instructions}
                 </div>
 
-                <div className="flex items-center gap-2 text-xs text-slate-500 sm:col-span-2">
+                <div className="flex items-center gap-2 text-ds-caption text-text-muted sm:col-span-2">
                   <motion.button
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
                     onClick={() => setMuted((v) => !v)}
                     data-testid="sound-mute-toggle"
-                    title={muted ? "Включить звук" : "Отключить звук"}
-                    className={`flex items-center gap-1 rounded-full border px-3 py-1 transition ${
-                      muted ? "border-glass-border text-slate-500" : "border-neon-violet/50 text-neon-violet"
+                    title={muted ? t.chemistry.hud.soundOnHint : t.chemistry.hud.soundOffHint}
+                    className={`ds-focus-ring flex items-center gap-1 rounded-full border px-3 py-1 transition-colors ${
+                      muted ? "border-border/[0.12] text-text-muted" : "border-accent/50 text-accent"
                     }`}
                   >
                     {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-                    {muted ? "Звук выключен" : "Звук включен"}
+                    {muted ? t.chemistry.hud.soundOff : t.chemistry.hud.soundOn}
                   </motion.button>
 
                   {process.env.NODE_ENV !== "production" && (
@@ -3624,8 +3613,8 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
                 <ChemistryTutorialPanel />
 
                 <div className="sm:col-span-2">
-                  <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
-                    Активный сосуд (проверяется экспериментом)
+                  <label className="mb-1 block font-mono text-ds-caption uppercase tracking-widest text-text-muted">
+                    {t.chemistry.hud.activeContainerLabel}
                   </label>
                   <div className="flex gap-2">
                     {state.containers.map((c) => (
@@ -3635,19 +3624,19 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
                         whileTap={{ scale: 0.94 }}
                         onClick={() => setActiveContainer(c.id)}
                         data-testid={`select-active-${c.id}`}
-                        className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+                        className={`ds-focus-ring rounded-full border px-3 py-1 text-ds-caption font-medium transition-colors ${
                           state.activeContainerId === c.id
-                            ? "border-neon-violet text-neon-violet"
-                            : "border-glass-border text-slate-400 hover:text-slate-200"
+                            ? "border-accent text-accent"
+                            : "border-border/[0.12] text-text-muted hover:text-text-primary"
                         }`}
                       >
-                        {c.kind === "test_tube" ? "Пробирка" : c.kind === "flask" ? "Колба" : "Стакан"}
+                        {c.kind === "test_tube" ? t.chemistry.hud.containerTestTube : c.kind === "flask" ? t.chemistry.hud.containerFlask : t.chemistry.hud.containerBeaker}
                       </motion.button>
                     ))}
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1 font-mono text-xs text-slate-500 sm:col-span-2">
+                <div className="flex items-center gap-1 font-mono text-ds-caption text-text-muted sm:col-span-2">
                   {QUALITY_OPTIONS.map((level) => (
                     <motion.button
                       key={level}
@@ -3656,10 +3645,10 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
                       onClick={() => setQuality(level)}
                       data-testid={`quality-${level}`}
                       title={QUALITY_LABEL[level]}
-                      className={`rounded-full border px-2 py-1 uppercase transition ${
+                      className={`ds-focus-ring rounded-full border px-2 py-1 uppercase transition-colors ${
                         quality === level
-                          ? "border-neon-violet text-neon-violet"
-                          : "border-glass-border text-slate-500 hover:text-slate-300"
+                          ? "border-accent text-accent"
+                          : "border-border/[0.12] text-text-muted hover:text-text-primary"
                       }`}
                     >
                       {level[0]}
@@ -3682,10 +3671,8 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
                           key={w.code}
                           initial={{ opacity: 0, x: -8 }}
                           animate={{ opacity: 1, x: 0 }}
-                          className={`flex items-center gap-2 rounded-xl border p-3 text-sm ${
-                            w.severity === "danger"
-                              ? "border-red-400/40 bg-red-500/10 text-red-300"
-                              : "border-amber-400/40 bg-amber-500/10 text-amber-200"
+                          className={`flex items-center gap-2 rounded-ds-control border p-3 text-ds-body ${
+                            w.severity === "danger" ? "border-danger/40 bg-danger/10 text-danger" : "border-warning/40 bg-warning/10 text-warning"
                           }`}
                           data-testid={`safety-warning-${w.code}`}
                         >
@@ -3703,7 +3690,7 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
                     работ) без объяснения, чем они отличаются. Чисто
                     визуальное уточнение, логика ExperimentPanel не менялась. */}
                 <div className="sm:col-span-2">
-                  <h3 className="mb-2 font-mono text-xs uppercase tracking-widest text-slate-500">Быстрая проверка</h3>
+                  <h3 className="mb-2 font-mono text-ds-caption uppercase tracking-widest text-text-muted">{t.chemistry.hud.quickCheckHeading}</h3>
                   <ExperimentPanel />
                 </div>
 
@@ -3715,7 +3702,7 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
                     оценка и Лабораторный журнал. */}
                 <div className="space-y-4 sm:col-span-2">
                   <div className="flex items-center justify-between gap-2">
-                    <h3 className="font-headline text-lg font-semibold text-slate-100">Учебная лаборатория</h3>
+                    <h3 className="text-ds-title text-text-primary">{t.chemistry.hud.labHeading}</h3>
                     <LabModeSelector />
                   </div>
                   <GuidedLabExperienceSection />

@@ -3,34 +3,34 @@
 import { useState } from "react";
 import { User as UserIcon } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
+import { useLocale } from "@/lib/locale-context";
 import { apiFetch, ApiError } from "@/lib/api";
 import type { User } from "@/lib/types";
-import Loader from "@/components/ui/Loader";
-import ProtectedRoute from "@/components/ProtectedRoute";
+import { Button, Skeleton, Surface } from "@/components/design-system";
 import ProgressDashboard from "@/components/progress/ProgressDashboard";
 
-const ROLE_LABEL = {
-  student: "Ученик",
-  teacher: "Учитель",
-  admin: "Администратор",
-} as const;
-
-export default function ProfilePage() {
-  return (
-    <ProtectedRoute>
-      <ProfileContent />
-    </ProtectedRoute>
-  );
+function initialsOf(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  return (parts[0][0] + (parts[1]?.[0] ?? "")).toUpperCase();
 }
 
-function ProfileContent() {
+export default function ProfilePage() {
   const { user, refreshUser } = useAuth();
+  const { t, locale } = useLocale();
   const [fullName, setFullName] = useState(user?.full_name ?? "");
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
-  if (!user) return <Loader />;
+  if (!user) {
+    return (
+      <div className="max-w-3xl space-y-6">
+        <Skeleton className="h-8 w-40" />
+        <Skeleton className="h-64 w-full max-w-lg" />
+      </div>
+    );
+  }
 
   const isUnchanged = fullName.trim() === user.full_name;
 
@@ -46,7 +46,7 @@ function ProfileContent() {
       await refreshUser();
       setSavedAt(Date.now());
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Не удалось сохранить изменения");
+      setError(err instanceof ApiError ? err.message : t.profile.saveError);
     } finally {
       setIsSaving(false);
     }
@@ -54,63 +54,58 @@ function ProfileContent() {
 
   return (
     <div className="max-w-3xl space-y-6">
-      <h1 className="font-headline text-2xl font-bold text-slate-100">Профиль</h1>
+      <h1 className="text-ds-display text-text-primary">{t.profile.title}</h1>
 
       <div className="max-w-lg">
-      <div className="glass-panel rim-light rounded-2xl p-6">
-        <div className="mb-6 flex items-center gap-4">
-          <div className="neon-glow-indigo flex h-14 w-14 items-center justify-center rounded-full bg-brand/20 text-brand">
-            <UserIcon size={24} />
-          </div>
-          <div>
-            <p className="font-headline font-semibold text-slate-100">{user.full_name}</p>
-            <p className="font-mono text-xs uppercase tracking-widest text-slate-500">
-              {ROLE_LABEL[user.role]}
-            </p>
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          <div>
-            <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">Email</label>
-            <div className="rounded-md border border-glass-border bg-surface-container-lowest/40 px-3 py-2 text-sm text-slate-400">
-              {user.email}
+        <Surface elevated className="p-6">
+          <div className="mb-6 flex items-center gap-4">
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-accent/15 text-ds-title font-semibold text-accent">
+              {initialsOf(user.full_name) === "?" ? <UserIcon size={24} /> : initialsOf(user.full_name)}
+            </div>
+            <div>
+              <p className="font-headline font-semibold text-text-primary">{user.full_name}</p>
+              <p className="text-ds-caption uppercase tracking-widest text-text-muted">{t.shell.role[user.role]}</p>
             </div>
           </div>
 
-          <div>
-            <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
-              Полное имя
-            </label>
-            <input
-              type="text"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              className="w-full rounded-md border border-glass-border bg-surface-container-lowest/60 px-3 py-2 text-sm text-slate-100 focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
-              Дата регистрации
-            </label>
-            <div className="rounded-md border border-glass-border bg-surface-container-lowest/40 px-3 py-2 text-sm text-slate-400">
-              {new Date(user.created_at).toLocaleDateString("ru-RU")}
+          <div className="space-y-4">
+            <div>
+              <label className="mb-1 block text-ds-caption font-semibold uppercase tracking-widest text-text-muted">
+                {t.profile.emailLabel}
+              </label>
+              <div className="ds-input text-text-muted">{user.email}</div>
             </div>
+
+            <div>
+              <label htmlFor="profile-full-name" className="mb-1 block text-ds-caption font-semibold uppercase tracking-widest text-text-muted">
+                {t.profile.fullNameLabel}
+              </label>
+              <input
+                id="profile-full-name"
+                type="text"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                className="ds-input ds-focus-ring"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-ds-caption font-semibold uppercase tracking-widest text-text-muted">
+                {t.profile.joinedLabel}
+              </label>
+              <div className="ds-input text-text-muted">{new Date(user.created_at).toLocaleDateString(locale)}</div>
+            </div>
+
+            <div role="alert" className="min-h-[1.25rem] text-ds-caption text-danger">
+              {error}
+            </div>
+            {savedAt && !error && <p className="text-ds-caption text-success">{t.profile.saved}</p>}
+
+            <Button onClick={handleSave} disabled={isSaving || isUnchanged || fullName.trim().length === 0} variant="primary" className="w-full">
+              {isSaving ? t.profile.saving : t.profile.save}
+            </Button>
           </div>
-
-          {error && <p className="text-sm text-red-400">{error}</p>}
-          {savedAt && !error && <p className="text-sm text-neon-cyan">Изменения сохранены.</p>}
-
-          <button
-            onClick={handleSave}
-            disabled={isSaving || isUnchanged || fullName.trim().length === 0}
-            className="neon-glow-indigo w-full rounded-full bg-brand py-2 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
-          >
-            {isSaving ? "Сохраняем..." : "Сохранить"}
-          </button>
-        </div>
-      </div>
+        </Surface>
       </div>
 
       <ProgressDashboard />

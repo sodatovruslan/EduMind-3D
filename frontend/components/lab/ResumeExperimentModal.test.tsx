@@ -3,6 +3,15 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import ResumeExperimentModal from "./ResumeExperimentModal";
 import type { ChemistrySaveSnapshotV1 } from "@/lib/chemistry-save-schema";
+import { LocaleProvider } from "@/lib/locale-context";
+import { ru } from "@/lib/i18n/dictionaries/ru";
+
+// D6.2 — ResumeExperimentModal now reads copy from useLocale(), so every
+// render needs a LocaleProvider ancestor (default locale "ru" keeps the
+// expected strings below unchanged from before this stage).
+function renderModal(ui: React.ReactElement) {
+  return render(<LocaleProvider>{ui}</LocaleProvider>);
+}
 
 describe("Stage S-8.4 — Resume Experiment Modal UI Tests", () => {
   afterEach(() => {
@@ -34,7 +43,7 @@ describe("Stage S-8.4 — Resume Experiment Modal UI Tests", () => {
   };
 
   it("1. Modal does NOT render when isOpen is false or snapshot is null", () => {
-    const { container } = render(
+    const { container } = renderModal(
       <ResumeExperimentModal
         isOpen={false}
         experimentTitle="Нагрев воды"
@@ -48,7 +57,7 @@ describe("Stage S-8.4 — Resume Experiment Modal UI Tests", () => {
   });
 
   it("2. Modal renders title, step number (4), formatted date and action buttons when open", () => {
-    render(
+    renderModal(
       <ResumeExperimentModal
         isOpen={true}
         experimentTitle="Нагрев воды"
@@ -67,9 +76,25 @@ describe("Stage S-8.4 — Resume Experiment Modal UI Tests", () => {
     expect(screen.getByTestId("resume-modal-cancel")).toBeDefined();
   });
 
+  it("D9: the icon-only close (X) button has an accessible name, not just an icon", () => {
+    renderModal(
+      <ResumeExperimentModal
+        isOpen={true}
+        experimentTitle="Нагрев воды"
+        saveSnapshot={sampleSnapshot}
+        onResume={vi.fn()}
+        onRestart={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    );
+
+    const closeButton = screen.getByTestId("resume-modal-close");
+    expect(closeButton.getAttribute("aria-label")).toBeTruthy();
+  });
+
   it("3. Clicking Continue triggers onResume callback", () => {
     const onResume = vi.fn();
-    render(
+    renderModal(
       <ResumeExperimentModal
         isOpen={true}
         experimentTitle="Нагрев воды"
@@ -84,9 +109,10 @@ describe("Stage S-8.4 — Resume Experiment Modal UI Tests", () => {
     expect(onResume).toHaveBeenCalledTimes(1);
   });
 
-  it("4. Clicking Restart triggers onRestart callback", () => {
+  it("4. Clicking Restart triggers onRestart callback only after a destructive confirmation is accepted", () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     const onRestart = vi.fn();
-    render(
+    renderModal(
       <ResumeExperimentModal
         isOpen={true}
         experimentTitle="Нагрев воды"
@@ -98,12 +124,33 @@ describe("Stage S-8.4 — Resume Experiment Modal UI Tests", () => {
     );
 
     fireEvent.click(screen.getByTestId("resume-modal-restart"));
+    expect(window.confirm).toHaveBeenCalledWith(ru.chemistry.resume.restartConfirm);
     expect(onRestart).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
+  });
+
+  it("D10: declining the destructive confirmation does NOT discard the save", () => {
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const onRestart = vi.fn();
+    renderModal(
+      <ResumeExperimentModal
+        isOpen={true}
+        experimentTitle="Нагрев воды"
+        saveSnapshot={sampleSnapshot}
+        onResume={vi.fn()}
+        onRestart={onRestart}
+        onCancel={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId("resume-modal-restart"));
+    expect(onRestart).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
   });
 
   it("5. Clicking Cancel triggers onCancel callback", () => {
     const onCancel = vi.fn();
-    render(
+    renderModal(
       <ResumeExperimentModal
         isOpen={true}
         experimentTitle="Нагрев воды"

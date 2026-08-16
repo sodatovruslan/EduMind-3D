@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.simulation import SimulationModule
+from app.models.simulation import SimulationModule, SimulationVisibility
 
 
 class SimulationRead(BaseModel):
@@ -11,6 +11,7 @@ class SimulationRead(BaseModel):
     id: str
     title: str
     module: SimulationModule
+    visibility: SimulationVisibility
     subject: str
     config: dict
     difficulty: int

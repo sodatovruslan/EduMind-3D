@@ -54,10 +54,19 @@ async def test_class_stats_aggregates_results(client, db_session):
         headers=student_headers,
     )
 
-    await _register_and_login(client, "student2@example.com")  # ученик без попыток
+    student2_headers = await _register_and_login(client, "student2@example.com")  # ученик без попыток
 
     teacher_headers = await _register_and_login(client, "teacher@example.com")
     await _promote_to_teacher(db_session, "teacher@example.com")
+    student1_id = (await client.get("/api/auth/me", headers=student_headers)).json()["id"]
+    student2_id = (await client.get("/api/auth/me", headers=student2_headers)).json()["id"]
+    classroom = (await client.post("/api/classes", headers=teacher_headers, json={"name": "Stats"})).json()
+    for student_id in (student1_id, student2_id):
+        assert (await client.post(
+            f"/api/classes/{classroom['id']}/students",
+            headers=teacher_headers,
+            json={"student_id": student_id},
+        )).status_code == 201
 
     response = await client.get("/api/results/stats", headers=teacher_headers)
     assert response.status_code == 200

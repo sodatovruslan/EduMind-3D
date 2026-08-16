@@ -10,6 +10,7 @@ class LabResultRead(BaseModel):
     user_id: str
     simulation_id: str
     simulation_title: str
+    module: str
     actions_log: list[dict]
     score: float | None
     feedback: dict | None

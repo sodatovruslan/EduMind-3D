@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import { useFrame, type ThreeEvent } from "@react-three/fiber";
+import { useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { Html, QuadraticBezierLine, MeshTransmissionMaterial, useGLTF } from "@react-three/drei";
-import { Play, Pause, RotateCcw } from "lucide-react";
+import { Play, Pause, RotateCcw, AlertTriangle } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import CanvasShell from "@/components/scenes/CanvasShell";
 import AITeacherChat from "@/components/ai/AITeacherChat";
 import TaskPanel from "@/components/tasks/TaskPanel";
@@ -14,6 +15,7 @@ import {
   useExperimentState,
 } from "@/components/core/ExperimentStateProvider";
 import { WireDragProvider, WireDragSurface, useWireDrag } from "@/components/core/WireDragProvider";
+import { ComponentDragProvider, ComponentDragSurface, useComponentDrag } from "@/components/core/ComponentDragProvider";
 import ConnectionPoint from "@/components/core/ConnectionPoint";
 import { TutorialProvider, useTutorial } from "@/components/tutorial/TutorialProvider";
 import TutorialPanel from "@/components/tutorial/TutorialPanel";
@@ -22,30 +24,53 @@ import ElectricityExperimentCatalogBrowser from "@/components/lab/ElectricityExp
 import ElectricityGuidedLabPanel from "@/components/lab/ElectricityGuidedLabPanel";
 import ElectricityLabReportPanel from "@/components/lab/ElectricityLabReportPanel";
 import ElectricityLabNotebookPanel from "@/components/lab/ElectricityLabNotebookPanel";
+import ElectricityResumeModal from "@/components/lab/ElectricityResumeModal";
+import AITeacherDock from "@/components/simulation/AITeacherDock";
 import { COMPONENT_INFO } from "@/lib/component-info";
 import { useSimulationClock } from "@/lib/use-simulation-clock";
 import { useQuality, type QualityLevel } from "@/lib/quality-context";
+import { useFullscreen } from "@/lib/useFullscreen";
+import { isTypingTarget } from "@/lib/dom-input-utils";
+import { SandboxModeOverlay } from "@/components/chemistry/sandbox/SandboxModeOverlay";
+import { type CameraMode } from "@/lib/chemistry-lab-modes";
+import { checkPlayerReach, type RoomInteriorBounds } from "@/lib/sandbox-locomotion";
 import { buildAIContext } from "@/lib/ai-context-builder";
 import { solveCircuit, bulbBrightness, type CircuitComponent, type CircuitSolution, type Connection } from "@/lib/circuit-engine";
+import {
+  checkAmmeterPlacement,
+  checkVoltmeterPlacement,
+  ammeterPlacementMessage,
+  voltmeterPlacementMessage,
+} from "@/lib/measurement-validation";
+import { checkElectricalSafety, type SafetyWarning } from "@/lib/electricity-safety";
 import { apiFetch, ApiError } from "@/lib/api";
 import { playConnect, playDisconnect, playFuseBlow, playPowerOn, playSwitchClick } from "@/lib/sound-effects";
-import { ACHIEVEMENTS } from "@/lib/achievements";
+import { ACHIEVEMENT_EMOJI } from "@/lib/achievements";
 import { explainError } from "@/lib/error-explanations";
 import { submitLabCompleted } from "@/lib/progress-client";
 import type { Simulation } from "@/lib/types";
+import { useLocale } from "@/lib/locale-context";
 
 // Guided Onboarding: наведение курсора в любую точку компонента (не только
 // на клемму) показывает всплывающую подпись с названием — общий хук вместо
-// повторения одной и той же пары обработчиков в каждом компоненте
-function useHoverTooltip() {
+// повторения одной и той же пары обработчиков в каждом компоненте.
+// Stage S9.8 — необязательный курсор на наведении для компонентов, у
+// которых наведение реально приводит к действию: "pointer" для Switch
+// (клик переключает), "grab" для всех остальных с post-S9.9 — их теперь
+// можно взять и перетащить (см. useComponentPlacement ниже).
+function useHoverTooltip(cursor?: "pointer" | "grab") {
   const [hovered, setHovered] = useState(false);
   return {
     hovered,
     onPointerOver: (e: ThreeEvent<PointerEvent>) => {
       e.stopPropagation();
       setHovered(true);
+      if (cursor) document.body.style.cursor = cursor;
     },
-    onPointerOut: () => setHovered(false),
+    onPointerOut: () => {
+      setHovered(false);
+      if (cursor) document.body.style.cursor = "auto";
+    },
   };
 }
 
@@ -238,8 +263,58 @@ function useSuggestedTerminals(): [string, string] | null {
   return tutorialTerminals ?? labTerminals;
 }
 
+// post-S9.9 sandbox acceptance fix — исходная раскладка стенда (та же,
+// что раньше была захардкожена прямо в position={...} каждого компонента)
+// теперь служит ТОЛЬКО дефолтом для компонентов, у которых ещё нет
+// сохранённой позиции (component.position === undefined) — уже существующие
+// сохранения/тесты, не знающие о position, продолжают работать один в один.
+const DEFAULT_COMPONENT_POSITIONS: Record<string, [number, number, number]> = {
+  battery: [-3.2, 0.28, 0],
+  resistor: [-1.5, 0.28, 0],
+  bulb: [0.2, 0.6, 0],
+  switch: [1.9, 0.1, 0],
+  ammeter: [3.2, 0.28, -0.45],
+  voltmeter: [-1.5, 1.05, 0.9],
+  fuse: [1.4, 0.28, -1.6],
+};
+
+// Immersive interaction acceptance fix — комната для WASD-перемещения
+// (Stage S-7 v2 CanvasShell cameraMode="sandbox", уже общая инфраструктура,
+// см. sandbox-locomotion.ts). Статичный прямоугольник с запасом вокруг
+// раскладки стенда по умолчанию — Electricity Lab не регистрирует стены
+// динамически, как Chemistry World, ей это не нужно: стенд компактнее и
+// не переставляется целиком, только отдельные приборы на нём.
+const ELECTRICITY_ROOM_BOUNDS: RoomInteriorBounds = { minX: -6, maxX: 6, minZ: -4, maxZ: 4 };
+
+// дистанция, с которой уже показывается подсказка "E — взять" — переиспользует
+// ту же самую функцию проверки (checkPlayerReach), что и Chemistry World,
+// не изобретает собственную математику расстояния
+const INTERACT_REACH_M = 1.8;
+
+// единая точка "откуда компонент знает свою текущую позицию на верстаке" —
+// committed-значение из ExperimentStateProvider (реальное доменное
+// состояние, течёт через тот же reducer и S9.7 autosave без изменений их
+// схемы) либо live-превью во время активного перетаскивания ИМЕННО этого
+// компонента. Возвращает и обработчик начала захвата.
+function useComponentPlacement(componentId: string) {
+  const { state } = useExperimentState();
+  const { draggingComponentId, previewPosition, startDrag } = useComponentDrag();
+  const defaultPosition = DEFAULT_COMPONENT_POSITIONS[componentId] ?? [0, 0.28, 0];
+  const committedPosition = state.components.find((c) => c.id === componentId)?.position ?? defaultPosition;
+  const isDragging = draggingComponentId === componentId;
+  const position = isDragging && previewPosition ? previewPosition : committedPosition;
+
+  function onPointerDown(e: ThreeEvent<PointerEvent>) {
+    e.stopPropagation();
+    startDrag(componentId, committedPosition);
+  }
+
+  return { position, isDragging, onPointerDown };
+}
+
 function Battery() {
-  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("grab");
+  const { position, isDragging, onPointerDown } = useComponentPlacement("battery");
   const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.battery;
   // targetSize=0.9 — та же длина, что была у процедурного cylinderGeometry
@@ -252,7 +327,13 @@ function Battery() {
   // с ним она вставала вертикально ("солдатиком").
   const model = usePreparedGLTF(MODEL_PATHS.battery, 0.9);
   return (
-    <group position={[-3.2, 0.28, 0]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
+    <group
+      position={position}
+      scale={isDragging ? 1.06 : 1}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+      onPointerDown={onPointerDown}
+    >
       {/* реалистичная GLB-модель батареи вместо процедурного цилиндра —
           масштаб посчитан автофитом, модель уже лежит вдоль нужной оси */}
       <primitive object={model} />
@@ -276,18 +357,26 @@ function Battery() {
       <Html position={[0.4, 0.32, 0]} center distanceFactor={8} style={{ pointerEvents: "none" }}>
         <div className="pointer-events-none text-lg font-bold leading-none text-slate-300">−</div>
       </Html>
-      {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} />}
+      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} />}
     </group>
   );
 }
 
 function Resistor() {
   const bandColors = ["#a16207", "#000000", "#dc2626"];
-  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("grab");
+  const { position, isDragging, onPointerDown } = useComponentPlacement("resistor");
   const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.resistor;
   return (
-    <group position={[-1.5, 0.28, 0]} rotation={[0, 0, Math.PI / 2]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
+    <group
+      position={position}
+      rotation={[0, 0, Math.PI / 2]}
+      scale={isDragging ? 1.06 : 1}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+      onPointerDown={onPointerDown}
+    >
       {/* керамическое тело */}
       <mesh castShadow>
         <cylinderGeometry args={[0.13, 0.13, 0.7, 20]} />
@@ -310,7 +399,7 @@ function Resistor() {
       </mesh>
       <ConnectionPoint id="resistor_a" position={[0, 0.4, 0]} suggested={suggestedTerminals?.includes("resistor_a") ?? false} />
       <ConnectionPoint id="resistor_b" position={[0, -0.4, 0]} suggested={suggestedTerminals?.includes("resistor_b") ?? false} />
-      {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0, 0.2]} />}
+      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0, 0.2]} />}
     </group>
   );
 }
@@ -318,7 +407,8 @@ function Resistor() {
 function Bulb({ brightness }: { brightness: number }) {
   const lightRef = useRef<THREE.PointLight>(null);
   const filamentMaterialRef = useRef<THREE.MeshStandardMaterial | null>(null);
-  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("grab");
+  const { position, isDragging, onPointerDown } = useComponentPlacement("bulb");
   const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.bulb;
   // targetSize=0.68 — высота старой сборки (цоколь -0.4 .. верх стекла
@@ -358,20 +448,28 @@ function Bulb({ brightness }: { brightness: number }) {
   });
 
   return (
-    <group position={[0.2, 0.6, 0]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
+    <group
+      position={position}
+      scale={isDragging ? 1.06 : 1}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+      onPointerDown={onPointerDown}
+    >
       {/* реалистичная GLB-модель лампы накаливания (стекло/нить/цоколь уже
           смоделированы отдельными мешами) вместо процедурного шара+тора */}
       <primitive object={model} />
       <pointLight ref={lightRef} color="#fde047" intensity={0} distance={4} decay={2} />
       <ConnectionPoint id="bulb_a" position={[-0.42, -0.6, 0]} suggested={suggestedTerminals?.includes("bulb_a") ?? false} />
       <ConnectionPoint id="bulb_b" position={[0.42, -0.6, 0]} suggested={suggestedTerminals?.includes("bulb_b") ?? false} />
-      {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.4, 0]} />}
+      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.4, 0]} />}
     </group>
   );
 }
 
 function Switch({ isClosed, onToggle }: { isClosed: boolean; onToggle: () => void }) {
-  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("pointer");
+  const { position, isDragging, onPointerDown } = useComponentPlacement("switch");
+  const { consumeJustDragged } = useComponentDrag();
   const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.switch;
   // targetSize=0.8 — модель это компактный тумблер (мировой bbox после
@@ -390,11 +488,26 @@ function Switch({ isClosed, onToggle }: { isClosed: boolean; onToggle: () => voi
   });
 
   return (
-    <group position={[1.9, 0.1, 0]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
-      <primitive object={base} onClick={onToggle} />
+    <group
+      position={position}
+      scale={isDragging ? 1.06 : 1}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+      onPointerDown={onPointerDown}
+    >
+      <primitive
+        object={base}
+        onClick={() => {
+          // после реального перетаскивания (не клика) отпускание кнопки
+          // мыши приходится на тот же меш — без этой проверки тумблер
+          // паразитно переключался бы сразу после каждого перемещения
+          if (consumeJustDragged("switch")) return;
+          onToggle();
+        }}
+      />
       <ConnectionPoint id="switch_a" position={[-0.4, 0.13, 0]} suggested={suggestedTerminals?.includes("switch_a") ?? false} />
       <ConnectionPoint id="switch_b" position={[0.4, 0.13, 0]} suggested={suggestedTerminals?.includes("switch_b") ?? false} />
-      {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.35, 0]} />}
+      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.35, 0]} />}
     </group>
   );
 }
@@ -405,12 +518,21 @@ function MeterHousing({
   value,
   unit,
   testId,
+  placementStatus = "valid",
+  warningMessage = null,
 }: {
   position: [number, number, number];
   label: string;
   value: number;
   unit: string;
   testId: string;
+  // Stage S9.3: неправильное подключение (амперметр параллельно/вольтметр
+  // последовательно) — data-value ниже ВСЕГДА остаётся реальным числом от
+  // production-солвера (ничего не скрываем от тестов/расчётов), но видимый
+  // текст на табло заменяется понятным предупреждением вместо
+  // вводящего в заблуждение числа.
+  placementStatus?: string;
+  warningMessage?: string | null;
 }) {
   const displayRef = useRef<HTMLDivElement>(null);
   const displayedValueRef = useRef(value);
@@ -422,7 +544,9 @@ function MeterHousing({
     // каждый кадр (data-value ниже остается точным для тестов/расчетов)
     displayedValueRef.current = THREE.MathUtils.lerp(displayedValueRef.current, value, Math.min(1, delta * 5));
     if (displayRef.current) {
-      displayRef.current.textContent = `${displayedValueRef.current.toFixed(2)} ${unit}`;
+      displayRef.current.textContent = warningMessage
+        ? "⚠ Неверно"
+        : `${displayedValueRef.current.toFixed(2)} ${unit}`;
     }
   });
 
@@ -444,42 +568,89 @@ function MeterHousing({
         <div
           data-testid={testId}
           data-value={value}
-          className="pointer-events-none rounded bg-black/80 px-2 py-1 font-mono text-[10px] text-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.45)]"
+          data-placement-status={placementStatus}
+          className={`pointer-events-none rounded px-2 py-1 font-mono text-[10px] shadow-[0_0_8px_rgba(16,185,129,0.45)] ${
+            warningMessage ? "bg-red-950/90 text-red-400" : "bg-black/80 text-emerald-400"
+          }`}
+          title={warningMessage ?? undefined}
         >
-          <div className="text-[8px] uppercase tracking-widest text-emerald-600">{label}</div>
+          <div className={`text-[8px] uppercase tracking-widest ${warningMessage ? "text-red-500" : "text-emerald-600"}`}>
+            {label}
+          </div>
           <div ref={displayRef} className="tabular-nums">
-            {value.toFixed(2)} {unit}
+            {warningMessage ? "⚠ Неверно" : `${value.toFixed(2)} ${unit}`}
           </div>
         </div>
       </Html>
+      {warningMessage && (
+        <Html position={[0, 0.32, 0.16]} center distanceFactor={7} style={{ pointerEvents: "none" }}>
+          <div
+            data-testid={`${testId}-warning`}
+            className="pointer-events-none w-40 whitespace-normal rounded-lg border border-red-400/40 bg-red-950/90 px-2 py-1 text-center text-[10px] leading-tight text-red-200 shadow-lg"
+          >
+            {warningMessage}
+          </div>
+        </Html>
+      )}
     </group>
   );
 }
 
-function Ammeter({ currentA }: { currentA: number }) {
-  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
+function Ammeter({ currentA, placementStatus, warningMessage }: { currentA: number; placementStatus: string; warningMessage: string | null }) {
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("grab");
+  const { position, isDragging, onPointerDown } = useComponentPlacement("ammeter");
   const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.ammeter;
   return (
-    <group position={[3.2, 0.28, -0.45]} rotation={[0, Math.PI / 2, 0]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
-      <MeterHousing position={[0, 0, 0]} label="A" value={currentA} unit="A" testId="ammeter-reading" />
+    <group
+      position={position}
+      rotation={[0, Math.PI / 2, 0]}
+      scale={isDragging ? 1.06 : 1}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+      onPointerDown={onPointerDown}
+    >
+      <MeterHousing
+        position={[0, 0, 0]}
+        label="A"
+        value={currentA}
+        unit="A"
+        testId="ammeter-reading"
+        placementStatus={placementStatus}
+        warningMessage={warningMessage}
+      />
       <ConnectionPoint id="ammeter_a" position={[0, 0, 0.45]} suggested={suggestedTerminals?.includes("ammeter_a") ?? false} />
       <ConnectionPoint id="ammeter_b" position={[0, 0, -0.45]} suggested={suggestedTerminals?.includes("ammeter_b") ?? false} />
-      {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.3, 0]} />}
+      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.3, 0]} />}
     </group>
   );
 }
 
-function Voltmeter({ voltageV }: { voltageV: number }) {
-  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
+function Voltmeter({ voltageV, placementStatus, warningMessage }: { voltageV: number; placementStatus: string; warningMessage: string | null }) {
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("grab");
+  const { position, isDragging, onPointerDown } = useComponentPlacement("voltmeter");
   const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.voltmeter;
   return (
-    <group position={[-1.5, 1.05, 0.9]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
-      <MeterHousing position={[0, 0, 0]} label="V" value={voltageV} unit="V" testId="voltmeter-reading" />
+    <group
+      position={position}
+      scale={isDragging ? 1.06 : 1}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+      onPointerDown={onPointerDown}
+    >
+      <MeterHousing
+        position={[0, 0, 0]}
+        label="V"
+        value={voltageV}
+        unit="V"
+        testId="voltmeter-reading"
+        placementStatus={placementStatus}
+        warningMessage={warningMessage}
+      />
       <ConnectionPoint id="voltmeter_a" position={[-0.4, 0, 0]} color={BRASS_COLOR} suggested={suggestedTerminals?.includes("voltmeter_a") ?? false} />
       <ConnectionPoint id="voltmeter_b" position={[0.4, 0, 0]} color={BRASS_COLOR} suggested={suggestedTerminals?.includes("voltmeter_b") ?? false} />
-      {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.3, 0]} />}
+      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.3, 0]} />}
     </group>
   );
 }
@@ -526,11 +697,19 @@ function FuseParticles({ active, timeScale, count }: { active: boolean; timeScal
 function Fuse({ isBlown, justBlown, timeScale }: { isBlown: boolean; justBlown: boolean; timeScale: number }) {
   const { preset } = useQuality();
   const particleCount = Math.min(preset.maxParticles, 14);
-  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip();
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("grab");
+  const { position, isDragging, onPointerDown } = useComponentPlacement("fuse");
   const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.fuse;
   return (
-    <group position={[1.4, 0.28, -1.6]} rotation={[0, 0, Math.PI / 2]} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
+    <group
+      position={position}
+      rotation={[0, 0, Math.PI / 2]}
+      scale={isDragging ? 1.06 : 1}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+      onPointerDown={onPointerDown}
+    >
       <mesh castShadow>
         <cylinderGeometry args={[0.09, 0.09, 0.5, 16]} />
         <MeshTransmissionMaterial thickness={0.03} roughness={0.1} transmission={0.85} ior={1.4} color={isBlown ? "#1c1917" : "#e0f2fe"} resolution={64} samples={1} />
@@ -542,7 +721,7 @@ function Fuse({ isBlown, justBlown, timeScale }: { isBlown: boolean; justBlown: 
       <FuseParticles active={justBlown} timeScale={timeScale} count={particleCount} />
       <ConnectionPoint id="fuse_a" position={[0, 0.3, 0]} suggested={suggestedTerminals?.includes("fuse_a") ?? false} />
       <ConnectionPoint id="fuse_b" position={[0, -0.3, 0]} suggested={suggestedTerminals?.includes("fuse_b") ?? false} />
-      {hovered && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0, 0.2]} />}
+      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0, 0.2]} />}
     </group>
   );
 }
@@ -555,6 +734,12 @@ function Fuse({ isBlown, justBlown, timeScale }: { isBlown: boolean; justBlown: 
 function WireTube({ a, b, onClick }: { a: THREE.Vector3; b: THREE.Vector3; onClick: (e: { stopPropagation: () => void }) => void }) {
   const capRef = useRef<THREE.Group>(null);
   const mountedAtRef = useRef(performance.now());
+  // Stage S9.8 — Sandbox UX: провод УЖЕ кликабелен (клик — разрыв
+  // соединения, инструкция под сценой это описывает), но до сих пор не
+  // было никакой подсказки, что именно ЭТОТ провод под курсором можно
+  // удалить — ни курсора, ни подсветки. Тот же язык, что и у danger-цвета
+  // предупреждений безопасности (красный = "уберёт/опасно").
+  const [hovered, setHovered] = useState(false);
 
   const geometry = useMemo(() => {
     const mid = a.clone().add(b).multiplyScalar(0.5);
@@ -576,8 +761,36 @@ function WireTube({ a, b, onClick }: { a: THREE.Vector3; b: THREE.Vector3; onCli
 
   return (
     <group>
-      <mesh geometry={geometry} onClick={onClick} castShadow>
-        <meshStandardMaterial color="#18181b" roughness={0.7} metalness={0.05} />
+      <mesh
+        geometry={geometry}
+        onClick={(e: ThreeEvent<MouseEvent>) => {
+          // клик удаляет именно ЭТОТ провод -> сразу после этого мешу
+          // нечего будет наводить, и onPointerOut ниже никогда не
+          // сработает (R3F не эмулирует pointerleave при размонтировании
+          // объекта) — без явного сброса здесь курсор застрял бы на
+          // "pointer" до следующего наведения на что-то другое интерактивное
+          document.body.style.cursor = "auto";
+          setHovered(false);
+          onClick(e);
+        }}
+        onPointerOver={(e: ThreeEvent<PointerEvent>) => {
+          e.stopPropagation();
+          setHovered(true);
+          document.body.style.cursor = "pointer";
+        }}
+        onPointerOut={() => {
+          setHovered(false);
+          document.body.style.cursor = "auto";
+        }}
+        castShadow
+      >
+        <meshStandardMaterial
+          color={hovered ? "#ef4444" : "#18181b"}
+          emissive={hovered ? "#ef4444" : "#000000"}
+          emissiveIntensity={hovered ? 0.6 : 0}
+          roughness={0.7}
+          metalness={0.05}
+        />
       </mesh>
       <group ref={capRef}>
         <mesh position={a}>
@@ -596,6 +809,17 @@ function WireTube({ a, b, onClick }: { a: THREE.Vector3; b: THREE.Vector3; onCli
 function Wires() {
   const { state, removeConnection } = useExperimentState();
   const { getTerminalPosition } = useWireDrag();
+  // post-S9.9: пока идёт перетаскивание компонента, мировые позиции его
+  // клемм меняются каждый кадр (см. ConnectionPoint.tsx), но простое
+  // мутирование Map-а в WireDragProvider само по себе не триггерит
+  // ре-рендер этого компонента — принудительно тикаем ТОЛЬКО во время
+  // активного драга, чтобы a/b ниже подхватывали свежие позиции и провод
+  // визуально следовал за компонентом в реальном времени
+  const { draggingComponentId } = useComponentDrag();
+  const [, forceTick] = useState(0);
+  useFrame(() => {
+    if (draggingComponentId) forceTick((t) => (t + 1) % 1_000_000);
+  });
 
   return (
     <>
@@ -631,23 +855,172 @@ function PendingWirePreview() {
   const mid = from.clone().add(pendingPoint).multiplyScalar(0.5);
   mid.y -= 0.12;
   return (
-    <QuadraticBezierLine
-      start={from}
-      end={pendingPoint}
-      mid={mid}
-      color="#facc15"
-      lineWidth={1.5}
-      dashed
-      dashScale={4}
-      transparent
-      opacity={0.6}
-    />
+    <>
+      <QuadraticBezierLine
+        start={from}
+        end={pendingPoint}
+        mid={mid}
+        color="#facc15"
+        lineWidth={1.5}
+        dashed
+        dashScale={4}
+        transparent
+        opacity={0.6}
+      />
+      {/* Stage S9.8 — Sandbox UX: отмена клавишей Esc уже работала (см.
+          WireDragProvider), но никак не была видна студенту — единственный
+          способ узнать про неё был прочитать код. Подсказка появляется
+          только во время активного жеста и исчезает вместе с ним — не
+          добавляет постоянного визуального шума в остальное время. */}
+      <Html position={pendingPoint} center distanceFactor={8} style={{ pointerEvents: "none" }}>
+        <div
+          className="pointer-events-none whitespace-nowrap rounded-lg border border-amber-400/30 bg-slate-900/90 px-2 py-1 text-[11px] text-amber-200 shadow-lg"
+          style={{ transform: "translateY(-20px)" }}
+        >
+          Отпустите на клемме для соединения · Esc — отмена
+        </div>
+      </Html>
+    </>
   );
 }
 
-function CircuitScene({ solution, timeScale }: { solution: CircuitSolution; timeScale: number }) {
+// какие компоненты стенда доступны через E-взаимодействие — те же 7,
+// что уже поддерживают перетаскивание мышью (см. useComponentPlacement)
+const INTERACTABLE_COMPONENT_IDS = ["battery", "resistor", "bulb", "switch", "ammeter", "voltmeter", "fuse"] as const;
+
+// Immersive interaction acceptance fix — FPS-режим ("E — взять") для тех
+// же 7 компонентов, что уже двигаются мышью в orbit-режиме. Переиспользует
+// ГОТОВУЮ, полностью общую checkPlayerReach (та же функция, что и Chemistry
+// World) вместо изобретения собственной математики дистанции, и ГОТОВУЮ
+// машину состояний ComponentDragProvider (startDrag/updatePreviewPosition/
+// commitDrag) вместо параллельной системы "предмет в руках" — как и
+// требовалось: "existing component-movement system handles repositioning".
+// Раздельно от WASD-контроллера (SandboxLocomotionController) — эта модель
+// отвечает только за подсказку/захват/переноску, не за движение камеры.
+function ElectricityProximityInteraction({ cameraMode }: { cameraMode: CameraMode }) {
+  const { camera } = useThree();
+  const { state } = useExperimentState();
+  const { draggingComponentId, dragSource, startDrag, updatePreviewPosition, commitDrag } = useComponentDrag();
+  const [nearestId, setNearestId] = useState<string | null>(null);
+  const nearestIdRef = useRef<string | null>(null);
+  const carryDistance = 1.1;
+
+  function resolvePosition(id: string): [number, number, number] {
+    return state.components.find((c) => c.id === id)?.position ?? DEFAULT_COMPONENT_POSITIONS[id] ?? [0, 0.28, 0];
+  }
+
+  useFrame(() => {
+    if (cameraMode !== "sandbox") {
+      if (nearestIdRef.current !== null) {
+        nearestIdRef.current = null;
+        setNearestId(null);
+      }
+      return;
+    }
+
+    // во время переноски по клавише E — обновлять live-превью позиции
+    // каждый кадр перед камерой (та же проекция взгляда, что и Chemistry
+    // World's held-rig), подсказка "взять" при этом не показывается
+    if (draggingComponentId && dragSource === "keyboard") {
+      const dir = camera.getWorldDirection(new THREE.Vector3());
+      const carryPoint = new THREE.Vector3(
+        camera.position.x + dir.x * carryDistance,
+        0,
+        camera.position.z + dir.z * carryDistance
+      );
+      updatePreviewPosition(carryPoint);
+      if (nearestIdRef.current !== null) {
+        nearestIdRef.current = null;
+        setNearestId(null);
+      }
+      return;
+    }
+
+    // мышиный драг (компонента или провода) активен — подсказка "E — взять"
+    // не должна мешать/конкурировать с уже идущим взаимодействием
+    if (draggingComponentId) {
+      if (nearestIdRef.current !== null) {
+        nearestIdRef.current = null;
+        setNearestId(null);
+      }
+      return;
+    }
+
+    const playerXZ: [number, number] = [camera.position.x, camera.position.z];
+    let closestId: string | null = null;
+    let closestDistance = Infinity;
+    for (const id of INTERACTABLE_COMPONENT_IDS) {
+      const pos = resolvePosition(id);
+      const check = checkPlayerReach(playerXZ, [pos[0], pos[2]], cameraMode, INTERACT_REACH_M);
+      if (check.allowed && check.distance < closestDistance) {
+        closestDistance = check.distance;
+        closestId = id;
+      }
+    }
+    if (closestId !== nearestIdRef.current) {
+      nearestIdRef.current = closestId;
+      setNearestId(closestId);
+    }
+  });
+
+  useEffect(() => {
+    if (cameraMode !== "sandbox") return;
+
+    function handleKeyDown(e: KeyboardEvent) {
+      if (isTypingTarget(e.target)) return;
+      if (e.code !== "KeyE" && e.key !== "e" && e.key !== "E") return;
+
+      if (draggingComponentId && dragSource === "keyboard") {
+        commitDrag();
+        return;
+      }
+      if (draggingComponentId) return; // мышиный драг — E ничего не делает
+      const id = nearestIdRef.current;
+      if (!id) return;
+      startDrag(id, resolvePosition(id), "keyboard");
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraMode, draggingComponentId, dragSource, startDrag, commitDrag]);
+
+  if (cameraMode !== "sandbox") return null;
+
+  const isCarrying = !!draggingComponentId && dragSource === "keyboard";
+  const promptText = isCarrying
+    ? "E — отпустить · Esc — отменить"
+    : nearestId
+      ? `E — взять: ${COMPONENT_INFO[nearestId]?.name ?? nearestId}`
+      : null;
+
+  if (!promptText) return null;
+
+  return (
+    <Html fullscreen style={{ pointerEvents: "none" }}>
+      <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md border border-white/10 bg-slate-900/85 px-3 py-1.5 text-xs text-slate-100">
+        {promptText}
+      </div>
+    </Html>
+  );
+}
+
+function CircuitScene({
+  solution,
+  timeScale,
+  safetyWarnings,
+  cameraMode,
+}: {
+  solution: CircuitSolution;
+  timeScale: number;
+  safetyWarnings: SafetyWarning[];
+  cameraMode: CameraMode;
+}) {
   const { state, updateComponent, logEvent } = useExperimentState();
   const shortLoggedRef = useRef(false);
+  const overloadLoggedRef = useRef(false);
+  const unsafeMeasurementLoggedRef = useRef(false);
+  const unsafeConnectionLoggedRef = useRef(false);
 
   useEffect(() => {
     if (solution.fuseToBlowId) {
@@ -666,6 +1039,37 @@ function CircuitScene({ solution, timeScale }: { solution: CircuitSolution; time
     if (!solution.isShortCircuit) shortLoggedRef.current = false;
   }, [solution.isShortCircuit, logEvent]);
 
+  // Stage S9.4 — Safety Event Engine: тот же паттерн "залогировать один раз,
+  // пока предупреждение не исчезло", что уже использован выше для
+  // short_circuit — ничего не меняет в самом event-логе, просто добавляет
+  // 3 новых кода, производных от electricity-safety.ts.
+  useEffect(() => {
+    const hasOverload = safetyWarnings.some((w) => w.code === "overload");
+    if (hasOverload && !overloadLoggedRef.current) {
+      overloadLoggedRef.current = true;
+      logEvent({ type: "overload", code: "overload" });
+    }
+    if (!hasOverload) overloadLoggedRef.current = false;
+  }, [safetyWarnings, logEvent]);
+
+  useEffect(() => {
+    const hasUnsafeMeasurement = safetyWarnings.some((w) => w.code === "unsafe_measurement");
+    if (hasUnsafeMeasurement && !unsafeMeasurementLoggedRef.current) {
+      unsafeMeasurementLoggedRef.current = true;
+      logEvent({ type: "unsafe_measurement", code: "unsafe_measurement" });
+    }
+    if (!hasUnsafeMeasurement) unsafeMeasurementLoggedRef.current = false;
+  }, [safetyWarnings, logEvent]);
+
+  useEffect(() => {
+    const hasUnsafeConnection = safetyWarnings.some((w) => w.code === "unsafe_connection");
+    if (hasUnsafeConnection && !unsafeConnectionLoggedRef.current) {
+      unsafeConnectionLoggedRef.current = true;
+      logEvent({ type: "unsafe_connection", code: "unsafe_connection" });
+    }
+    if (!hasUnsafeConnection) unsafeConnectionLoggedRef.current = false;
+  }, [safetyWarnings, logEvent]);
+
   const bulb = state.components.find((c) => c.id === "bulb");
   const switchComponent = state.components.find((c) => c.id === "switch");
   const fuse = state.components.find((c) => c.id === "fuse");
@@ -673,6 +1077,20 @@ function CircuitScene({ solution, timeScale }: { solution: CircuitSolution; time
   const brightness = bulbBrightness(solution.readings.bulb, bulb?.ratedPowerW ?? BULB_RATED_POWER_W);
   const ammeterReading = solution.readings.ammeter?.currentA ?? 0;
   const voltmeterReading = solution.readings.voltmeter?.voltageV ?? 0;
+
+  // Stage S9.3: реальная диагностика размещения приборов по той же
+  // топологии (state.connections), что использует и task-engine.ts —
+  // не пересчитывает физику, только читает уже посчитанный solution.
+  const ammeterCheck = useMemo(
+    () => checkAmmeterPlacement(state.components, state.connections, solution),
+    [state.components, state.connections, solution]
+  );
+  const voltmeterCheck = useMemo(
+    () => checkVoltmeterPlacement(state.components, state.connections, solution),
+    [state.components, state.connections, solution]
+  );
+  const ammeterWarning = ammeterPlacementMessage(ammeterCheck);
+  const voltmeterWarning = voltmeterPlacementMessage(voltmeterCheck);
 
   return (
     <group>
@@ -694,30 +1112,44 @@ function CircuitScene({ solution, timeScale }: { solution: CircuitSolution; time
           playSwitchClick();
         }}
       />
-      <Ammeter currentA={ammeterReading} />
-      <Voltmeter voltageV={voltmeterReading} />
+      <Ammeter currentA={ammeterReading} placementStatus={ammeterCheck.status} warningMessage={ammeterWarning} />
+      <Voltmeter voltageV={voltmeterReading} placementStatus={voltmeterCheck.status} warningMessage={voltmeterWarning} />
       <Fuse isBlown={fuse?.isBlown ?? false} justBlown={Boolean(solution.fuseToBlowId)} timeScale={timeScale} />
       <Wires />
       <PendingWirePreview />
       <WireDragSurface y={0.01} size={12} />
+      <ComponentDragSurface y={0.011} size={12} />
+      <ElectricityProximityInteraction cameraMode={cameraMode} />
     </group>
   );
 }
 
-// мост между WireDragProvider (обычный React-контекст, живет и снаружи
-// Canvas) и CanvasShell: пока пользователь тянет провод, OrbitControls
-// должен быть выключен — иначе тот же pointer-жест дополнительно крутит
-// камеру, и координаты терминалов "уезжают" прямо во время клика
+// мост между WireDragProvider/ComponentDragProvider (обычные React-
+// контексты, живут и снаружи Canvas) и CanvasShell: пока пользователь
+// тянет провод ИЛИ перетаскивает компонент, OrbitControls должен быть
+// выключен — иначе тот же pointer-жест дополнительно крутит камеру, и
+// координаты терминалов/компонента "уезжают" прямо во время клика
 function ElectricityCanvas({
   quality,
   solution,
   timeScale,
+  safetyWarnings,
+  cameraMode,
+  isFullscreen,
 }: {
   quality: QualityLevel;
   solution: CircuitSolution;
   timeScale: number;
+  safetyWarnings: SafetyWarning[];
+  cameraMode: CameraMode;
+  isFullscreen: boolean;
 }) {
   const { draggingFrom } = useWireDrag();
+  const { draggingComponentId, dragSource } = useComponentDrag();
+  // локомоция приостанавливается только пока МЫШЬЮ тянут провод/компонент —
+  // клавиатурная переноска (E) намеренно продолжает разрешать WASD-ходьбу
+  // с предметом в руках (см. dragSource в ComponentDragProvider)
+  const mouseDragActive = !!draggingFrom || (!!draggingComponentId && dragSource === "mouse");
   return (
     <CanvasShell
       cameraPosition={[3.4, 2.6, 7.4]}
@@ -725,11 +1157,16 @@ function ElectricityCanvas({
       floorY={-0.06}
       bloomIntensity={0.4}
       quality={quality}
-      orbitEnabled={!draggingFrom}
+      orbitEnabled={!draggingFrom && !draggingComponentId}
       minPolarAngle={Math.PI / 6}
       maxPolarAngle={Math.PI / 2.1}
+      cameraMode={cameraMode}
+      roomBounds={ELECTRICITY_ROOM_BOUNDS}
+      colliders={[]}
+      isFullscreen={isFullscreen}
+      locomotionPaused={mouseDragActive}
     >
-      <CircuitScene solution={solution} timeScale={timeScale} />
+      <CircuitScene solution={solution} timeScale={timeScale} safetyWarnings={safetyWarnings} cameraMode={cameraMode} />
     </CanvasShell>
   );
 }
@@ -815,15 +1252,17 @@ function TeacherChatPanel({
     ]
   );
   return (
-    <AITeacherChat
-      simulationId={simulationId}
-      context={context}
-      learningProfile={learningProfile}
-      onMessageSent={() => {
-        recordHintUsed();
-        recordLabHintUsed();
-      }}
-    />
+    <AITeacherDock>
+      <AITeacherChat
+        simulationId={simulationId}
+        context={context}
+        learningProfile={learningProfile}
+        onMessageSent={() => {
+          recordHintUsed();
+          recordLabHintUsed();
+        }}
+      />
+    </AITeacherDock>
   );
 }
 
@@ -833,17 +1272,24 @@ function TeacherChatPanel({
 // сброшенной, пустой цепи.
 function ElectricityResetButton({ onReset }: { onReset: () => void }) {
   const { resetLabSession } = useElectricityLabExperience();
+  // post-S9.9: полный сброс отменяет и любое активное перетаскивание
+  // компонента — иначе после сброса завершение уже идущего драга
+  // перезаписало бы только что восстановленную дефолтную позицию
+  // устаревшим значением из превью
+  const { cancelDrag } = useComponentDrag();
+  const { t } = useLocale();
   return (
     <button
       onClick={() => {
+        cancelDrag();
         onReset();
         resetLabSession();
       }}
       data-testid="reset-button"
-      className="flex items-center gap-2 rounded-full border border-glass-border px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/5"
+      className="ds-focus-ring flex items-center gap-2 rounded-full border border-border/[0.12] px-4 py-2 text-ds-body font-medium text-text-primary transition-colors hover:bg-text-primary/5"
     >
       <RotateCcw size={16} />
-      Сбросить
+      {t.electricity.hud.reset}
     </button>
   );
 }
@@ -853,7 +1299,32 @@ function ElectricityResetButton({ onReset }: { onReset: () => void }) {
 // только что была завершена работа (тот же паттерн, что
 // GuidedLabExperienceSection в Chemistry World)
 function ElectricityLabExperienceSection() {
-  const { selectedExperiment, lastNotebookEntry } = useElectricityLabExperience();
+  const { selectedExperiment, lastNotebookEntry, pendingResume, catalog, resumeSave, discardPendingResume } =
+    useElectricityLabExperience();
+  // D10 — local-only dismiss, unifying with Chemistry's resume modal (which
+  // already has a non-destructive Cancel): lets the student look at the
+  // catalog first instead of forcing an immediate Continue/Start Over
+  // decision, without discarding the save or inventing new backend state.
+  // Keyed to the save's own id so a genuinely different pending resume
+  // (e.g. after starting a new experiment elsewhere) still prompts again.
+  const [dismissedSaveId, setDismissedSaveId] = useState<string | null>(null);
+
+  // Stage S9.7 — Autosave & Resume: незавершённая сессия найдена и ни одна
+  // работа ещё не выбрана в этой загрузке страницы — предлагаем
+  // Продолжить/Начать заново вместо каталога, пока студент не решит.
+  if (pendingResume && !selectedExperiment && pendingResume.saveId !== dismissedSaveId) {
+    const experiment = catalog.find((e) => e.id === pendingResume.experiment.experimentId);
+    return (
+      <ElectricityResumeModal
+        experimentTitle={experiment?.title ?? pendingResume.experiment.experimentId}
+        snapshot={pendingResume}
+        onContinue={() => resumeSave(pendingResume)}
+        onStartOver={discardPendingResume}
+        onCancel={() => setDismissedSaveId(pendingResume.saveId)}
+      />
+    );
+  }
+
   return (
     <>
       {lastNotebookEntry && <ElectricityLabReportPanel />}
@@ -867,6 +1338,7 @@ function ElectricityLabExperienceSection() {
 // на основании реальной истории) и заметку о повторяющейся ошибке (backend
 // реально нашел 3 одинаковых кода ошибки подряд в LearningEvent).
 function ProgressBanners() {
+  const { t } = useLocale();
   const { newAchievements, clearNewAchievements, repeatedMistakeCode, dismissRepeatedMistake } = useTaskProgress();
 
   if (newAchievements.length === 0 && !repeatedMistakeCode) return null;
@@ -874,24 +1346,22 @@ function ProgressBanners() {
   return (
     <div className="flex flex-col gap-2 sm:col-span-2">
       {newAchievements.length > 0 && (
-        <div className="flex items-center justify-between rounded-xl border border-amber-400/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+        <div className="flex items-center justify-between rounded-ds-control border border-warning/40 bg-warning/10 p-3 text-ds-body text-warning">
           <span>
             {newAchievements
-              .map((code) => `${ACHIEVEMENTS[code]?.emoji ?? "🏆"} ${ACHIEVEMENTS[code]?.title ?? code}`)
+              .map((code) => `${ACHIEVEMENT_EMOJI[code] ?? "🏆"} ${t.achievements[code as keyof typeof t.achievements]?.title ?? code}`)
               .join(", ")}{" "}
-            — новое достижение!
+            {t.electricity.hud.newAchievementSuffix}
           </span>
-          <button onClick={clearNewAchievements} className="text-amber-300/70 hover:text-amber-100">
+          <button onClick={clearNewAchievements} className="ds-focus-ring rounded-ds-control text-warning/70 transition-colors hover:text-warning">
             ×
           </button>
         </div>
       )}
       {repeatedMistakeCode && (
-        <div className="flex items-center justify-between rounded-xl border border-sky-400/40 bg-sky-500/10 p-3 text-sm text-sky-200">
-          <span>
-            Я заметил, что ты уже несколько раз повторяешь одну и ту же ошибку: {explainError(repeatedMistakeCode, repeatedMistakeCode)}
-          </span>
-          <button onClick={dismissRepeatedMistake} className="ml-2 shrink-0 text-sky-300/70 hover:text-sky-100">
+        <div className="flex items-center justify-between rounded-ds-control border border-accent-geo/40 bg-accent-geo/10 p-3 text-ds-body text-accent-geo">
+          <span>{t.electricity.hud.repeatedMistakeMessage.replace("{mistake}", explainError(repeatedMistakeCode, repeatedMistakeCode))}</span>
+          <button onClick={dismissRepeatedMistake} className="ds-focus-ring ml-2 shrink-0 rounded-ds-control text-accent-geo/70 transition-colors hover:text-accent-geo">
             ×
           </button>
         </div>
@@ -915,6 +1385,7 @@ function CompleteLabSection({
   actionsLog: Record<string, unknown>[];
   mountedAtRef: React.MutableRefObject<number>;
 }) {
+  const { t } = useLocale();
   const { state } = useExperimentState();
   const { sessionTotals } = useTaskProgress();
   const [error, setError] = useState<string | null>(null);
@@ -948,41 +1419,41 @@ function CompleteLabSection({
         achievements: labResult.new_achievements,
       });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Не удалось завершить попытку");
+      setError(err instanceof ApiError ? err.message : t.electricity.hud.completeAttemptError);
     }
   }
 
   return (
     <div className="flex flex-col gap-3 sm:col-span-2">
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <p className="text-ds-body text-danger">{error}</p>}
 
       <div className="flex items-center gap-3">
         <button
           onClick={handleComplete}
           disabled={state.connections.length === 0}
           data-testid="complete-button"
-          className="rounded-full border border-glass-border px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/5 disabled:opacity-50"
+          className="ds-focus-ring rounded-full border border-border/[0.12] px-4 py-2 text-ds-body font-medium text-text-primary transition-colors hover:bg-text-primary/5 disabled:opacity-50"
         >
-          Завершить попытку
+          {t.electricity.hud.completeAttempt}
         </button>
         {completionScore !== null && (
-          <span className="font-mono text-sm font-medium text-slate-100">Оценка: {completionScore}/100</span>
+          <span className="font-mono text-ds-body font-medium text-text-primary">{t.electricity.hud.scoreLabel.replace("{score}", String(completionScore))}</span>
         )}
       </div>
 
       {labSummary && (
         <div
-          className="rounded-xl border border-neon-violet/40 bg-neon-violet/10 p-4 text-sm text-slate-200"
+          className="rounded-ds-control border border-accent/40 bg-accent/10 p-4 text-ds-body text-text-primary"
           data-testid="lab-summary"
         >
           <p className="whitespace-pre-wrap">{labSummary.summary}</p>
           {labSummary.recommendedNext && (
-            <p className="mt-2 text-neon-violet">Следующий шаг: {labSummary.recommendedNext}</p>
+            <p className="mt-2 text-accent">{t.electricity.hud.nextStepLabel} {labSummary.recommendedNext}</p>
           )}
           {labSummary.achievements.length > 0 && (
-            <p className="mt-2 text-amber-300">
-              Новые достижения:{" "}
-              {labSummary.achievements.map((code) => ACHIEVEMENTS[code]?.title ?? code).join(", ")}
+            <p className="mt-2 text-warning">
+              {t.electricity.hud.newAchievementsLabel}{" "}
+              {labSummary.achievements.map((code) => t.achievements[code as keyof typeof t.achievements]?.title ?? code).join(", ")}
             </p>
           )}
         </div>
@@ -991,19 +1462,72 @@ function CompleteLabSection({
   );
 }
 
+// SandboxModeOverlay переиспользован из Chemistry World без изменений (см.
+// его полностью общий пропс-контракт); отдельный компонент-обёртка нужен
+// только затем, чтобы позвать useComponentDrag() — сам SandboxModeOverlay
+// рендерится ВНУТРИ ComponentDragProvider по дереву JSX, а не в теле
+// ElectricityLabInner (которое рендерит сам Provider как родитель).
+function ElectricitySandboxOverlay({
+  cameraMode,
+  setCameraMode,
+  isFullscreen,
+  toggleFullscreen,
+}: {
+  cameraMode: CameraMode;
+  setCameraMode: (updater: (mode: CameraMode) => CameraMode) => void;
+  isFullscreen: boolean;
+  toggleFullscreen: () => void;
+}) {
+  const { draggingComponentId } = useComponentDrag();
+  const { t } = useLocale();
+  return (
+    <SandboxModeOverlay
+      cameraMode={cameraMode}
+      onToggleMode={() => setCameraMode((m) => (m === "orbit" ? "sandbox" : "orbit"))}
+      disabled={!!draggingComponentId}
+      disabledReason={t.electricity.hud.sandboxDisabledDragging}
+      isFullscreen={isFullscreen}
+      onToggleFullscreen={toggleFullscreen}
+    />
+  );
+}
+
 function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
   const { state, addConnection, updateComponent, resetExperiment, actionsLog, logEvent } = useExperimentState();
   const { quality, setQuality } = useQuality();
+  const { t } = useLocale();
   const clock = useSimulationClock();
   const mountedAtRef = useRef(Date.now());
+  // Immersive interaction acceptance fix — тот же паттерн fullscreen, что и
+  // у Chemistry World (переиспользован через useFullscreen, не переизобретён),
+  // и тот же переключаемый режим камеры CanvasShell уже поддерживал
+  // (cameraMode "orbit"|"sandbox") — просто не был подключён для Electricity.
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const { isFullscreen, toggleFullscreen } = useFullscreen(wrapperRef);
+  const [cameraMode, setCameraMode] = useState<CameraMode>("orbit");
 
   const battery = state.components.find((c) => c.id === "battery");
   const resistor = state.components.find((c) => c.id === "resistor");
   const solution = useMemo(() => solveCircuit(state.components, state.connections), [state.components, state.connections]);
+  // Stage S9.4 — Safety System: считается один раз здесь (тот же паттерн,
+  // что и solution выше) и прокидывается и в 3D-сцену (event-логирование),
+  // и в 2D-баннер ниже — ничего не пересчитывается дважды.
+  const safetyWarnings = useMemo(
+    () => checkElectricalSafety({ components: state.components, connections: state.connections, solution }),
+    [state.components, state.connections, solution]
+  );
 
   function handleConnect(fromId: string, toId: string) {
     addConnection({ id: `${fromId}-${toId}-${Date.now()}`, terminals: [fromId, toId] });
     playConnect();
+  }
+
+  // post-S9.9 sandbox acceptance fix — единственное место, где позиция
+  // компонента реально попадает в домен (ExperimentStateProvider), ровно
+  // тот же путь, что и любое другое реальное действие (updateComponent),
+  // поэтому автоматически течёт и через существующий S9.7 autosave.
+  function handleComponentMove(componentId: string, position: [number, number, number]) {
+    updateComponent(componentId, { position });
   }
 
   function handleVoltageChange(value: number) {
@@ -1041,25 +1565,45 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
       simulationId={simulation.id}
       stepContext={{ components: state.components, connections: state.connections, solution }}
     >
+    <ComponentDragProvider onMove={handleComponentMove}>
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-    <div className="flex-1 rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">
-      <div className="relative">
+    <div className="min-w-0 flex-1 rounded-ds-panel border border-border/[0.08] bg-surface p-3 sm:p-5">
+      <div
+        ref={wrapperRef}
+        className={
+          isFullscreen
+            ? "fixed inset-0 z-50 bg-slate-950 flex flex-col justify-center select-none"
+            : "relative"
+        }
+      >
+        <ElectricitySandboxOverlay
+          cameraMode={cameraMode}
+          setCameraMode={setCameraMode}
+          isFullscreen={isFullscreen}
+          toggleFullscreen={toggleFullscreen}
+        />
         <WireDragProvider onConnect={handleConnect}>
-          <ElectricityCanvas quality={quality} solution={solution} timeScale={clock.timeScale} />
+          <ElectricityCanvas
+            quality={quality}
+            solution={solution}
+            timeScale={clock.timeScale}
+            safetyWarnings={safetyWarnings}
+            cameraMode={cameraMode}
+            isFullscreen={isFullscreen}
+          />
         </WireDragProvider>
       </div>
 
-      <div className="glass-panel mt-4 grid grid-cols-1 gap-4 rounded-2xl p-4 sm:grid-cols-2">
-        <div className="flex items-center gap-2 text-xs text-slate-500 sm:col-span-2" data-testid="terminal-legend">
+      <div className="ds-glass mt-4 grid grid-cols-1 gap-4 rounded-ds-panel p-4 sm:grid-cols-2">
+        <div className="flex items-center gap-2 text-ds-caption text-text-muted sm:col-span-2" data-testid="terminal-legend">
           <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: BRASS_COLOR }} />
-          Золотые точки — это клеммы, к которым можно подключать провода. Наведи курсор на компонент, чтобы увидеть его
-          название.
+          {t.electricity.hud.terminalLegend}
         </div>
 
         <TutorialPanel />
         <div>
-          <label htmlFor="voltage-slider" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
-            Напряжение источника: {(battery?.voltageV ?? 0).toFixed(1)} В
+          <label htmlFor="voltage-slider" className="mb-1 block font-mono text-ds-caption uppercase tracking-widest text-text-muted">
+            {t.electricity.hud.voltageLabel}: {(battery?.voltageV ?? 0).toFixed(1)} В
           </label>
           <input
             id="voltage-slider"
@@ -1070,13 +1614,13 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
             value={battery?.voltageV ?? 12}
             onChange={(e) => handleVoltageChange(Number(e.target.value))}
             data-testid="voltage-slider"
-            className="w-full accent-neon-violet"
+            className="w-full accent-accent"
           />
         </div>
 
         <div>
-          <label htmlFor="resistance-slider" className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
-            Сопротивление резистора: {(resistor?.resistanceOhm ?? 0).toFixed(1)} Ом
+          <label htmlFor="resistance-slider" className="mb-1 block font-mono text-ds-caption uppercase tracking-widest text-text-muted">
+            {t.electricity.hud.resistanceLabel}: {(resistor?.resistanceOhm ?? 0).toFixed(1)} Ом
           </label>
           <input
             id="resistance-slider"
@@ -1087,7 +1631,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
             value={resistor?.resistanceOhm ?? 4}
             onChange={(e) => handleResistanceChange(Number(e.target.value))}
             data-testid="resistance-slider"
-            className="w-full accent-neon-violet"
+            className="w-full accent-accent"
           />
         </div>
 
@@ -1096,16 +1640,16 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
             <button
               onClick={handleClockToggle}
               data-testid="clock-toggle"
-              title="Управляет только анимацией искр и таймером сессии. Ток и напряжение считаются по закону Ома мгновенно и всегда, независимо от этой кнопки."
-              className="neon-glow-indigo flex items-center gap-2 rounded-full bg-neon-violet px-4 py-2 text-sm font-medium text-white transition hover:brightness-110"
+              title={t.electricity.hud.clockHint}
+              className="ds-focus-ring flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-ds-body font-medium text-white transition-all hover:brightness-110"
             >
               {clock.isRunning ? <Pause size={16} /> : <Play size={16} />}
-              {clock.isRunning ? "Пауза анимации" : "Старт анимации"}
+              {clock.isRunning ? t.electricity.hud.clockPause : t.electricity.hud.clockStart}
             </button>
             <ElectricityResetButton onReset={handleReset} />
           </div>
 
-          <div role="radiogroup" aria-label="Качество рендера" className="flex items-center gap-1 font-mono text-xs text-slate-500">
+          <div role="radiogroup" aria-label={t.electricity.hud.qualityAria} className="flex items-center gap-1 font-mono text-ds-caption text-text-muted">
             {QUALITY_OPTIONS.map((level) => (
               <button
                 key={level}
@@ -1114,10 +1658,10 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
                 aria-checked={quality === level}
                 data-testid={`quality-${level}`}
                 title={QUALITY_LABEL[level]}
-                className={`rounded-full border px-2 py-1 uppercase transition ${
+                className={`ds-focus-ring rounded-full border px-2 py-1 uppercase transition-colors ${
                   quality === level
-                    ? "border-neon-violet text-neon-violet"
-                    : "border-glass-border text-slate-500 hover:text-slate-300"
+                    ? "border-accent text-accent"
+                    : "border-border/[0.12] text-text-muted hover:text-text-primary"
                 }`}
               >
                 {level[0]}
@@ -1131,32 +1675,63 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
           data-active={solution.isCircuitActive}
           data-short={solution.isShortCircuit}
           data-fuse-blown={state.components.find((c) => c.id === "fuse")?.isBlown ?? false}
-          className="rim-light rounded-xl border border-glass-border bg-surface-container-lowest/60 p-3 text-sm text-slate-300 sm:col-span-2"
+          className="rounded-ds-control border border-border/[0.1] bg-surface p-3 text-ds-body text-text-secondary sm:col-span-2"
         >
-          {!solution.isClosedLoop && (
-            <p className="text-slate-400">
-              Соедини терминалы проводами: потяни от одной точки подключения к другой, чтобы собрать полный контур.
-              Клик по проводу — разрыв соединения.
-            </p>
-          )}
+          {!solution.isClosedLoop && <p className="text-text-muted">{t.electricity.hud.statusConnect}</p>}
           {solution.isClosedLoop && solution.isShortCircuit && (
-            <p className="font-medium text-red-400">
-              ⚠ Короткое замыкание! Сопротивление контура почти нулевое — расчетный ток {solution.currentA.toFixed(1)} А.
-            </p>
+            <p className="font-medium text-danger">{t.electricity.hud.statusShort.replace("{current}", solution.currentA.toFixed(1))}</p>
           )}
           {solution.isClosedLoop && !solution.isShortCircuit && !solution.isCircuitActive && (
-            <p className="text-amber-300">Цепь замкнута, но ток не течет — проверь выключатель и предохранитель.</p>
+            <p className="text-warning">{t.electricity.hud.statusClosedNoCurrent}</p>
           )}
           {solution.isClosedLoop && solution.isCircuitActive && (
-            <p className="text-emerald-300">
-              Ток течет: I = {solution.currentA.toFixed(2)} А (закон Ома: U/R = {(battery?.voltageV ?? 0).toFixed(1)}В /
-              контур).
+            <p className="text-success">
+              {t.electricity.hud.statusActive
+                .replace("{current}", solution.currentA.toFixed(2))
+                .replace("{voltage}", (battery?.voltageV ?? 0).toFixed(1))}
             </p>
           )}
         </div>
 
+        {/* Stage S9.4 — Safety System: тот же визуальный язык, что и
+            Chemistry World's safety-warnings баннер (ChemistryWorldScene.tsx) —
+            цвет по severity, data-testid по коду, образовательный текст.
+            Не заменяет circuit-status выше (тот остаётся как есть), а
+            дополняет его структурированными предупреждениями.
+            Stage S9.8 — та же fade/slide-анимация появления/исчезновения,
+            что и у Chemistry World (AnimatePresence), вместо резкого
+            появления/исчезновения — единственная косметическая правка
+            здесь, сам баннер и его данные не тронуты. */}
+        <AnimatePresence>
+          {safetyWarnings.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.18 }}
+              className="flex flex-col gap-2 sm:col-span-2"
+              data-testid="safety-warnings"
+            >
+              {safetyWarnings.map((w, i) => (
+                <motion.div
+                  key={`${w.code}-${i}`}
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  data-testid={`safety-warning-${w.code}`}
+                  className={`flex items-center gap-2 rounded-ds-control border p-3 text-ds-body ${
+                    w.severity === "danger" ? "border-danger/40 bg-danger/10 text-danger" : "border-warning/40 bg-warning/10 text-warning"
+                  }`}
+                >
+                  <AlertTriangle size={14} className="shrink-0" />
+                  {w.message}
+                </motion.div>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <div className="sm:col-span-2">
-          <h3 className="mb-2 font-mono text-xs uppercase tracking-widest text-slate-500">Быстрая проверка</h3>
+          <h3 className="mb-2 font-mono text-ds-caption uppercase tracking-widest text-text-muted">{t.electricity.hud.quickCheckHeading}</h3>
           <TaskPanel />
         </div>
 
@@ -1168,7 +1743,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
             измерение/анализ/вывод), автоматический отчёт и Лабораторный
             журнал измерений. */}
         <div className="space-y-4 sm:col-span-2">
-          <h3 className="font-headline text-lg font-semibold text-slate-100">Лабораторные работы</h3>
+          <h3 className="text-ds-title text-text-primary">{t.electricity.hud.labHeading}</h3>
           <ElectricityLabExperienceSection />
           <ElectricityLabNotebookPanel />
         </div>
@@ -1186,6 +1761,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
       solution={solution}
     />
     </div>
+    </ComponentDragProvider>
     </ElectricityLabExperienceProvider>
     </TaskProgressProvider>
     </TutorialProvider>

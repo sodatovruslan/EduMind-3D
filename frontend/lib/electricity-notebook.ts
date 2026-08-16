@@ -13,6 +13,8 @@
  * Никаких случайных чисел, никакого обращения к AI для генерации отчёта.
  */
 import type { LabDifficulty } from "./electricity-lab-catalog";
+import { assessElectricityExperiment, type ElectricityAssessmentReport } from "./electricity-assessment";
+import { summarizeElectricityEvidence, type ElectricityEvidenceEvent, type ElectricityEvidenceSummary } from "./electricity-evidence";
 
 export interface ElectricityMeasurement {
   voltageV: number;
@@ -43,7 +45,21 @@ export interface ElectricityNotebookEntry {
   observations: string;
   conclusion: string;
   teacherNote: string;
-  score: number; // 0..100, детерминированный расчёт (см. computeScore)
+  score: number; // 0..100, детерминированный расчёт (см. computeScore) — не тронут Stage S9.6, полная обратная совместимость
+  // Stage S9.6 — Assessment & Teacher Analytics: реальные агрегаты из
+  // Evidence Layer (electricity-evidence.ts), сохранённые на самой записи
+  // (раньше hintsUsed использовался только для штрафа к score и терялся).
+  hintsUsed: number;
+  mistakesCount: number;
+  safetyIncidentsCount: number;
+  measurementErrorsCount: number;
+  selfCorrectionsCount: number;
+  durationMs: number | null;
+  // детерминированная многокритериальная оценка (см. electricity-assessment.ts)
+  // — тот же паттерн, что и Chemistry World's живой `assessExperiment`/
+  // `NotebookEntry.assessment`, отдельно от `score` выше (обратная
+  // совместимость: старые тесты/UI, читающие `score`, не тронуты)
+  assessment: ElectricityAssessmentReport;
 }
 
 export interface ElectricityNotebookEntryInput {
@@ -59,6 +75,12 @@ export interface ElectricityNotebookEntryInput {
   conclusion: string;
   hintsUsed: number;
   now?: () => number;
+  // Stage S9.6 — необязательные, полностью аддитивные поля: старые вызовы
+  // (существующие 5 тестов, вызовы без Evidence Layer) продолжают работать
+  // без изменений — evidence по умолчанию пустой (все счётчики 0).
+  evidenceEvents?: ElectricityEvidenceEvent[];
+  totalSteps?: number;
+  durationMs?: number | null;
 }
 
 function clamp(score: number): number {
@@ -87,7 +109,16 @@ function computeScore(input: {
   return clamp(completionScore + measurementScore + questionScore + conclusionScore - hintPenalty);
 }
 
-function buildTeacherNote(score: number, questionResults: QuestionResult[], measurementsCount: number): string {
+// Stage S9.6 — дополнена (аддитивно) реальными данными Evidence Layer:
+// безопасность/ошибки измерения/самостоятельные исправления. Прежнее
+// поведение (общий комментарий по score + подсказка про измерения/неверный
+// вопрос) не изменено ни на символ — только добавлены новые предложения.
+function buildTeacherNote(
+  score: number,
+  questionResults: QuestionResult[],
+  measurementsCount: number,
+  evidence?: ElectricityEvidenceSummary
+): string {
   const wrongQuestions = questionResults.filter((q) => !q.correct);
   const parts: string[] = [];
   if (score >= 85) parts.push("Отличная работа: эксперимент выполнен точно, все шаги подтверждены реальными данными.");
@@ -98,6 +129,26 @@ function buildTeacherNote(score: number, questionResults: QuestionResult[], meas
   if (wrongQuestions.length > 0) {
     parts.push(`Обрати внимание на вопрос: «${wrongQuestions[0].prompt}» — ответ был неверным.`);
   }
+
+  if (evidence) {
+    if (evidence.safetyIncidentsCount > 0) {
+      parts.push(
+        `Во время работы было зафиксировано нарушений безопасности: ${evidence.safetyIncidentsCount} (короткое замыкание/обход предохранителя/опасное измерение) — обязательно повтори правила безопасной сборки цепи.`
+      );
+    }
+    if (evidence.measurementErrorsCount > 0) {
+      parts.push(
+        `Приборы были подключены неправильно ${evidence.measurementErrorsCount} раз(а) — вспомни, что амперметр включается последовательно, а вольтметр параллельно.`
+      );
+    }
+    if (evidence.selfCorrectionsCount > 0) {
+      parts.push("Хорошо, что ошибки были исправлены самостоятельно — это ценный учебный результат.");
+    }
+    if (evidence.hintsUsed === 0 && evidence.mistakesCount === 0 && evidence.safetyIncidentsCount === 0) {
+      parts.push("Работа выполнена без единой ошибки и без подсказок — уверенное владение материалом.");
+    }
+  }
+
   return parts.join(" ");
 }
 
@@ -112,6 +163,23 @@ export function buildElectricityNotebookEntry(input: ElectricityNotebookEntryInp
     hintsUsed: input.hintsUsed,
   });
 
+  // Stage S9.6: агрегат по реальным событиям Evidence Layer — пустой массив
+  // (по умолчанию для старых вызовов) даёт все счётчики равными 0, что
+  // сохраняет прежнее поведение score/teacherNote один в один.
+  const evidence = summarizeElectricityEvidence(input.evidenceEvents ?? []);
+  const durationMs = input.durationMs ?? null;
+  // запись создаётся только по факту реального завершения (см. computeScore
+  // выше — completionScore всегда 40 по той же причине), поэтому здесь
+  // isComplete всегда true — оценка "завершения" в assessment честно
+  // отражает это, а не выдумывает частичный прогресс
+  const assessment = assessElectricityExperiment({
+    isComplete: true,
+    totalSteps: input.totalSteps ?? Math.max(1, evidence.stepsCompletedCount),
+    evidence,
+    questionResults: input.questionResults,
+    durationMs,
+  });
+
   return {
     id: `${input.experimentId}-${now}`,
     experimentId: input.experimentId,
@@ -124,8 +192,15 @@ export function buildElectricityNotebookEntry(input: ElectricityNotebookEntryInp
     questionResults: input.questionResults,
     observations: input.observations,
     conclusion: input.conclusion,
-    teacherNote: buildTeacherNote(score, input.questionResults, input.measurements.length),
+    teacherNote: buildTeacherNote(score, input.questionResults, input.measurements.length, evidence),
     score,
+    hintsUsed: input.hintsUsed,
+    mistakesCount: evidence.mistakesCount,
+    safetyIncidentsCount: evidence.safetyIncidentsCount,
+    measurementErrorsCount: evidence.measurementErrorsCount,
+    selfCorrectionsCount: evidence.selfCorrectionsCount,
+    durationMs,
+    assessment,
   };
 }
 

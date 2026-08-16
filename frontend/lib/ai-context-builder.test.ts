@@ -3,6 +3,7 @@ import { solveCircuit, type CircuitComponent, type Connection } from "./circuit-
 import { TASKS, TaskStatus, validateTask } from "./task-engine";
 import { buildAIContext } from "./ai-context-builder";
 import { getElectricityLabExperiment } from "./electricity-lab-catalog";
+import { buildElectricityNotebookEntry } from "./electricity-notebook";
 
 function baseComponents(overrides?: Partial<Record<string, unknown>>): CircuitComponent[] {
   return [
@@ -146,28 +147,33 @@ describe("ai-context-builder — buildAIContext", () => {
       labExperiment: experiment,
       labStep: experiment.steps[0],
       labStepUnlocked: true,
-      labLastNotebookEntry: {
-        id: "e1-1000",
+      labLastNotebookEntry: buildElectricityNotebookEntry({
         experimentId: experiment.id,
         experimentTitle: experiment.title,
         difficulty: experiment.difficulty,
-        dateIso: new Date(1000).toISOString(),
         objective: experiment.goal,
-        circuitUsed: { componentKinds: ["battery"], connectionsCount: 3 },
+        componentKinds: ["battery"],
+        connectionsCount: 3,
         measurements: [],
         questionResults: [{ questionId: "q1", prompt: "?", selectedIndex: 1, correctIndex: 0, correct: false }],
         observations: "",
         conclusion: "Ток был низким.",
-        teacherNote: "Обрати внимание на вопрос: «?» — ответ был неверным.",
-        score: 62,
-      },
+        hintsUsed: 0,
+        now: () => 1000,
+      }),
     });
 
-    expect(ctx.labExperience?.lastNotebookEntry).toEqual({
-      experimentTitle: experiment.title,
-      score: 62,
-      teacherNote: "Обрати внимание на вопрос: «?» — ответ был неверным.",
-      conclusion: "Ток был низким.",
-    });
+    const entry = ctx.labExperience?.lastNotebookEntry;
+    expect(entry?.experimentTitle).toBe(experiment.title);
+    expect(entry?.conclusion).toBe("Ток был низким.");
+    expect(entry?.teacherNote).toContain("Обрати внимание на вопрос: «?»");
+    // Stage S9.6: реальные агрегаты Evidence Layer прокинуты в AI-контекст,
+    // не выдуманы — ноль ошибок/подсказок для чистого прохождения (кроме
+    // неверного ответа на вопрос, который снижает score, не эти счётчики)
+    expect(entry?.hintsUsed).toBe(0);
+    expect(entry?.mistakesCount).toBe(0);
+    expect(entry?.safetyIncidentsCount).toBe(0);
+    expect(entry?.measurementErrorsCount).toBe(0);
+    expect(entry?.assessmentOverallScore).toBeGreaterThanOrEqual(0);
   });
 });

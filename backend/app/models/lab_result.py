@@ -25,3 +25,7 @@ class LabResult(Base):
     @property
     def simulation_title(self) -> str:
         return self.simulation.title
+
+    @property
+    def module(self) -> str:
+        return self.simulation.module.value

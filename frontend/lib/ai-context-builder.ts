@@ -58,7 +58,22 @@ export interface LabExperienceAIContext {
   measurementsRecorded: number;
   recentMeasurements: { voltageV: number; currentA: number; resistanceOhm: number; powerW: number }[];
   completedExperimentIds: string[];
-  lastNotebookEntry: { experimentTitle: string; score: number; teacherNote: string; conclusion: string } | null;
+  lastNotebookEntry: {
+    experimentTitle: string;
+    score: number;
+    teacherNote: string;
+    conclusion: string;
+    // Stage S9.6 — Assessment & Teacher Analytics: реальные агрегаты из
+    // Evidence Layer, чтобы AI Teacher мог ссылаться на конкретные факты
+    // (сколько подсказок/ошибок/нарушений безопасности было), а не только
+    // на итоговый балл. Ничего не выдумывается — те же числа, что уже
+    // видны в Отчёте/Журнале (ElectricityLabReportPanel/NotebookPanel).
+    hintsUsed: number;
+    mistakesCount: number;
+    safetyIncidentsCount: number;
+    measurementErrorsCount: number;
+    assessmentOverallScore: number;
+  } | null;
   conclusionDraft: string;
 }
 
@@ -90,6 +105,11 @@ function buildLabExperienceAIContext(
           score: lastNotebookEntry.score,
           teacherNote: lastNotebookEntry.teacherNote,
           conclusion: lastNotebookEntry.conclusion,
+          hintsUsed: lastNotebookEntry.hintsUsed,
+          mistakesCount: lastNotebookEntry.mistakesCount,
+          safetyIncidentsCount: lastNotebookEntry.safetyIncidentsCount,
+          measurementErrorsCount: lastNotebookEntry.measurementErrorsCount,
+          assessmentOverallScore: lastNotebookEntry.assessment.overallScore,
         }
       : null,
     conclusionDraft,

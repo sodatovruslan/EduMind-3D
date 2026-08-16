@@ -22,3 +22,15 @@ async def get_db():
     """Dependency для роутеров: выдает async-сессию и гарантированно закрывает её."""
     async with SessionLocal() as db:
         yield db
+
+
+def get_session_factory():
+    """T6 — yields the session FACTORY (not an active session). Used by
+    routers/ws_messaging.py's disconnect-time last_seen write: that write
+    happens after the connection's own request-scoped session may already
+    be winding down (a client-initiated close races the server task's own
+    cancellation), so it needs a genuinely independent session rather than
+    reusing `db` from `Depends(get_db)`. Overridden in tests the same way
+    `get_db` is, so the independent session still lands in the test
+    database instead of the real one."""
+    return SessionLocal

@@ -43,6 +43,10 @@ interface CanvasShellProps {
   colliders?: RegisteredCollider[];
   onPosUpdate?: (playerPos: [number, number], cameraXZ: [number, number]) => void;
   isFullscreen?: boolean;
+  // приостановить FPS-локомоцию, не переключая cameraMode целиком (нужно,
+  // например, пока идёт МЫШИНЫЙ драг компонента/провода в Electricity Lab —
+  // клавиатурный E-перенос при этом продолжает работать)
+  locomotionPaused?: boolean;
 }
 
 function CameraModeController({ cameraMode, orbitTarget }: { cameraMode: CameraMode; orbitTarget: [number, number, number] }) {
@@ -120,8 +124,17 @@ export default function CanvasShell({
   floorY = -1,
   bloomIntensity = 0.55,
   showFloor = true,
-  backgroundTop = "#1e2340",
-  backgroundBottom = "#04050c",
+  // D6.1 — retuned from the legacy saturated indigo-navy (#1e2340/#04050c)
+  // to a neutral graphite-with-a-whisper-of-cool-undertone gradient,
+  // matching Design V2's dark-mode direction (§4 of the D6.1 brief: "not
+  // old dark navy SaaS UI"). This is the WebGL scene's own background
+  // texture (visible above/around room geometry, not UI chrome), so it's
+  // intentionally NOT wired to the Light/Dark theme — the brief explicitly
+  // separates "UI chrome theme" from "physical/scientific environment",
+  // and the scene's lighting/atmosphere stays as designed regardless of
+  // the student's chrome theme choice.
+  backgroundTop = "#1c1f26",
+  backgroundBottom = "#05060a",
   quality = "medium",
   orbitEnabled = true,
   minPolarAngle,
@@ -135,15 +148,32 @@ export default function CanvasShell({
   colliders,
   onPosUpdate,
   isFullscreen = false,
+  locomotionPaused = false,
 }: CanvasShellProps) {
   const preset = QUALITY_PRESETS[quality];
 
   return (
     <div
-      className={`relative w-full overflow-hidden transition-all duration-300 ${
+      // Manual-acceptance bug fix: this container's height is what the R3F
+      // canvas's own ResizeObserver watches. Animating height (`transition-
+      // all` included it) while the ANCESTOR wrapper (in ChemistryWorldScene)
+      // snaps its own fullscreen classes INSTANTLY in the same commit meant
+      // the document was resizing continuously for 300ms against a parent
+      // whose box had already changed shape — a real, verifiable source of a
+      // transient (sometimes sticky) scrollbar right after exiting
+      // fullscreen. Height/width now snap immediately; only the cosmetic
+      // border-radius/shadow still animate, which never affects layout.
+      //
+      // D6 — non-fullscreen height changed from a fixed `h-[34rem]` (544px,
+      // regardless of viewport) to a viewport-relative range so the 3D world
+      // dominates the immersive viewport at rest, not just in fullscreen
+      // (EDUMIND_DESIGN_SYSTEM_V2.md D6 §2). Still a static value (no
+      // `transition` on height/width), same reasoning as above — only the
+      // number changed, not the snap-vs-animate mechanism.
+      className={`relative w-full overflow-hidden transition-[border-radius,box-shadow] duration-300 ${
         isFullscreen
           ? "h-full rounded-none border-none shadow-none"
-          : "h-[34rem] rounded-2xl border border-white/10 shadow-2xl"
+          : "h-[75vh] min-h-[28rem] max-h-[48rem] rounded-2xl border border-white/10 shadow-2xl"
       }`}
     >
       <Canvas
@@ -202,7 +232,7 @@ export default function CanvasShell({
 
         <CameraModeController cameraMode={cameraMode} orbitTarget={target} />
         <SandboxLocomotionController
-          active={cameraMode === "sandbox"}
+          active={cameraMode === "sandbox" && !locomotionPaused}
           roomBounds={roomBounds}
           colliders={colliders}
           onPosUpdate={onPosUpdate}

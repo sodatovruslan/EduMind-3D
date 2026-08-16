@@ -5,6 +5,10 @@ import { defineConfig } from "@playwright/test";
 // этой среде оба сервиса управляются вручную (см. project README/сессию).
 export default defineConfig({
   testDir: "./e2e",
+  // Purges the throwaway @example.com student accounts every spec creates
+  // via /api/auth/register (see e2e/global-teardown.ts) so repeated runs
+  // stop accumulating junk users in the dev DB.
+  globalTeardown: "./e2e/global-teardown.ts",
   // dev-сервер компилирует первый заход на страницу небезосно долго
   // (в этой сессии видели и 30-40с на холодную компиляцию) - таймаут
   // теста должен это учитывать

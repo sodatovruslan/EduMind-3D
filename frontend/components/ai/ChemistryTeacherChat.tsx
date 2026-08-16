@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Bot, Check, Copy, GraduationCap, Send, Trash2 } from "lucide-react";
 import { apiFetch, ApiError } from "@/lib/api";
 import type { ChemistryAIContext } from "@/lib/chemistry-context-builder";
+import { useLocale } from "@/lib/locale-context";
 
 /**
  * Chemistry World — AI Teacher chat (Stage 5). Использует ТОТ ЖЕ backend
@@ -11,20 +12,17 @@ import type { ChemistryAIContext } from "@/lib/chemistry-context-builder";
  * контекст другой (ChemistryAIContext вместо LabAIContext). Отдельный
  * компонент-близнец AITeacherChat.tsx, а не его модификация: Electricity
  * Lab использует свой типизированный context, не пересекается.
+ *
+ * D6.1 — moved from the legacy `.glass-panel`/`slate-*`/`neon-violet`
+ * palette onto real D1 tokens (`.ds-glass`, `text-text-*`, `bg-accent`) so
+ * it reads correctly in Light/Dark, plus onto `useLocale()` for all chrome
+ * copy (header/greeting/placeholder/suggested questions). AI request/
+ * response handling, context shape, and the backend contract are untouched.
  */
 interface ChatMessage {
   role: "user" | "assistant";
   text: string;
 }
-
-const SUGGESTED_QUESTIONS = [
-  "Почему образовался осадок?",
-  "Что я сделал неправильно?",
-  "Как работает нейтрализация?",
-  "Почему соль не растворяется полностью?",
-  "Это безопасно смешивать?",
-  "Что дальше нужно сделать?",
-];
 
 interface ChemistryTeacherChatProps {
   simulationId: string;
@@ -37,7 +35,9 @@ interface ChemistryTeacherChatProps {
 }
 
 export default function ChemistryTeacherChat({ simulationId, context, onMessageSent, showFullHints = true }: ChemistryTeacherChatProps) {
-  const suggestedQuestions = showFullHints ? SUGGESTED_QUESTIONS : SUGGESTED_QUESTIONS.slice(0, 3);
+  const { t } = useLocale();
+  const c = t.chemistry.aiChat;
+  const suggestedQuestions = showFullHints ? c.suggestedQuestions : c.suggestedQuestions.slice(0, 3);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -70,7 +70,7 @@ export default function ChemistryTeacherChat({ simulationId, context, onMessageS
       });
       setMessages((prev) => [...prev, { role: "assistant", text: response.reply }]);
     } catch (err) {
-      const message = err instanceof ApiError ? err.message : "AI Teacher временно недоступен";
+      const message = err instanceof ApiError ? err.message : c.unavailable;
       setMessages((prev) => [...prev, { role: "assistant", text: message }]);
     } finally {
       setIsLoading(false);
@@ -85,37 +85,42 @@ export default function ChemistryTeacherChat({ simulationId, context, onMessageS
   }
 
   return (
-    <div className="glass-panel flex h-[34rem] w-full flex-col rounded-2xl lg:w-80" data-testid="chemistry-teacher-chat">
-      <div className="flex items-center justify-between border-b border-glass-border px-4 py-3">
-        <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
-          <GraduationCap size={18} className="text-neon-violet" />
-          AI-преподаватель
+    <div className="ds-glass flex h-[34rem] w-full flex-col rounded-ds-panel shadow-ds-md" data-testid="chemistry-teacher-chat">
+      <div className="flex items-center justify-between border-b border-border/[0.08] px-4 py-3">
+        <div className="flex items-center gap-2 text-ds-body font-semibold text-text-primary">
+          <GraduationCap size={18} className="text-accent" />
+          {c.header}
         </div>
         <button
           onClick={() => setMessages([])}
           disabled={messages.length === 0}
-          title="Очистить историю"
+          title={c.clearHistory}
           data-testid="chemistry-teacher-clear"
-          className="text-slate-400 hover:text-slate-200 disabled:opacity-30"
+          className="ds-focus-ring rounded-ds-control text-text-muted transition-colors hover:text-text-primary disabled:opacity-30"
         >
           <Trash2 size={16} />
         </button>
       </div>
 
-      <div ref={scrollRef} className="flex-1 space-y-2 overflow-y-auto p-3" data-testid="chemistry-teacher-history">
+      <div
+        ref={scrollRef}
+        role="log"
+        aria-live="polite"
+        className="flex-1 space-y-2 overflow-y-auto p-3"
+        data-testid="chemistry-teacher-history"
+      >
         {messages.length === 0 && (
           <div className="space-y-3">
-            <p className="flex items-start gap-2 text-sm text-slate-400">
-              <Bot size={16} className="mt-0.5 shrink-0 text-neon-violet" />
-              Привет! Я твой AI-преподаватель по химии. Спроси меня о текущем эксперименте или выбери один из вопросов
-              ниже.
+            <p className="flex items-start gap-2 text-ds-body text-text-secondary">
+              <Bot size={16} className="mt-0.5 shrink-0 text-accent" />
+              {c.greeting}
             </p>
             <div className="flex flex-wrap gap-1.5" data-testid="chemistry-teacher-suggested">
               {suggestedQuestions.map((q) => (
                 <button
                   key={q}
                   onClick={() => sendMessage(q)}
-                  className="rounded-full border border-glass-border px-2.5 py-1 text-xs text-slate-300 transition hover:border-neon-violet hover:text-neon-violet"
+                  className="ds-focus-ring rounded-full border border-border/[0.12] px-2.5 py-1 text-ds-caption text-text-secondary transition-colors hover:border-accent hover:text-accent"
                 >
                   {q}
                 </button>
@@ -127,46 +132,47 @@ export default function ChemistryTeacherChat({ simulationId, context, onMessageS
         {messages.map((message, i) => (
           <div
             key={i}
-            className={`group relative rounded-md px-3 py-2 text-sm ${
-              message.role === "user" ? "ml-6 bg-neon-violet/20 text-slate-100" : "mr-2 bg-white/5 text-slate-200"
+            className={`group relative rounded-ds-control px-3 py-2 text-ds-body ${
+              message.role === "user" ? "ml-6 bg-accent/15 text-text-primary" : "mr-2 bg-text-primary/5 text-text-primary"
             }`}
           >
             {message.role === "assistant" && (
-              <div className="mb-1 flex items-center gap-1 text-xs text-neon-violet">
-                <Bot size={12} /> AI-преподаватель
+              <div className="mb-1 flex items-center gap-1 text-ds-caption text-accent">
+                <Bot size={12} /> {c.header}
               </div>
             )}
             <p className="whitespace-pre-wrap">{message.text}</p>
             {message.role === "assistant" && (
               <button
                 onClick={() => handleCopy(message.text, i)}
-                title="Скопировать"
-                className="absolute right-1.5 top-1.5 text-slate-500 opacity-0 transition group-hover:opacity-100 hover:text-slate-200"
+                title={c.copy}
+                className="ds-focus-ring absolute right-1.5 top-1.5 rounded-ds-control text-text-muted opacity-0 transition-opacity group-hover:opacity-100 hover:text-text-primary"
               >
                 {copiedIndex === i ? <Check size={13} /> : <Copy size={13} />}
               </button>
             )}
           </div>
         ))}
-        {isLoading && <p className="text-sm text-slate-500">Думаю...</p>}
+        {isLoading && <p className="text-ds-body text-text-muted">{c.thinking}</p>}
       </div>
 
-      <div className="flex gap-2 border-t border-glass-border p-3">
+      <div className="flex gap-2 border-t border-border/[0.08] p-3">
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !isLoading) sendMessage(input);
           }}
-          placeholder="Спроси про текущий эксперимент..."
+          placeholder={c.inputPlaceholder}
           data-testid="chemistry-teacher-input"
-          className="flex-1 rounded-md border border-glass-border bg-white/5 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-neon-violet focus:outline-none"
+          className="ds-input ds-focus-ring flex-1"
         />
         <button
           onClick={() => sendMessage(input)}
           disabled={isLoading || !input.trim()}
+          aria-label={c.sendAria}
           data-testid="chemistry-teacher-send"
-          className="rounded-md bg-neon-violet px-3 py-2 text-white hover:brightness-110 disabled:opacity-50"
+          className="ds-focus-ring rounded-ds-control bg-accent px-3 py-2 text-white transition-all hover:brightness-110 disabled:opacity-50"
         >
           <Send size={16} />
         </button>

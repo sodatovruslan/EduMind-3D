@@ -20,6 +20,13 @@
  * сборки (Task 4).
  */
 import type { CircuitComponent, CircuitSolution, Connection } from "./circuit-engine";
+import { checkElectricalSafety } from "./electricity-safety";
+import {
+  ammeterPlacementMessage,
+  checkAmmeterPlacement,
+  checkVoltmeterPlacement,
+  voltmeterPlacementMessage,
+} from "./measurement-validation";
 
 export type LabDifficulty = "beginner" | "intermediate" | "advanced";
 
@@ -67,6 +74,12 @@ export interface ElectricityLabStep {
   // ещё не подключённая пара из requiredWiring), а не запланированный
   // заранее сценарий. null — подсвечивать нечего (шаг не про сборку).
   suggestedTerminals?: (ctx: ElectricityLabStepContext) => [string, string] | null;
+  // Stage S9.5 — Guided Experiments: необязательное объяснение, ПОЧЕМУ шаг
+  // ещё заблокирован, когда причина специфична для этого шага (например,
+  // амперметр подключён параллельно). Переиспользует готовые сообщения
+  // measurement-validation.ts/electricity-safety.ts — не выдумывает новый
+  // текст. null — нет специфичной причины (UI покажет общую подсказку).
+  feedback?: (ctx: ElectricityLabStepContext) => string | null;
 }
 
 export interface ScientificQuestion {
@@ -130,6 +143,36 @@ function componentByKind(components: CircuitComponent[], kind: CircuitComponent[
 
 const alwaysUnlocked: ElectricityLabStep["isUnlocked"] = () => true;
 
+// ---- Stage S9.5 — безопасность и корректность приборов (переиспользует
+// electricity-safety.ts/measurement-validation.ts, ничего не пересчитывает) ----
+
+// ни одна лабораторная работа не должна засчитываться пройденной, пока
+// сохраняется ОПАСНОЕ (danger) предупреждение системы безопасности — кроме
+// кодов, которые сама лабораторная работа намеренно провоцирует и потом
+// должна разрешить (например, "fuse_blown" в experiment про перегрузку)
+function isElectricallySafe(ctx: ElectricityLabStepContext, allowedDangerCodes: string[] = []): boolean {
+  const warnings = checkElectricalSafety({ components: ctx.components, connections: ctx.connections, solution: ctx.solution });
+  return !warnings.some((w) => w.severity === "danger" && !allowedDangerCodes.includes(w.code));
+}
+
+function isAmmeterPlacedCorrectly(ctx: ElectricityLabStepContext): boolean {
+  return checkAmmeterPlacement(ctx.components, ctx.connections, ctx.solution).status === "valid";
+}
+
+function isVoltmeterPlacedCorrectly(ctx: ElectricityLabStepContext): boolean {
+  return checkVoltmeterPlacement(ctx.components, ctx.connections, ctx.solution).status === "valid";
+}
+
+// человекочитаемое объяснение блокировки шага измерения — переиспользует
+// готовые сообщения measurement-validation.ts, не выдумывает новый текст
+function ammeterStepFeedback(ctx: ElectricityLabStepContext): string | null {
+  return ammeterPlacementMessage(checkAmmeterPlacement(ctx.components, ctx.connections, ctx.solution));
+}
+
+function voltmeterStepFeedback(ctx: ElectricityLabStepContext): string | null {
+  return voltmeterPlacementMessage(checkVoltmeterPlacement(ctx.components, ctx.connections, ctx.solution));
+}
+
 function assemblySuggestion(wiring: [string, string][]): ElectricityLabStep["suggestedTerminals"] {
   return (ctx) => firstUnwiredPair(ctx.connections, wiring);
 }
@@ -188,9 +231,10 @@ const measureCurrent: ElectricityLabExperiment = {
     {
       id: "assembly",
       kind: "assembly",
-      instruction: "Собери цепь проводами по подсказкам на клеммах, замкни переключатель.",
-      isUnlocked: (ctx) => ctx.solution.isCircuitActive,
+      instruction: "Собери цепь проводами по подсказкам на клеммах, замкни переключатель. Амперметр должен стоять ПОСЛЕДОВАТЕЛЬНО в разрыве провода.",
+      isUnlocked: (ctx) => ctx.solution.isCircuitActive && isAmmeterPlacedCorrectly(ctx),
       suggestedTerminals: assemblySuggestion(CANONICAL_WIRING),
+      feedback: ammeterStepFeedback,
     },
     {
       id: "measurement",
@@ -205,9 +249,13 @@ const measureCurrent: ElectricityLabExperiment = {
       isUnlocked: (ctx) => ctx.measurementsRecorded >= 1,
     },
     conclusionStep("Запиши вывод: какой ток ты измерил и почему именно такой?"),
-    finishStep({ isComplete: (ctx) => ctx.solution.isCircuitActive && ctx.measurementsRecorded >= 1 }),
+    finishStep({
+      isComplete: (ctx) =>
+        ctx.solution.isCircuitActive && isAmmeterPlacedCorrectly(ctx) && ctx.measurementsRecorded >= 1 && isElectricallySafe(ctx),
+    }),
   ],
-  isComplete: (ctx) => ctx.solution.isCircuitActive && ctx.measurementsRecorded >= 1,
+  isComplete: (ctx) =>
+    ctx.solution.isCircuitActive && isAmmeterPlacedCorrectly(ctx) && ctx.measurementsRecorded >= 1 && isElectricallySafe(ctx),
   questions: [
     {
       id: "q-current-formula",
@@ -243,9 +291,11 @@ const measureVoltage: ElectricityLabExperiment = {
     {
       id: "assembly",
       kind: "assembly",
-      instruction: "Собери цепь и подключи вольтметр параллельно резистору.",
-      isUnlocked: (ctx) => ctx.solution.isCircuitActive && (ctx.solution.readings.voltmeter?.voltageV ?? 0) > 0.1,
+      instruction: "Собери цепь и подключи вольтметр параллельно резистору (не разрывая основной провод).",
+      isUnlocked: (ctx) =>
+        ctx.solution.isCircuitActive && (ctx.solution.readings.voltmeter?.voltageV ?? 0) > 0.1 && isVoltmeterPlacedCorrectly(ctx),
       suggestedTerminals: assemblySuggestion(CANONICAL_WIRING),
+      feedback: voltmeterStepFeedback,
     },
     {
       id: "measurement",
@@ -261,10 +311,20 @@ const measureVoltage: ElectricityLabExperiment = {
     },
     conclusionStep("Запиши вывод: какое напряжение показал вольтметр?"),
     finishStep({
-      isComplete: (ctx) => ctx.solution.isCircuitActive && (ctx.solution.readings.voltmeter?.voltageV ?? 0) > 0.1 && ctx.measurementsRecorded >= 1,
+      isComplete: (ctx) =>
+        ctx.solution.isCircuitActive &&
+        (ctx.solution.readings.voltmeter?.voltageV ?? 0) > 0.1 &&
+        isVoltmeterPlacedCorrectly(ctx) &&
+        ctx.measurementsRecorded >= 1 &&
+        isElectricallySafe(ctx),
     }),
   ],
-  isComplete: (ctx) => ctx.solution.isCircuitActive && (ctx.solution.readings.voltmeter?.voltageV ?? 0) > 0.1 && ctx.measurementsRecorded >= 1,
+  isComplete: (ctx) =>
+    ctx.solution.isCircuitActive &&
+    (ctx.solution.readings.voltmeter?.voltageV ?? 0) > 0.1 &&
+    isVoltmeterPlacedCorrectly(ctx) &&
+    ctx.measurementsRecorded >= 1 &&
+    isElectricallySafe(ctx),
   questions: [
     {
       id: "q-voltmeter-placement",
@@ -317,9 +377,9 @@ const openCircuitExperiment: ElectricityLabExperiment = {
       isUnlocked: (ctx) => ctx.openCircuitObserved && ctx.solution.isCircuitActive,
     },
     conclusionStep("Запиши вывод: что изменилось после замыкания переключателя?"),
-    finishStep({ isComplete: (ctx) => ctx.openCircuitObserved && ctx.solution.isCircuitActive }),
+    finishStep({ isComplete: (ctx) => ctx.openCircuitObserved && ctx.solution.isCircuitActive && isElectricallySafe(ctx) }),
   ],
-  isComplete: (ctx) => ctx.openCircuitObserved && ctx.solution.isCircuitActive,
+  isComplete: (ctx) => ctx.openCircuitObserved && ctx.solution.isCircuitActive && isElectricallySafe(ctx),
   questions: [
     {
       id: "q-open-circuit",
@@ -372,9 +432,11 @@ const lampBrightness: ElectricityLabExperiment = {
       isUnlocked: (ctx) => ctx.maxBulbBrightnessObserved > 0.5,
     },
     conclusionStep("Запиши вывод: как менялась яркость при росте напряжения?"),
-    finishStep({ isComplete: (ctx) => ctx.maxBulbBrightnessObserved > 0.5 && ctx.measurementsRecorded >= 1 }),
+    finishStep({
+      isComplete: (ctx) => ctx.maxBulbBrightnessObserved > 0.5 && ctx.measurementsRecorded >= 1 && isElectricallySafe(ctx),
+    }),
   ],
-  isComplete: (ctx) => ctx.maxBulbBrightnessObserved > 0.5 && ctx.measurementsRecorded >= 1,
+  isComplete: (ctx) => ctx.maxBulbBrightnessObserved > 0.5 && ctx.measurementsRecorded >= 1 && isElectricallySafe(ctx),
   questions: [
     {
       id: "q-brightness",
@@ -430,10 +492,14 @@ const resistanceInfluence: ElectricityLabExperiment = {
     },
     conclusionStep("Запиши вывод: как изменение сопротивления повлияло на ток?"),
     finishStep({
-      isComplete: (ctx) => ctx.maxResistanceOhmObserved - ctx.minResistanceOhmObserved >= 10 && ctx.measurementsRecorded >= 2,
+      isComplete: (ctx) =>
+        ctx.maxResistanceOhmObserved - ctx.minResistanceOhmObserved >= 10 &&
+        ctx.measurementsRecorded >= 2 &&
+        isElectricallySafe(ctx),
     }),
   ],
-  isComplete: (ctx) => ctx.maxResistanceOhmObserved - ctx.minResistanceOhmObserved >= 10 && ctx.measurementsRecorded >= 2,
+  isComplete: (ctx) =>
+    ctx.maxResistanceOhmObserved - ctx.minResistanceOhmObserved >= 10 && ctx.measurementsRecorded >= 2 && isElectricallySafe(ctx),
   questions: [
     {
       id: "q-resistance-influence",
@@ -486,10 +552,12 @@ const voltageInfluence: ElectricityLabExperiment = {
     },
     conclusionStep("Запиши вывод: как изменение напряжения повлияло на ток?"),
     finishStep({
-      isComplete: (ctx) => ctx.maxVoltageVObserved - ctx.minVoltageVObserved >= 8 && ctx.measurementsRecorded >= 2,
+      isComplete: (ctx) =>
+        ctx.maxVoltageVObserved - ctx.minVoltageVObserved >= 8 && ctx.measurementsRecorded >= 2 && isElectricallySafe(ctx),
     }),
   ],
-  isComplete: (ctx) => ctx.maxVoltageVObserved - ctx.minVoltageVObserved >= 8 && ctx.measurementsRecorded >= 2,
+  isComplete: (ctx) =>
+    ctx.maxVoltageVObserved - ctx.minVoltageVObserved >= 8 && ctx.measurementsRecorded >= 2 && isElectricallySafe(ctx),
   questions: [
     {
       id: "q-voltage-influence",
@@ -544,9 +612,13 @@ const fuseOverload: ElectricityLabExperiment = {
       isUnlocked: (ctx) => ctx.fuseBlownObserved,
     },
     conclusionStep("Запиши вывод: почему предохранитель перегорел?"),
-    finishStep({ isComplete: (ctx) => ctx.fuseBlownObserved }),
+    // "fuse_blown" — намеренная, ожидаемая опасность именно этой лабораторной
+    // работы (её и просят вызвать), поэтому она явно разрешена; любая ДРУГАЯ
+    // опасность (короткое замыкание, обход предохранителя) по-прежнему
+    // блокирует завершение — это не "любой ценой" перегрузка.
+    finishStep({ isComplete: (ctx) => ctx.fuseBlownObserved && isElectricallySafe(ctx, ["fuse_blown"]) }),
   ],
-  isComplete: (ctx) => ctx.fuseBlownObserved,
+  isComplete: (ctx) => ctx.fuseBlownObserved && isElectricallySafe(ctx, ["fuse_blown"]),
   questions: [
     {
       id: "q-fuse",
@@ -600,10 +672,12 @@ const shortCircuitInvestigation: ElectricityLabExperiment = {
     },
     conclusionStep("Запиши вывод: что вызвало короткое замыкание и как ты его устранил?"),
     finishStep({
-      isComplete: (ctx) => ctx.shortCircuitObserved && ctx.solution.isCircuitActive && !ctx.solution.isShortCircuit,
+      isComplete: (ctx) =>
+        ctx.shortCircuitObserved && ctx.solution.isCircuitActive && !ctx.solution.isShortCircuit && isElectricallySafe(ctx),
     }),
   ],
-  isComplete: (ctx) => ctx.shortCircuitObserved && ctx.solution.isCircuitActive && !ctx.solution.isShortCircuit,
+  isComplete: (ctx) =>
+    ctx.shortCircuitObserved && ctx.solution.isCircuitActive && !ctx.solution.isShortCircuit && isElectricallySafe(ctx),
   questions: [
     {
       id: "q-short-circuit",

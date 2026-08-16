@@ -12,13 +12,14 @@ from jose import JWTError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.core.deps import get_current_user
 from app.core.security import create_access_token, create_refresh_token, decode_token
 from app.database import get_db
 from app.models.user import User
 from app.schemas.auth import RefreshRequest, Token
 from app.schemas.user import UserCreate, UserRead
-from app.services.auth_service import authenticate_user, register_user
+from app.services.auth_service import authenticate_user, cleanup_test_students, register_user
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -63,3 +64,18 @@ async def refresh(payload: RefreshRequest, db: AsyncSession = Depends(get_db)):
 @router.get("/me", response_model=UserRead)
 async def read_current_user(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+@router.post("/dev/cleanup-test-users")
+async def cleanup_test_users(db: AsyncSession = Depends(get_db)):
+    """
+    Dev-only. 404s outside ENVIRONMENT=development so this never exists as
+    an attack surface in prod. Called by Playwright's global teardown
+    (frontend/e2e/global-teardown.ts) after each E2E run so throwaway
+    @example.com accounts stop accumulating in the dev database (see D7
+    stage A cleanup — 407 such accounts had built up before this existed).
+    """
+    if settings.ENVIRONMENT != "development":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    deleted = await cleanup_test_students(db)
+    return {"deleted": deleted}

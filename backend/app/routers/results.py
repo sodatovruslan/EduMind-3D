@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.deps import get_current_user, require_role
+from app.core.classroom_scope import accessible_student_ids, require_student_access
 from app.database import get_db
 from app.models.lab_result import LabResult
 from app.models.simulation import Simulation
@@ -25,8 +26,9 @@ async def my_results(db: AsyncSession = Depends(get_db), current_user: User = De
 async def student_results(
     user_id: str,
     db: AsyncSession = Depends(get_db),
-    _teacher: User = Depends(require_role(UserRole.TEACHER, UserRole.ADMIN)),
+    teacher: User = Depends(require_role(UserRole.TEACHER, UserRole.ADMIN)),
 ):
+    await require_student_access(db, teacher, user_id)
     result = await db.execute(
         select(LabResult).options(selectinload(LabResult.simulation)).where(LabResult.user_id == user_id)
     )
@@ -35,27 +37,29 @@ async def student_results(
 
 @router.get("/stats", response_model=ClassStats)
 async def class_stats(
+    class_id: str | None = None,
     db: AsyncSession = Depends(get_db),
-    _teacher: User = Depends(require_role(UserRole.TEACHER, UserRole.ADMIN)),
+    teacher: User = Depends(require_role(UserRole.TEACHER, UserRole.ADMIN)),
 ):
-    """
-    Агрегированная статистика для дашборда учителя. Считается напрямую из
-    LabResults/Users — без отдельной таблицы "классов", т.к. в MVP один
-    учитель видит всех учеников (модели "класс/группа" пока нет).
-    """
-    total_students = (
-        await db.execute(select(func.count()).select_from(User).where(User.role == UserRole.STUDENT))
-    ).scalar_one()
+    """Агрегированная статистика в доступной учителю области классов."""
+    student_ids = await accessible_student_ids(db, teacher, class_id)
+    student_filter = [] if student_ids is None else [User.id.in_(student_ids)]
+    result_filter = [] if student_ids is None else [LabResult.user_id.in_(student_ids)]
+    total_students = (await db.execute(
+        select(func.count()).select_from(User).where(User.role == UserRole.STUDENT, *student_filter)
+    )).scalar_one()
     total_simulations = (await db.execute(select(func.count()).select_from(Simulation))).scalar_one()
 
     average_score = (
-        await db.execute(select(func.avg(LabResult.score)).where(LabResult.score.isnot(None)))
+        await db.execute(select(func.avg(LabResult.score)).where(LabResult.score.isnot(None), *result_filter))
     ).scalar()
-    active_students = (await db.execute(select(func.count(func.distinct(LabResult.user_id))))).scalar() or 0
+    active_students = (await db.execute(
+        select(func.count(func.distinct(LabResult.user_id))).where(*result_filter)
+    )).scalar() or 0
 
     # уникальные пары (ученик, симуляция) — через distinct на нескольких колонках,
     # без func.concat (тот не работает на SQLite, только на Postgres)
-    distinct_pairs = select(LabResult.user_id, LabResult.simulation_id).distinct().subquery()
+    distinct_pairs = select(LabResult.user_id, LabResult.simulation_id).where(*result_filter).distinct().subquery()
     completed_pairs = (await db.execute(select(func.count()).select_from(distinct_pairs))).scalar_one()
 
     possible_pairs = total_students * total_simulations

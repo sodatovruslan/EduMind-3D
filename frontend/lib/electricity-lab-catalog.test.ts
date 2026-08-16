@@ -124,3 +124,119 @@ describe("electricity-lab-catalog", () => {
     }
   });
 });
+
+// Stage S9.5 — Guided Experiments: интеграция с measurement-validation.ts
+// (правильность размещения приборов) и electricity-safety.ts (никогда не
+// засчитывать небезопасный результат) внутри уже существующего каталога.
+describe("electricity-lab-catalog — Stage S9.5 измерение и безопасность", () => {
+  const AMMETER_SHUNTS_RESISTOR: [string, string][] = [
+    ["battery_pos", "switch_a"],
+    ["switch_b", "resistor_a"],
+    ["resistor_b", "bulb_a"],
+    ["bulb_b", "fuse_a"],
+    ["fuse_b", "battery_neg"],
+    ["ammeter_a", "resistor_a"], // амперметр включён параллельно резистору — шунтирует его
+    ["ammeter_b", "resistor_b"],
+  ];
+
+  const VOLTMETER_IN_SERIES: [string, string][] = [
+    ["battery_pos", "switch_a"],
+    ["switch_b", "voltmeter_a"], // вольтметр вставлен прямо в разрыв провода
+    ["voltmeter_b", "resistor_a"],
+    ["resistor_b", "bulb_a"],
+    ["bulb_b", "fuse_a"],
+    ["fuse_b", "battery_neg"],
+  ];
+
+  it("измерение тока: амперметр, включённый параллельно (шунтирует резистор), не даёт завершить работу", () => {
+    const exp = getElectricityLabExperiment("elec-beginner-measure-current")!;
+    const connections = wireAll(AMMETER_SHUNTS_RESISTOR);
+    const ctx = makeCtx({ connections, measurementsRecorded: 1 });
+
+    const assembly = exp.steps.find((s) => s.id === "assembly")!;
+    expect(assembly.isUnlocked(ctx)).toBe(false);
+    expect(assembly.feedback?.(ctx)).toMatch(/шунтирует/);
+    expect(exp.isComplete(ctx)).toBe(false);
+
+    // исправлено на канонический (последовательный) монтаж — работа завершается
+    const fixedCtx = makeCtx({ connections: wireAll(CANONICAL_WIRING), measurementsRecorded: 1 });
+    expect(assembly.isUnlocked(fixedCtx)).toBe(true);
+    expect(exp.isComplete(fixedCtx)).toBe(true);
+  });
+
+  it("измерение напряжения: вольтметр, включённый последовательно, не даёт завершить работу", () => {
+    const exp = getElectricityLabExperiment("elec-beginner-measure-voltage")!;
+    const connections = wireAll(VOLTMETER_IN_SERIES);
+    const ctx = makeCtx({ connections, measurementsRecorded: 1 });
+
+    const assembly = exp.steps.find((s) => s.id === "assembly")!;
+    expect(assembly.feedback?.(ctx)).toMatch(/последовательно/);
+    expect(exp.isComplete(ctx)).toBe(false);
+
+    const fixedCtx = makeCtx({ connections: wireAll(CANONICAL_WIRING), measurementsRecorded: 1 });
+    expect(exp.isComplete(fixedCtx)).toBe(true);
+  });
+
+  it("ни одна лабораторная работа не засчитывается завершённой при активном коротком замыкании", () => {
+    const shortCircuited: [string, string][] = [["battery_pos", "battery_neg"]];
+    const connections = wireAll(shortCircuited);
+    const solution = solveCircuit(COMPONENTS, connections);
+    expect(solution.isShortCircuit).toBe(true);
+
+    for (const exp of ELECTRICITY_LAB_CATALOG) {
+      const ctx = makeCtx({
+        connections,
+        solution,
+        measurementsRecorded: 5,
+        minResistanceOhmObserved: 1,
+        maxResistanceOhmObserved: 40,
+        minVoltageVObserved: 1,
+        maxVoltageVObserved: 24,
+        maxBulbBrightnessObserved: 1,
+        fuseBlownObserved: true,
+        openCircuitObserved: true,
+        shortCircuitObserved: true,
+      });
+      expect(exp.isComplete(ctx)).toBe(false);
+    }
+  });
+
+  it("перегорание предохранителя допускается (это цель работы), но обход предохранителя всё равно блокирует завершение", () => {
+    const exp = getElectricityLabExperiment("elec-advanced-fuse-overload")!;
+    // предохранитель реально перегорел -> цепь через него разорвана, но
+    // компонент "fuse" всё ещё физически подключён в основной контур
+    const blownComponents = COMPONENTS.map((c) => (c.id === "fuse" ? { ...c, isBlown: true } : c));
+    const connections = wireAll(CANONICAL_WIRING);
+    const solution = solveCircuit(blownComponents, connections);
+    const safeCtx = makeCtx({ components: blownComponents, connections, solution, fuseBlownObserved: true });
+    expect(exp.isComplete(safeCtx)).toBe(true);
+
+    // обход предохранителя (unsafe_connection) — отдельная опасность,
+    // которую эта работа не разрешает, даже если fuseBlownObserved уже true
+    const bypassWiring: [string, string][] = [
+      ["battery_pos", "switch_a"],
+      ["switch_b", "resistor_a"],
+      ["resistor_b", "bulb_a"],
+      ["bulb_b", "battery_neg"], // предохранитель обойдён
+    ];
+    const bypassConnections = wireAll(bypassWiring);
+    const bypassSolution = solveCircuit(COMPONENTS, bypassConnections);
+    const unsafeCtx = makeCtx({ connections: bypassConnections, solution: bypassSolution, fuseBlownObserved: true });
+    expect(exp.isComplete(unsafeCtx)).toBe(false);
+  });
+
+  it("яркость лампы: предупреждение о превышении мощности (warning) не блокирует завершение", () => {
+    const exp = getElectricityLabExperiment("elec-beginner-lamp-brightness")!;
+    const connections = wireAll(CANONICAL_WIRING);
+    const highVoltageComponents = COMPONENTS.map((c) => (c.id === "battery" ? { ...c, voltageV: 24 } : c));
+    const solution = solveCircuit(highVoltageComponents, connections);
+    const ctx = makeCtx({
+      components: highVoltageComponents,
+      connections,
+      solution,
+      measurementsRecorded: 1,
+      maxBulbBrightnessObserved: 1,
+    });
+    expect(exp.isComplete(ctx)).toBe(true);
+  });
+});
