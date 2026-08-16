@@ -11,8 +11,8 @@ class AILog(Base):
     __tablename__ = "ai_logs"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
-    simulation_id = Column(String(36), ForeignKey("simulations.id"), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    simulation_id = Column(String(36), ForeignKey("simulations.id"), nullable=False, index=True)
     prompt = Column(Text, nullable=False)
     response = Column(Text, nullable=False)
     log_type = Column(String(50), nullable=False)  # hint | grading | chat

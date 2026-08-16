@@ -23,6 +23,7 @@ import { LOCATIONS, CONTROL_POINTS, type LocationKey, type ControlPointKey } fro
 import { HLS_TILE_TEMPLATE, HLS_ATTRIBUTION, getCachedHlsDate, setCachedHlsDate, resolveHlsDate } from "./imagery-sources";
 import { BORDERS_URL, CITIES_URL, buildDedupedCountryLabels, annotateCityRank } from "./labels";
 import { DEFAULT_TERRAIN_EXAGGERATION } from "./terrain";
+import { normalizeCameraState, type CameraContext } from "./camera-context";
 
 export interface MapLibreGlobeOptions {
   /** Esri eval-only слой включён по умолчанию. Production-контекст должен передавать `false` (§16 — не production dependency). */
@@ -30,6 +31,19 @@ export interface MapLibreGlobeOptions {
   /** Рисовать georeferencing-маркеры контрольных точек (G6.8.x). Полезно для внутреннего сравнения, необязательно для production UX. */
   showControlPoints?: boolean;
   terrainExaggeration?: number;
+  /**
+   * G6.11 §6 — клик по глобусу (lng/lat самой точки клика, не привязан к
+   * дискретным маркерам). Вызывающий код решает, что с этим делать
+   * (например, отправить в бэкенд для классификации континента) — этот
+   * хук ничего не знает про образовательную семантику.
+   */
+  onMapClick?: (lngLat: { lng: number; lat: number }) => void;
+  /**
+   * G6.11 §19/§28 — нормализованный камера-контекст, обновляется на
+   * `moveend` (НЕ на каждый кадр `move`) — естественный троттлинг: событие
+   * приходит один раз на жест/анимацию, не 60 раз в секунду.
+   */
+  onCameraChange?: (camera: CameraContext) => void;
 }
 
 export interface MapLibreGlobeState {
@@ -62,12 +76,25 @@ export function useMapLibreGlobe(options: MapLibreGlobeOptions = {}): MapLibreGl
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const controlMarkersRef = useRef<any[]>([]);
-  // Не читаем React state внутри обработчиков событий карты — тот
-  // захватывается ЗАМЫКАНИЕМ в момент монтирования и остаётся неизменным
-  // для этих колбэков независимо от последующих ре-рендеров (реальный баг,
-  // найденный по скриншоту владельца продукта после G6.9 — единичный сбой
-  // terrain-тайла ПОСЛЕ настоящего успеха откатывал статус на "failed").
+  // Не читаем React state ИЛИ callback-пропы напрямую внутри обработчиков
+  // событий карты — те захватываются ЗАМЫКАНИЕМ в момент монтирования
+  // (init() запускается один раз, `useEffect(..., [])`) и остаются
+  // неизменными для этих колбэков независимо от последующих ре-рендеров.
+  // `terrainEverReadyRef` — тот самый реальный баг, найденный по скриншоту
+  // владельца продукта после G6.9 (единичный сбой terrain-тайла ПОСЛЕ
+  // настоящего успеха откатывал статус на "failed"). `onMapClick`/
+  // `onCameraChange` — те же грабли на новом месте (G6.11): если бы
+  // обработчики читали `options.onMapClick` напрямую, вызывающий код
+  // (лекция) навсегда получал бы ПЕРВУЮ версию колбэка с первого рендера.
+  // Рефы обновляются на каждый рендер отдельным эффектом ниже — актуальный
+  // колбэк всегда доступен обработчикам карты.
   const terrainEverReadyRef = useRef(false);
+  const onMapClickRef = useRef(options.onMapClick);
+  const onCameraChangeRef = useRef(options.onCameraChange);
+  useEffect(() => {
+    onMapClickRef.current = options.onMapClick;
+    onCameraChangeRef.current = options.onCameraChange;
+  });
 
   const [status, setStatus] = useState<MapLibreGlobeState["status"]>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -106,6 +133,18 @@ export function useMapLibreGlobe(options: MapLibreGlobeOptions = {}): MapLibreGl
           attributionControl: { compact: true },
         });
         mapRef.current = map;
+
+        // G6.11 §6/§19 — реальное геовзаимодействие (клик где угодно по
+        // глобусу, та же семантика, что у старого R3F-рендерера: клик даёт
+        // lng/lat, ОБРАЗОВАТЕЛЬНУЮ классификацию делает бэкенд, не клиент,
+        // см. compatibility audit в GEOWORLD_ROADMAP.md) + нормализованный
+        // камера-контекст на `moveend` (не на каждый кадр).
+        map.on("click", (e: any) => {
+          onMapClickRef.current?.({ lng: e.lngLat.lng, lat: e.lngLat.lat });
+        });
+        map.on("moveend", () => {
+          onCameraChangeRef.current?.(normalizeCameraState(map));
+        });
 
         if (showControlPoints) {
           for (const key of Object.keys(CONTROL_POINTS) as ControlPointKey[]) {

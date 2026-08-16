@@ -11,6 +11,7 @@
 import { useLocale } from "@/lib/locale-context";
 import { useMapLibreGlobe } from "@/lib/geo/maplibre/useMapLibreGlobe";
 import { LOCATIONS, type LocationKey } from "@/lib/geo/maplibre/camera-presets";
+import type { CameraContext } from "@/lib/geo/maplibre/camera-context";
 
 export interface MapLibreGlobeCanvasProps {
   /** Esri eval-only слой по умолчанию ВЫКЛЮЧЕН в production-контексте (G6.10 §16 — не production dependency). */
@@ -18,6 +19,10 @@ export interface MapLibreGlobeCanvasProps {
   showControlPoints?: boolean;
   showDiagnostics?: boolean;
   className?: string;
+  /** G6.11 — реальное геовзаимодействие: клик по глобусу отдаёт lng/lat, без образовательной семантики (та остаётся на вызывающем коде/бэкенде). */
+  onMapClick?: (lngLat: { lng: number; lat: number }) => void;
+  /** G6.11 — нормализованный камера-контекст (throttled на `moveend`). */
+  onCameraChange?: (camera: CameraContext) => void;
 }
 
 export default function MapLibreGlobeCanvas({
@@ -25,9 +30,11 @@ export default function MapLibreGlobeCanvas({
   showControlPoints = false,
   showDiagnostics = false,
   className,
+  onMapClick,
+  onCameraChange,
 }: MapLibreGlobeCanvasProps) {
   const { t } = useLocale();
-  const engine = useMapLibreGlobe({ esriEnabledByDefault, showControlPoints });
+  const engine = useMapLibreGlobe({ esriEnabledByDefault, showControlPoints, onMapClick, onCameraChange });
 
   return (
     <div className={`relative h-full w-full overflow-hidden rounded-ds-panel bg-black ${className ?? ""}`}>

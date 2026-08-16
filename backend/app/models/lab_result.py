@@ -11,8 +11,8 @@ class LabResult(Base):
     __tablename__ = "lab_results"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
-    simulation_id = Column(String(36), ForeignKey("simulations.id"), nullable=False)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    simulation_id = Column(String(36), ForeignKey("simulations.id"), nullable=False, index=True)
     actions_log = Column(JSON, nullable=False, default=list)
     score = Column(Float, nullable=True)
     feedback = Column(JSON, nullable=True)
