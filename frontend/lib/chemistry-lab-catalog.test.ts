@@ -59,6 +59,14 @@ describe("chemistry-lab-catalog — структура каталога", () => 
     expect(getExperimentsByDifficulty("advanced")).toHaveLength(6);
   });
 
+  it("группирует карточки каталога по уровню: beginner, затем intermediate, затем advanced", () => {
+    expect(LAB_CATALOG.map((experiment) => experiment.difficulty)).toEqual([
+      ...Array(4).fill("beginner"),
+      ...Array(6).fill("intermediate"),
+      ...Array(6).fill("advanced"),
+    ]);
+  });
+
   it("все id уникальны", () => {
     const ids = LAB_CATALOG.map((e) => e.id);
     expect(new Set(ids).size).toBe(ids.length);
