@@ -50,6 +50,8 @@ import { explainError } from "@/lib/error-explanations";
 import { submitLabCompleted } from "@/lib/progress-client";
 import type { Simulation } from "@/lib/types";
 import { useLocale } from "@/lib/locale-context";
+import { BULB_RATED_POWER_W, ELECTRICITY_INITIAL_COMPONENTS } from "@/lib/electricity-inventory";
+import { readMultimeter, type MultimeterMode } from "@/lib/multimeter";
 
 // Guided Onboarding: наведение курсора в любую точку компонента (не только
 // на клемму) показывает всплывающую подпись с названием — общий хук вместо
@@ -84,20 +86,10 @@ function TooltipLabel({ label, position = [0, 0.55, 0] as [number, number, numbe
   );
 }
 
-const BULB_RATED_POWER_W = 18;
-
 // фиксированная раскладка стенда: компоненты не перетаскиваются по столу
 // (это отдельная фича на будущее) — интерактивность сосредоточена на
 // главном требуемом жесте: соединении терминалов проводом
-const INITIAL_COMPONENTS: CircuitComponent[] = [
-  { id: "battery", kind: "battery", terminals: ["battery_pos", "battery_neg"], voltageV: 12 },
-  { id: "resistor", kind: "resistor", terminals: ["resistor_a", "resistor_b"], resistanceOhm: 4 },
-  { id: "bulb", kind: "bulb", terminals: ["bulb_a", "bulb_b"], resistanceOhm: 2, ratedPowerW: BULB_RATED_POWER_W },
-  { id: "switch", kind: "switch", terminals: ["switch_a", "switch_b"], isClosed: true },
-  { id: "ammeter", kind: "ammeter", terminals: ["ammeter_a", "ammeter_b"] },
-  { id: "fuse", kind: "fuse", terminals: ["fuse_a", "fuse_b"], ratedCurrentA: 5, isBlown: false },
-  { id: "voltmeter", kind: "voltmeter", terminals: ["voltmeter_a", "voltmeter_b"] },
-];
+const INITIAL_COMPONENTS = ELECTRICITY_INITIAL_COMPONENTS;
 
 // латунь/медь для контактов и наконечников проводов — единая палитра
 // "металла" по всей сцене вместо нейтрального серого
@@ -276,6 +268,13 @@ const DEFAULT_COMPONENT_POSITIONS: Record<string, [number, number, number]> = {
   ammeter: [3.2, 0.28, -0.45],
   voltmeter: [-1.5, 1.05, 0.9],
   fuse: [1.4, 0.28, -1.6],
+  resistor_10: [-3.5, 0.28, -1.35],
+  resistor_47: [-2.35, 0.28, -1.35],
+  resistor_100: [-1.2, 0.28, -1.35],
+  resistor_220: [-0.05, 0.28, -1.35],
+  resistor_470: [2.55, 0.28, -1.35],
+  resistor_1k: [3.7, 0.28, -1.35],
+  multimeter: [3.25, 0.9, 0.85],
 };
 
 // Immersive interaction acceptance fix — комната для WASD-перемещения
@@ -362,10 +361,10 @@ function Battery() {
   );
 }
 
-function Resistor() {
+function Resistor({ componentId = "resistor", resistanceOhm = 4 }: { componentId?: string; resistanceOhm?: number }) {
   const bandColors = ["#a16207", "#000000", "#dc2626"];
   const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("grab");
-  const { position, isDragging, onPointerDown } = useComponentPlacement("resistor");
+  const { position, isDragging, onPointerDown } = useComponentPlacement(componentId);
   const suggestedTerminals = useSuggestedTerminals();
   const info = COMPONENT_INFO.resistor;
   return (
@@ -397,9 +396,9 @@ function Resistor() {
         <cylinderGeometry args={[0.02, 0.02, 0.06, 10]} />
         <meshStandardMaterial color="#9ca3af" metalness={0.8} roughness={0.3} />
       </mesh>
-      <ConnectionPoint id="resistor_a" position={[0, 0.4, 0]} suggested={suggestedTerminals?.includes("resistor_a") ?? false} />
-      <ConnectionPoint id="resistor_b" position={[0, -0.4, 0]} suggested={suggestedTerminals?.includes("resistor_b") ?? false} />
-      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0, 0.2]} />}
+      <ConnectionPoint id={`${componentId}_a`} position={[0, 0.4, 0]} suggested={suggestedTerminals?.includes(`${componentId}_a`) ?? false} />
+      <ConnectionPoint id={`${componentId}_b`} position={[0, -0.4, 0]} suggested={suggestedTerminals?.includes(`${componentId}_b`) ?? false} />
+      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name} · ${resistanceOhm >= 1000 ? `${resistanceOhm / 1000} kΩ` : `${resistanceOhm} Ω`}`} position={[0, 0, 0.2]} />}
     </group>
   );
 }
@@ -651,6 +650,24 @@ function Voltmeter({ voltageV, placementStatus, warningMessage }: { voltageV: nu
       <ConnectionPoint id="voltmeter_a" position={[-0.4, 0, 0]} color={BRASS_COLOR} suggested={suggestedTerminals?.includes("voltmeter_a") ?? false} />
       <ConnectionPoint id="voltmeter_b" position={[0.4, 0, 0]} color={BRASS_COLOR} suggested={suggestedTerminals?.includes("voltmeter_b") ?? false} />
       {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.3, 0]} />}
+    </group>
+  );
+}
+
+function Multimeter() {
+  const { locale } = useLocale();
+  const name = { ru: "Мультиметр", en: "Multimeter", tg: "Мултиметр" }[locale];
+  const { state } = useExperimentState();
+  const component = state.components.find((item) => item.id === "multimeter");
+  const mode = component?.meterMode ?? "voltage";
+  const reading = readMultimeter(mode, state.components, state.connections);
+  const { position, isDragging, onPointerDown } = useComponentPlacement("multimeter");
+  return (
+    <group position={position} scale={isDragging ? 1.06 : 1} onPointerDown={onPointerDown}>
+      <MeterHousing position={[0, 0, 0]} label={mode === "voltage" ? "V DC" : mode === "current" ? "A DC" : "Ω"} value={reading.value ?? 0} unit={reading.unit} testId="multimeter-reading" placementStatus={reading.status} warningMessage={reading.status === "overload" ? "OVERLOAD" : null} />
+      <ConnectionPoint id="multimeter_red" position={[-0.42, -0.15, 0]} color="#ef4444" />
+      <ConnectionPoint id="multimeter_black" position={[0.42, -0.15, 0]} color="#111827" />
+      <TooltipLabel label={`${name} · ${mode === "voltage" ? "V DC" : mode === "current" ? "A DC" : "Ω"}`} position={[0, 0.4, 0]} />
     </group>
   );
 }
@@ -1102,6 +1119,9 @@ function CircuitScene({
       <Workbench />
       <Battery />
       <Resistor />
+      {state.components.filter((component) => component.kind === "resistor" && component.id !== "resistor").map((component) => (
+        <Resistor key={component.id} componentId={component.id} resistanceOhm={component.resistanceOhm ?? 0} />
+      ))}
       <Bulb brightness={brightness} />
       <Switch
         isClosed={switchComponent?.isClosed ?? true}
@@ -1114,6 +1134,7 @@ function CircuitScene({
       />
       <Ammeter currentA={ammeterReading} placementStatus={ammeterCheck.status} warningMessage={ammeterWarning} />
       <Voltmeter voltageV={voltmeterReading} placementStatus={voltmeterCheck.status} warningMessage={voltmeterWarning} />
+      <Multimeter />
       <Fuse isBlown={fuse?.isBlown ?? false} justBlown={Boolean(solution.fuseToBlowId)} timeScale={timeScale} />
       <Wires />
       <PendingWirePreview />
@@ -1495,7 +1516,7 @@ function ElectricitySandboxOverlay({
 function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
   const { state, addConnection, updateComponent, resetExperiment, actionsLog, logEvent } = useExperimentState();
   const { quality, setQuality } = useQuality();
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const clock = useSimulationClock();
   const mountedAtRef = useRef(Date.now());
   // Immersive interaction acceptance fix — тот же паттерн fullscreen, что и
@@ -1538,6 +1559,11 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
   function handleResistanceChange(value: number) {
     updateComponent("resistor", { resistanceOhm: value });
     logEvent({ type: "param_changed", componentId: "resistor", field: "resistanceOhm", value });
+  }
+
+  function handleMultimeterMode(mode: MultimeterMode) {
+    updateComponent("multimeter", { meterMode: mode, kind: mode === "current" ? "ammeter" : "voltmeter" });
+    logEvent({ type: "param_changed", componentId: "multimeter", field: "meterMode", value: mode === "voltage" ? 0 : mode === "current" ? 1 : 2 });
   }
 
   function handleReset() {
@@ -1601,6 +1627,13 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
         </div>
 
         <TutorialPanel />
+        <div role="radiogroup" aria-label={{ ru: "Режим мультиметра", en: "Multimeter mode", tg: "Реҷаи мултиметр" }[locale]} className="flex items-center gap-2">
+          {(["voltage", "current", "resistance"] as const).map((mode) => (
+            <button key={mode} type="button" role="radio" aria-checked={(state.components.find((component) => component.id === "multimeter")?.meterMode ?? "voltage") === mode} onClick={() => handleMultimeterMode(mode)} className="ds-focus-ring min-h-11 rounded-full border border-border/[0.12] px-4 py-2 text-ds-body text-text-primary">
+              {mode === "voltage" ? "V DC" : mode === "current" ? "A DC" : "Ω"}
+            </button>
+          ))}
+        </div>
         <div>
           <label htmlFor="voltage-slider" className="mb-1 block font-mono text-ds-caption uppercase tracking-widest text-text-muted">
             {t.electricity.hud.voltageLabel}: {(battery?.voltageV ?? 0).toFixed(1)} В

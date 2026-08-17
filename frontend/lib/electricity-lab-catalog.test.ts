@@ -47,8 +47,8 @@ function wireAll(pairs: [string, string][]): Connection[] {
 }
 
 describe("electricity-lab-catalog", () => {
-  it("содержит ровно 8 экспериментов, покрывающих все заявленные сценарии", () => {
-    expect(ELECTRICITY_LAB_CATALOG).toHaveLength(8);
+  it("содержит 10 экспериментов, включая series/parallel expansion", () => {
+    expect(ELECTRICITY_LAB_CATALOG).toHaveLength(10);
   });
 
   it("измерение тока: не завершено без записанного измерения, даже если цепь активна", () => {

@@ -143,7 +143,10 @@ describe("electricity-save-serializer — hydrateElectricitySave", () => {
 
     expect(hydrated.experimentId).toBe("elec-beginner-measure-current");
     expect(hydrated.currentStepIndex).toBe(2);
-    expect(hydrated.components).toHaveLength(4);
+    expect(hydrated.components).toHaveLength(14);
+    for (const savedComponent of baseOptions().components) {
+      expect(hydrated.components.find((component) => component.id === savedComponent.id)).toEqual(savedComponent);
+    }
     expect(hydrated.connections).toHaveLength(2);
     expect(hydrated.measurements).toEqual(baseOptions().measurements);
     expect(hydrated.questionAnswers).toEqual({ "q-current-formula": 0 });
