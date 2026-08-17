@@ -46,6 +46,24 @@ export interface ClimateResult {
   description: string;
 }
 
+// G6.12 — те же поля, что реально приходят из PB2002/NOAA/USGS-датасетов
+// на фронтенде (см. lib/geo/maplibre/earth-science-sources.ts) — бэкенд
+// подтверждает форму payload и логирует реальный round-trip для scoring,
+// не дублирует сами датасеты (dataset = source of truth).
+export interface PlateBoundaryResult {
+  plate_a: string;
+  plate_b: string;
+  boundary_type: string | null;
+}
+export interface VolcanoActionResult {
+  name: string;
+  country: string | null;
+}
+export interface EarthquakeActionResult {
+  place: string;
+  magnitude: number;
+}
+
 export function useGeoLessonState(simulationId: string) {
   const [actionsLog, setActionsLog] = useState<Record<string, unknown>[]>([]);
   const [selectedLayer, setSelectedLayer] = useState<LayerResult | null>(null);
@@ -132,6 +150,54 @@ export function useGeoLessonState(simulationId: string) {
     [simulationId, climateResult]
   );
 
+  const explorePlateBoundary = useCallback(
+    async (plateA: string, plateB: string, boundaryType: string | null) => {
+      try {
+        const response = await apiFetch<{ result: PlateBoundaryResult }>(`/api/simulations/${simulationId}/action`, {
+          method: "POST",
+          body: JSON.stringify({ action_type: "explore_plate_boundary", payload: { plate_a: plateA, plate_b: plateB, boundary_type: boundaryType } }),
+        });
+        setActionsLog((prev) => [...prev, { action_type: "explore_plate_boundary", plate_a: plateA, plate_b: plateB, boundary_type: boundaryType }]);
+        return response.result;
+      } catch {
+        return null; // не блокируем UI — выбор границы уже показан визуально, лог для scoring — best-effort
+      }
+    },
+    [simulationId]
+  );
+
+  const exploreVolcano = useCallback(
+    async (name: string, country: string | null) => {
+      try {
+        const response = await apiFetch<{ result: VolcanoActionResult }>(`/api/simulations/${simulationId}/action`, {
+          method: "POST",
+          body: JSON.stringify({ action_type: "explore_volcano", payload: { name, country } }),
+        });
+        setActionsLog((prev) => [...prev, { action_type: "explore_volcano", name, country }]);
+        return response.result;
+      } catch {
+        return null;
+      }
+    },
+    [simulationId]
+  );
+
+  const exploreEarthquake = useCallback(
+    async (place: string, magnitude: number) => {
+      try {
+        const response = await apiFetch<{ result: EarthquakeActionResult }>(`/api/simulations/${simulationId}/action`, {
+          method: "POST",
+          body: JSON.stringify({ action_type: "explore_earthquake", payload: { place, magnitude } }),
+        });
+        setActionsLog((prev) => [...prev, { action_type: "explore_earthquake", place, magnitude }]);
+        return response.result;
+      } catch {
+        return null;
+      }
+    },
+    [simulationId]
+  );
+
   const completeAttempt = useCallback(async () => {
     setError(null);
     try {
@@ -161,6 +227,9 @@ export function useGeoLessonState(simulationId: string) {
     exploreLayer,
     exploreContinent,
     triggerClimateScenario,
+    explorePlateBoundary,
+    exploreVolcano,
+    exploreEarthquake,
     completeAttempt,
   };
 }

@@ -6,6 +6,27 @@
 // geolocation (camera center is reported as coordinates, never claimed to
 // be a named place — see camera-context.ts).
 import type { CameraContext } from "../maplibre/camera-context";
+import type { GeoFeatureInfo } from "./featureInfo";
+
+// G6.12 §38 — расширяет G6.11-контекст активными Earth Science слоями,
+// выбранным объектом и состоянием климатического сценария/Earth Structure
+// Mode. Всё ещё renderer-independent, всё ещё ТОЛЬКО компактная
+// семантика — `selectedFeature` уже сжат до {kind,title,subtitle,lines}
+// компонентом, который его строит (useEarthScienceLayers.ts), сырой
+// GeoJSON сюда никогда не попадает (§38: "never send full raw GeoJSON").
+// Полноценный AI Geo Guide, который реально использует этот контекст —
+// G6.13, здесь он по-прежнему только считается, никуда не отправляется.
+export interface GeoActiveLayers {
+  tectonics: boolean;
+  volcanoes: boolean;
+  earthquakes: boolean;
+  climate: boolean;
+}
+
+export interface GeoClimateScenarioContext {
+  temperatureAnomaly: number;
+  triggered: boolean;
+}
 
 export interface GeoAiContext {
   world: "geo3d";
@@ -16,6 +37,10 @@ export interface GeoAiContext {
   selectedContinent: string | null;
   actionsCount: number;
   completionScore: number | null;
+  activeLayers: GeoActiveLayers;
+  selectedFeature: GeoFeatureInfo | null;
+  climateScenario: GeoClimateScenarioContext;
+  earthStructureMode: boolean;
 }
 
 export interface GeoAiContextInput {
@@ -23,10 +48,14 @@ export interface GeoAiContextInput {
   actionsLog: Array<Record<string, unknown>>;
   selectedContinentName: string | null;
   completionScore: number | null;
+  activeLayers: GeoActiveLayers;
+  selectedFeature: GeoFeatureInfo | null;
+  climateScenario: GeoClimateScenarioContext;
+  earthStructureMode: boolean;
 }
 
 export function buildGeoAiContext(input: GeoAiContextInput): GeoAiContext {
-  const { camera, actionsLog, selectedContinentName, completionScore } = input;
+  const { camera, actionsLog, selectedContinentName, completionScore, activeLayers, selectedFeature, climateScenario, earthStructureMode } = input;
   const exploredLayers = actionsLog
     .filter((a) => a.action_type === "explore_layer" && typeof a.layer === "string")
     .map((a) => a.layer as string);
@@ -40,5 +69,9 @@ export function buildGeoAiContext(input: GeoAiContextInput): GeoAiContext {
     selectedContinent: selectedContinentName,
     actionsCount: actionsLog.length,
     completionScore,
+    activeLayers,
+    selectedFeature,
+    climateScenario,
+    earthStructureMode,
   };
 }

@@ -68,6 +68,15 @@ export interface MapLibreGlobeApi extends MapLibreGlobeState {
   flyToControlPoint: (key: ControlPointKey) => void;
   toggleEsri: () => void;
   toggleProjection: () => void;
+  /**
+   * G6.12 — доступ к сырому instance карты для composable-хуков, которым
+   * нужно добавлять/убирать СВОИ source/layer поверх базового стиля (см.
+   * useEarthScienceLayers). Функция, не значение состояния — не вызывает
+   * лишних ре-рендеров, всегда отдаёт актуальный `mapRef.current` (тот же
+   * "не читай напрямую, читай через ref" приём, что уже используется для
+   * onMapClick/onCameraChange). `null` пока карта не создана/после unmount.
+   */
+  getMap: () => any;
 }
 
 export function useMapLibreGlobe(options: MapLibreGlobeOptions = {}): MapLibreGlobeApi {
@@ -334,6 +343,10 @@ export function useMapLibreGlobe(options: MapLibreGlobeOptions = {}): MapLibreGl
     setProjectionMode(next);
   }
 
+  function getMap() {
+    return mapRef.current;
+  }
+
   return {
     containerRef,
     status,
@@ -353,5 +366,6 @@ export function useMapLibreGlobe(options: MapLibreGlobeOptions = {}): MapLibreGl
     flyToControlPoint,
     toggleEsri,
     toggleProjection,
+    getMap,
   };
 }

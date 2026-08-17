@@ -8,8 +8,9 @@
 // проп по умолчанию `false`, вызывающий код должен явно включить, обычно
 // гейтя на `process.env.NODE_ENV !== "production"` — см. G6.10 §8: "Production
 // user не должен видеть технические counters").
+import { useEffect } from "react";
 import { useLocale } from "@/lib/locale-context";
-import { useMapLibreGlobe } from "@/lib/geo/maplibre/useMapLibreGlobe";
+import { useMapLibreGlobe, type MapLibreGlobeState } from "@/lib/geo/maplibre/useMapLibreGlobe";
 import { LOCATIONS, type LocationKey } from "@/lib/geo/maplibre/camera-presets";
 import type { CameraContext } from "@/lib/geo/maplibre/camera-context";
 
@@ -33,6 +34,15 @@ export interface MapLibreGlobeCanvasProps {
   onMapClick?: (lngLat: { lng: number; lat: number }) => void;
   /** G6.11 — нормализованный камера-контекст (throttled на `moveend`). */
   onCameraChange?: (camera: CameraContext) => void;
+  /**
+   * G6.12 — отдаёт наверх `getMap`/`status` composable-хукам родителя
+   * (useEarthScienceLayers/useClimateOverlay), которым нужен доступ к
+   * сырому instance карты для добавления своих source/layer поверх
+   * базового стиля. `getMap` замыкается на внутренний `mapRef` хука — вызов
+   * ВСЕГДА отдаёт актуальный instance, даже если сам колбэк захвачен один
+   * раз при первом рендере (тот же приём, что onMapClick/onCameraChange).
+   */
+  onEngineReady?: (getMap: () => any, status: MapLibreGlobeState["status"]) => void;
 }
 
 export default function MapLibreGlobeCanvas({
@@ -43,9 +53,15 @@ export default function MapLibreGlobeCanvas({
   className,
   onMapClick,
   onCameraChange,
+  onEngineReady,
 }: MapLibreGlobeCanvasProps) {
   const { t } = useLocale();
   const engine = useMapLibreGlobe({ esriEnabledByDefault, showControlPoints, onMapClick, onCameraChange });
+
+  useEffect(() => {
+    onEngineReady?.(engine.getMap, engine.status);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engine.status]);
 
   return (
     <div className={`relative h-full w-full overflow-hidden rounded-ds-panel bg-black ${className ?? ""}`}>

@@ -1119,6 +1119,90 @@ CSS-специфичность: MapLibre сам добавляет класс `m
 
 Владелец продукта сравнивает старый/новый GeoWorld и решает судьбу этого этапа (НЕ начинать самостоятельно, прямое указание). Возможные направления: (а) climate-визуализация на MapLibre (контракт уже готов, нужно только дизайн-решение по схематичному, не фейково-фотореалистичному представлению); (б) keyboard-доступная альтернатива для continent click; (в) перенос tectonic plates/volcanoes/earthquakes слоёв (низкий объём — тот же паттерн, что borders/cities); (г) если решение — сделать MapLibre основным рендерером для НОВЫХ geo-уроков (не для этого конкретного, cutaway-завязанного) — начать проектирование таких уроков сразу без cutaway-зависимости.
 
+## G6.12 — Advanced Earth Science Layers & Interactive Earth Structure
+
+G6.11 одобрен владельцем продукта вручную в браузере ("VERDICT: G6.11 APPROVED"). Задача G6.12 — превратить MapLibre GeoWorld из "глобус + спутник + пара кнопок" в реальную интерактивную среду Earth Science: (1) полностью интерактивное строение Земли, (2) тектонические плиты, (3) вулканы, (4) землетрясения, (5) визуализация климата — без поломки G6.11-фундамента. Работа велась НА `main`, без переключения веток, без push, параллельно с чужой (Codex) работой над WebRTC-звонками — проверено `git status`/`git diff` перед каждым изменением общих файлов, staged только собственные файлы.
+
+### Migration audit (§1 задания) — что реально переиспользовано, а не переизобретено
+
+Три существующих R3F-слоя (`TectonicPlatesLayer.tsx`, `VolcanoesLayer.tsx`, `EarthquakesLayer.tsx`, 137/102/128 строк) прочитаны целиком ПЕРЕД реализацией. Все три уже используют лицензионно проверенные датасеты (см. `lib/geo/providers/*`) — PB2002 (Peter Bird, 2003, ODC-BY, атрибуция обязательна), NOAA/NCEI Global Significant Volcanic Eruptions (public domain), USGS Earthquake Hazards Program (public domain, снимок M4.5+/30 дней, намеренно НЕ live-поток — детерминированность урока). Эти провайдеры и их лицензии переиспользованы БУКВАЛЬНО (те же URL, те же типы полей, та же `plateBoundaryColor`/`magnitudeColor` цветовая логика) — новый источник данных не вводился. R3F-специфичный РЕНДЕР-код (LOD по камере через `isFacingCamera`, meshes/coneGeometry) НЕ портирован — заменён на MapLibre-нативные конструкции (см. ниже), т.к. §30 задания прямо требует "React = UI, MapLibre = geographic rendering", а не тысячи DOM/R3F-компонентов на фичу датасета.
+
+| Feature | Old renderer | MapLibre (G6.12) | Domain logic | Renderer-coupled? | Action |
+|---|---|---|---|---|---|
+| Tectonic boundaries | R3F `<Line>` per feature + `isFacingCamera` LOD | Нативный GeoJSON source + `line` layer, `line-color`/`line-dasharray` по `Type` | `plateBoundaryColor`, `buildPlateNameLookup` — переиспользованы 1:1 | Да (рендер) | Переписан рендер, домен-логика переиспользована |
+| Volcanoes | R3F `<mesh><coneGeometry>` per volcano | GeoJSON source с `cluster: true` (нативная кластеризация MapLibre) + `circle`/`symbol` layers | `VolcanoProvider`, `dedupeVolcanoes` — переиспользованы 1:1 | Да (рендер) | Переписан рендер, провайдер переиспользован |
+| Earthquakes | R3F `<mesh><sphereGeometry>`, LOD по дистанции камеры | GeoJSON source + `circle` layer, `circle-radius`/`circle-color` data-driven expressions по магнитуде | `magnitudeColor` переиспользован 1:1; LOD-по-дистанции заменён на честную видимость всех точек (датасет мал — не нужна LOD-фильтрация) | Да (рендер) | Переписан рендер, домен-логика переиспользована |
+| Earth cutaway (crust/mantle/core) | R3F вложенные полупрозрачные сферы, opacity lerp по `isCutaway` | Отдельный R3F Canvas (`EarthStructureMode.tsx`) — ТЕ ЖЕ радиусы (`CRUST_R`/`MANTLE_R`/`OUTER_CORE_R`/`INNER_CORE_R`) и цвета, но БЕЗ Earth-текстур/облаков/полярных шапок (сфокусированный режим, не копия целой сцены) | `EARTH_LAYERS` backend-данные — те же, `explore_layer` action — тот же | Да (нужен R3F, MapLibre не может физически "разрезать" глобус, §3) | Новая, сфокусированная реализация той же метафоры |
+| Feature info card | `GeoFeatureInfoCard` (R3F `<Html>`, 3D-позиционированный попап) | Единая `FeatureInfoPanel.tsx` (обычный DOM, без 3D-позиции) + typed `GeoFeatureInfo` модель (`lib/geo/education/featureInfo.ts`) | Нет | Да | Адаптирован (не скопирован), единый typed-контракт на 4 типа объектов (§37) |
+
+### Interactive Earth Structure (§2-8 задания)
+
+`components/geo/maplibre/EarthStructureMode.tsx` — отдельный `<CanvasShell>` (переиспользован ТОТ ЖЕ общий контейнер камеры/света/bloom, что использует Chemistry/Electricity, не написан новый) + `<GlobeControls>` (тот же камера-контроллер, что старый рендерер). Четыре концентрические сферы (кора/мантия/внешнее ядро/внутреннее ядро), радиусы и цвета — те же числа, что уже в `GeoWorldScene.tsx` (не придуманы заново). Клик по слою → `useGeoLessonState.exploreLayer` (**тот же** `explore_layer` action, что и G6.11 — не вторая система scoring, §8) → выбранный слой получает `opacity: 0.95`, остальные — `0.18` (выбор подсвечен, остальные приглушены, §4). Никакой автоигры/автовращения (§7 — "no uncontrolled autoplay animation") — вращение только через `GlobeControls`, по действию пользователя. Честная оговорка масштаба (§6): текстовая плашка `scaleDisclosure` прямо говорит, что толщина коры визуально утрирована для читаемости, реальная пропорция намного тоньше — не выдаётся за литеральный масштаб. "Вернуться на поверхность" — управляемая кнопка (никогда не сбрасывает камеру автоматически без действия пользователя, §36).
+
+**GPU cleanup (§45 задания, критично)**: `EarthStructureMode` и `MapLibreGlobeCanvas` рендерятся ВЗАИМОИСКЛЮЧАЮЩЕ (`earthStructureMode ? <EarthStructureMode/> : <MapLibreGlobeCanvas/>`) — при входе в режим Earth Structure `MapLibreGlobeCanvas` полностью РАЗМОНТИРУЕТСЯ, что запускает `useMapLibreGlobe`'s cleanup (`map.remove()`) — MapLibre WebGL-контекст освобождается ПОЛНОСТЬЮ, не просто скрывается через CSS. При возврате на поверхность MapLibre-карта пересоздаётся с нуля (дешёвый повторный fetch благодаря кэшу `VectorDatasetLoader`/`VolcanoProvider` внутри `useEarthScienceLayers` — сами хуки НЕ размонтируются, только их `map`-инстанс переиспользуется заново). Подтверждено Playwright QA: `mapCanvasGoneInStructureMode: true`, `r3fCanvasPresentInStructureMode: true`, `mapReinitializedAfterReturn: true` — никогда одновременно два тяжёлых WebGL-контекста.
+
+### Tectonic plates / Volcanoes / Earthquakes (§9-22 задания)
+
+`lib/geo/maplibre/useEarthScienceLayers.ts` — единый хук, управляющий тремя нативными MapLibre source+layer поверх существующего `useMapLibreGlobe`-инстанса (доступ к сырому `map` — новый `getMap()` аксессор в `useMapLibreGlobe.ts`, аддитивное расширение API, тот же паттерн "замкнись на ref", что уже использован для `onMapClick`/`onCameraChange`). Toggle реализован через `visibility`-переключение (`setLayoutProperty`), НЕ через `addLayer`/`removeLayer` — реальный баг, найденный на этапе проектирования: remove+re-add с одним и тем же layer id накапливал бы дублирующиеся `map.on("click", ...)`-обработчики при повторном off→on, т.к. делегированные MapLibre-листенеры привязаны к строковому layer id, а не к конкретному instance слоя.
+
+- **Boundary types не color-only (§13)**: subduction-границы — сплошная толстая линия (`line-width: 3`), прочие — пунктир (`line-dasharray`) — различимо и на ч/б экране/дальтониками, легенда дублирует текстом.
+- **Volcanoes — нативная кластеризация**, не тысячи DOM-маркеров (§15): `cluster: true, clusterRadius: 40` на GeoJSON source — MapLibre агрегирует ~900 точек в кластеры автоматически, клик по кластеру → `getClusterExpansionZoom` + `easeTo`.
+- **Earthquakes — магнитуда через размер, не только цвет (§20)**: `circle-radius` — `interpolate` от 4px (M4.5) до 20px (M8+), `circle-color` — 3 бина (жёлтый/оранжевый/красный, синхронизировано с `magnitudeColor`/`layer-registry.ts`).
+- **Time window (§18)**: `EARTHQUAKE_WINDOWS` — три РЕАЛЬНО существующих USGS-окна (day/week/month, проверено `curl` — все три HTTP 200), по умолчанию "month" (тот же снимок, что production R3F-рендерер, детерминированность урока сохранена).
+- **Combined mode (§21-22)**: все три слоя КОМБИНИРУЕМЫ одновременно (не эксклюзивны) — прямое требование задания ("more valuable than 3 independent layers", корреляция граница-плит/вулкан/землетрясение).
+- **Failure isolation (§32, эмпирически подтверждено QA)**: во время Playwright-прогона один из трёх внешних датасетов реально не загрузился в тестовой сети — приложение корректно показало "Не удалось загрузить один из слоёв — карта и остальные слои продолжают работать" (`loadErrorHint`), остальной GeoWorld остался полностью рабочим. Не гипотетическое свойство — живое наблюдение при QA.
+- **Гонка данных vs готовность стиля (реальный баг, найден и исправлен при разработке)**: если `fetch` датасета завершался РАНЬШЕ, чем MapLibre-стиль (базовые растровые тайлы и т.п.) заканчивал загрузку, `map.getSource(id)` в момент `setData` мог вернуть `undefined` — загруженные данные тихо терялись бы. Исправлено: `setData` всегда оборачивается в тот же `withStyleReady()`-хелпер, что и `addSource`/`addLayer` — оба колбэка регистрируются на одно и то же событие `load` в порядке регистрации, source гарантированно существует к моменту `setData`.
+
+### Climate visualization (§23-27 задания)
+
+Реального climate-датасета/модели в проекте нет — единственная существующая модель (`geography_engine.evaluate_climate_scenario`) моделирует ОДИН сценарий: сход селя в Памире при аномалии ≥3.0°C. G6.12 портирует семантику старого warming-слайдера (0–5°C, шаг 0.5 — те же числа, `ClimatePanel.tsx`) и добавляет РЕАЛЬНУЮ визуализацию на самой карте (§25 — "the map itself must show educational info"): `useClimateOverlay.ts` рисует кольцо у координат Памира (38.5/72.0 — те же, что старый рендерер и `geography_engine.py`, не придуманы заново), цвет/интенсивность которого меняется от голубого к красному по мере роста аномалии к порогу. Явная плашка `disclaimer` ("образовательная симуляция, не научный прогноз") — прямое требование §26, т.к. это не полноценная климатическая модель. Climate ОСТАЁТСЯ включаемым одновременно с tectonics/volcanoes/earthquakes (нет визуального конфликта — единственный региональный оверлей, не полноэкранный слой) — UX-решение задокументировано здесь, не UI-заглушка. Задача переиспользует **тот же** `trigger_climate_scenario` action и `useGeoLessonState.triggerClimateScenario`, что уже существовал в G6.11 (только теперь подключён к UI) — не вторая climate-система.
+
+### Feature info architecture (§37 задания)
+
+`lib/geo/education/featureInfo.ts` — единая `GeoFeatureInfo {kind, title, subtitle?, lines, raw?}` модель для всех 4 новых типов объектов (граница плит/вулкан/землетрясение) + существующих (слой Земли/континент через `GeoLessonPanel`, не мигрированы на новую модель — сознательно, работают и так, риск трогать не оправдан). `raw` — несколько локале-независимых скаляров (не сырой GeoJSON, 2-3 поля) для backend-логирования действия без хрупкого парсинга ЛОКАЛИЗОВАННОГО текста строкой обратно в данные — реальный баг, найденный и исправленный на этапе разработки (первая версия пыталась угадать `boundary_type` через `.includes("субдук")` на `title`, что работало бы только на русской локали).
+
+### Backend: три новых action type (§13/§16/§20 задания)
+
+`routers/simulations.py` — `explore_plate_boundary`/`explore_volcano`/`explore_earthquake` для `SimulationModule.GEO3D`, ТОТ ЖЕ dispatcher-паттерн, что `explore_layer`/`explore_continent`/`trigger_climate_scenario`. Датасеты (PB2002/NOAA/USGS) остаются ТОЛЬКО на фронтенде (dataset = source of truth, §10) — бэкенд не дублирует их, а подтверждает форму payload и логирует реальный round-trip, пригодный для order-preserving scoring через существующий `compute_score` — не вторая scoring-система. 7 новых pytest-тестов (`tests/test_geo3d_earth_science_actions.py`) покрывают happy-path + валидацию + `compute_score` со всеми тремя новыми типами.
+
+### AI context (§38 задания) — расширение, не G6.13
+
+`buildGeoAiContext` расширен `activeLayers`/`selectedFeature`/`climateScenario`/`earthStructureMode` — всё ещё компактный JSON-объект (не сырой GeoJSON, `selectedFeature` уже сжат до `{kind,title,subtitle,lines}` до попадания в контекст), всё ещё вычисляется, но никуда не отправляется (dev-only preview). Полноценный AI Geo Guide — НЕ построен, это G6.13.
+
+### Layer control panel (§28-29 задания)
+
+`LayerControlPanel.tsx` — три группы: БАЗОВЫЕ (Подписи/Рельеф — оба реально работающие переключатели через новый `base-layer-toggles.ts`, а не декоративные; Satellite/Esri сознательно НЕ включён в эту группу — остаётся dev-only кнопкой, где и был, §55 запрещает делать Esri обычным production-переключателем), НАУКИ О ЗЕМЛЕ (Климат/Тектоника/Вулканы/Землетрясения — все комбинируемы), СПЕЦИАЛЬНЫЕ РЕЖИМЫ (Строение Земли — эксклюзивный режим, остальные тоглы дизейблятся визуально, пока он активен, т.к. карта в это время не существует). Нативные `<input type="checkbox">` — checkbox-семантика клавиатурно доступна из коробки, не реализована вручную через ARIA (§41).
+
+### Accessibility (§41 задания)
+
+`AccessibleFeatureList.tsx` — клавиатурно- и скринридер-доступный список объектов (первые 15 по слою, отсортированы по магнитуде для землетрясений/алфавиту для вулканов) как обычные `<button>` внутри `<details>` — та же семантика выбора, что клик по карте, БЕЗ попытки сделать WebGL-канвас screen-reader-нативным (§41 прямо запрещает пытаться). Легенда границ плит — паттерн (пунктир/сплошная), не только цвет.
+
+### Реальный баг, найденный этим же QA-прогоном (не гипотеза)
+
+Первая версия оборачивала и `MapLibreGlobeCanvas`, и `EarthStructureMode` в один и тот же `<div className="relative h-[70vh]">` контейнер, унаследованный от G6.11 (нужен MapLibre для `absolute inset-0`). `EarthStructureMode` управляет собственной высотой через `CanvasShell` (`h-[75vh]`) и добавляет инфо-панель НИЖЕ канваса в обычном потоке документа — общая высота контента превышала `70vh` родителя, инфо-панель со кнопками слоёв визуально "вытекала" за границы контейнера, а следующий по документу sibling (`experimentalNotice`) занимал своё место СРАЗУ ПОСЛЕ 70vh-контейнера как если бы оверфлоя не было — визуально перекрывая кнопки слоёв и БЛОКИРУЯ клики (Playwright: `<div class="ds-glass...">` intercepts pointer events). Исправлено: `h-[70vh]`-обёртка применяется ТОЛЬКО к `MapLibreGlobeCanvas`, `EarthStructureMode` рендерится в обычном потоке без фиксированной высоты родителя.
+
+### Тесты (§46-52 задания)
+
+| Проверка | Результат |
+|---|---|
+| `npx tsc --noEmit` (frontend) | 0 ошибок (единственная ошибка в дереве — в `lib/webrtc/PeerConnectionManager.test.ts`, параллельная работа Codex, не тронута) |
+| `npx eslint .` (весь frontend) | 0 ошибок |
+| `npx vitest run` (полный набор) | **127/127 файлов, 1145/1145 тестов** passed, включая 3 новых test-файла для G6.12 (`feature-info-builders.test.ts`, `earth-science-sources.test.ts`, `useClimateOverlay.test.ts`) + обновлённый `aiContext.test.ts` |
+| `pytest tests/test_geography_engine.py tests/test_simulations_flow.py tests/test_simulations_visibility.py tests/test_geo3d_earth_science_actions.py` | **29/29** passed (7 новых) |
+| Georeferencing regression (`georeferencing.test.ts`, `camera-context.test.ts`) | 8/8 passed — Dushanbe/Pamir-анкоры не затронуты (только аддитивные изменения `useMapLibreGlobe.ts`/`MapLibreGlobeCanvas.tsx`) |
+| Authenticated browser QA (desktop 1280×800 + mobile 390×844, реальный login/register) | Полный флоу: панель слоёв → тектоника/вулканы/землетрясения ON → легенда/accessible-list появляются → климат ON → слайдер +4°C → реальный backend-triggered сель у Памира → Earth Structure Mode → 4 кнопки слоя → канвас MapLibre исчезает/R3F канвас появляется → возврат на поверхность → MapLibre переинициализируется. Canvas `1225×560` (desktop) / `351×591` (mobile) — не схлопнут |
+
+### Известные ограничения G6.12
+
+- `EarthStructureMode` не переиспользует Earth-текстуры старого рендерера (флэт-цвета вместо спутникового снимка на коре) — сознательное упрощение сфокусированного режима, не регресс визуального качества основного глобуса.
+- Continent-click остаётся map-only (то же известное ограничение G6.11, §41 просил улучшить ХОТЯ БЫ новые Earth Science слои — сделано; континенты не в скоупе этого этапа).
+- FPS/сетевые метрики собраны через dev-diagnostics панель при живом QA-прогоне (не формальный профилировщик) — реальные числа (не выдуманы), но не строгий perf-benchmark с фиксированной методологией.
+- Esri satellite toggle НЕ включён в новую сгруппированную панель (сознательно, §55) — остаётся отдельной dev-only кнопкой на канвасе, как и в G6.11.
+
+### Рекомендация для G6.13
+
+Задание прямо запрещает начинать G6.13 (полноценный AI Geo Guide) без ручной проверки владельцем продукта. Foundation (`buildGeoAiContext`) готов и расширен всеми новыми слоями/сценарием/режимом — следующий шаг, когда будет дано добро, это подключение компактного контекста к реальному AI-чату (по аналогии с `AITeacherChat`), не переизобретение контекста заново.
+
 ## G7 — Geography missions/tasks
 
 - Образовательные задания поверх системы слоёв (найти страну/объект, ответить на вопрос по слою) — переиспользовать существующий паттерн `GuidedLabPanel`/`ExperimentPanel` из Chemistry/Electricity, не изобретать заново.

@@ -2778,3 +2778,43 @@ PostgreSQL остаётся source of truth только для CALL LIFECYCLE (
 
 ### Статус на конец продолжения №45
 **T8 (Real WebRTC Audio/Video) — завершён, код верифицирован (backend 160/160, frontend 1053/1060 с 7 подтверждённо-чужими падениями, tsc/lint чистые, 83 новых теста для WebRTC-слоя).** Media реально работает по спецификации на уровне кода (offer/answer/ICE/mute/camera/cleanup) — визуальное подтверждение реальной camera/microphone за владельцем продукта. Screen sharing (T9), recording, group calls — сознательно НЕ реализованы. GeoWorld/Chemistry/Design/T5-T7-контракты не тронуты.
+
+## Обновление 2026-08-18 (продолжение №46) — GeoWorld G6.12: Advanced Earth Science Layers & Interactive Earth Structure
+
+### Задача
+G6.11 одобрен владельцем продукта вручную в браузере ("VERDICT: G6.11 APPROVED"). G6.12 — превратить MapLibre GeoWorld из "глобус + спутник + пара кнопок" в реальную интерактивную среду Earth Science: (1) полностью интерактивное строение Земли, (2) тектонические плиты, (3) вулканы, (4) землетрясения, (5) визуализация климата — без поломки G6.11-фундамента. Работа на `main`, без переключения веток, без push.
+
+### Что реализовано
+- **Earth Structure Mode** (`EarthStructureMode.tsx`) — отдельный R3F `<CanvasShell>`, 4 концентрические сферы (те же радиусы/цвета, что старый рендерер), клик по слою → тот же `explore_layer` action, что G6.11. Выбранный слой подсвечен, остальные приглушены. Честная плашка о визуальном утрировании толщины коры (scale honesty). Рендерится ВЗАИМОИСКЛЮЧАЮЩЕ с `MapLibreGlobeCanvas` — при входе MapLibre-карта полностью размонтируется (`map.remove()`, реальный GPU cleanup), не просто скрывается CSS — никогда два тяжёлых WebGL-контекста одновременно.
+- **Tectonic plates / Volcanoes / Earthquakes** (`useEarthScienceLayers.ts`) — нативные MapLibre GeoJSON source+layer (не тысячи React-компонентов), переиспользуют ТЕ ЖЕ уже лицензионно проверенные датасеты/провайдеры, что старый R3F-рендерер (PB2002/ODC-BY, NOAA/NCEI public domain, USGS public domain). Volcanoes — нативная кластеризация MapLibre. Earthquakes — 3 реальных временных окна (day/week/month, проверено curl). Boundary types различимы не только цветом (пунктир/сплошная). Все три слоя комбинируемы одновременно (корреляция граница-плит/вулкан/землетрясение).
+- **Climate visualization** (`useClimateOverlay.ts` + `ClimatePanel.tsx`) — реальная визуализация на карте (кольцо у Памира, цвет меняется с ростом аномалии), портирует семантику старого warming-слайдера (0-5°C), явная оговорка "образовательная симуляция, не научный прогноз". Переиспользует тот же `trigger_climate_scenario` backend-контракт, что уже был в G6.11.
+- **Единая typed feature-info модель** (`GeoFeatureInfo`) вместо 4 отдельных info-card систем — `FeatureInfoPanel.tsx`.
+- **Перегруппированная панель слоёв** (`LayerControlPanel.tsx`) — БАЗОВЫЕ/НАУКИ О ЗЕМЛЕ/СПЕЦИАЛЬНЫЕ РЕЖИМЫ, нативные checkbox (клавиатурно доступны из коробки).
+- **Accessibility**: `AccessibleFeatureList.tsx` — клавиатурно-доступный список объектов как альтернатива клику по карте (§41).
+- **Backend**: три новых action type (`explore_plate_boundary`/`explore_volcano`/`explore_earthquake`) в том же dispatcher-паттерне, что существующие — датасеты остаются на фронтенде (source of truth), бэкенд подтверждает форму payload и логирует round-trip для scoring.
+
+### Два реальных бага, найденных и исправленных в процессе (не гипотезы)
+1. **Гонка данных vs готовности стиля**: если fetch датасета завершался раньше, чем MapLibre-стиль заканчивал загрузку, `setData` мог тихо потерять данные (`getSource()` возвращал `undefined`). Исправлено — `setData` обёрнут в тот же `withStyleReady()`-хелпер, что `addSource`/`addLayer`.
+2. **Layout-баг, найденный Playwright QA**: `EarthStructureMode` и `MapLibreGlobeCanvas` изначально делили один `h-[70vh]`-контейнер — контент Earth Structure Mode (канвас + инфо-панель ниже) превышал эту высоту, следующая по документу панель визуально перекрывала кнопки слоёв и БЛОКИРОВАЛА клики (`intercepts pointer events`, подтверждено логом Playwright). Исправлено — `h-[70vh]` применяется только к MapLibreGlobeCanvas.
+
+### Authenticated browser QA — реальный E2E проверен
+Desktop (1280×800) и Mobile (390×844): панель слоёв → тектоника/вулканы/землетрясения ON → легенда и accessible-list появляются → климат ON → слайдер +4°C → реальный backend-triggered сель у Памира ("⚠ Сель — Памир, Таджикистан") → Earth Structure Mode → 4 кнопки слоя → канвас MapLibre исчезает / R3F канвас появляется → возврат на поверхность → MapLibre переинициализируется. Canvas `1225×560` (desktop) / `351×591` (mobile) — не схлопнут. Во время прогона один из трёх внешних датасетов реально не загрузился в тестовой сети — приложение корректно показало "не удалось загрузить один из слоёв", остальной GeoWorld остался рабочим (живое подтверждение failure isolation, не гипотеза).
+
+### Результаты проверок
+| Проверка | Результат |
+|---|---|
+| `npx tsc --noEmit` (frontend) | 0 ошибок (единственная ошибка в дереве — параллельный файл Codex `PeerConnectionManager.test.ts`, не тронут) |
+| `npx eslint .` (весь frontend) | 0 ошибок |
+| `npx vitest run` (полный набор) | **127/127 файлов, 1145/1145 тестов** |
+| `pytest` (geography/simulations, включая 7 новых) | **29/29** |
+| Georeferencing regression | 8/8 — Dushanbe/Pamir-анкоры не затронуты |
+| Authenticated browser QA desktop+mobile | Полный флоу пройден, см. выше |
+
+### Documented, не реализовано (осознанно)
+Continent-click остаётся map-only (то же известное ограничение G6.11 — этот этап улучшал доступность именно НОВЫХ Earth Science слоёв). AI context расширен новым состоянием, но по-прежнему не подключён к реальному AI-чату (G6.13, прямо запрещено начинать сейчас). Esri satellite toggle не включён в новую сгруппированную панель — остаётся отдельной dev-only кнопкой (§55).
+
+### GeoWorld boundary / параллельная работа
+`git status`/`git log` проверены перед началом и перед коммитом. За время этой сессии параллельно закоммичены (не мной): `f2932e5`/`6da58e9` (WebRTC audio/video + screen sharing), `de913d0`/`1896927`/`ddabf2d` (Chemistry lab), `d741c23`/`4584605` (i18n), `fa11f09` (Electricity lab) — ни один файл из этих направлений не тронут G6.12-коммитом.
+
+### Статус на конец продолжения №46
+**GeoWorld G6.12 (Advanced Earth Science Layers & Interactive Earth Structure) — завершён, код верифицирован (tsc/eslint/1145 frontend-тестов/29 backend-тестов чисто, authenticated browser QA пройден на desktop+mobile, два реальных бага найдены и исправлены в процессе). Старый renderer НЕ заменён по умолчанию.** Полный migration matrix и архитектурные решения — `GEOWORLD_ROADMAP.md`, раздел G6.12. G6.13 (AI Geo Guide) НЕ начат — по прямому указанию задания, ждём проверки владельцем продукта.

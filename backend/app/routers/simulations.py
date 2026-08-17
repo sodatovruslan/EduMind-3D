@@ -140,6 +140,44 @@ async def run_action(
             },
         )
 
+    if simulation.module == SimulationModule.GEO3D and action.action_type == "explore_plate_boundary":
+        # G6.12 — граница литосферных плит (PB2002) целиком живёт во
+        # внешнем, лицензионно проверенном GeoJSON-датасете на фронтенде
+        # (dataset = source of truth, не дублируем его на бэкенде — иначе
+        # рискуем разойтись с реальным источником). Бэкенд подтверждает
+        # форму payload и логирует реальный round-trip для scoring (та же
+        # семантика, что explore_continent/explore_layer — не client-only
+        # фейковое завершение).
+        plate_a = action.payload.get("plate_a")
+        plate_b = action.payload.get("plate_b")
+        if not isinstance(plate_a, str) or not isinstance(plate_b, str):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нужны названия плит plate_a/plate_b")
+        boundary_type = action.payload.get("boundary_type")
+        return SimulationActionResponse(
+            action_type=action.action_type,
+            result={"plate_a": plate_a, "plate_b": plate_b, "boundary_type": boundary_type if isinstance(boundary_type, str) else None},
+        )
+
+    if simulation.module == SimulationModule.GEO3D and action.action_type == "explore_volcano":
+        name = action.payload.get("name")
+        if not isinstance(name, str) or not name:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нужно имя вулкана")
+        country = action.payload.get("country")
+        return SimulationActionResponse(
+            action_type=action.action_type,
+            result={"name": name, "country": country if isinstance(country, str) else None},
+        )
+
+    if simulation.module == SimulationModule.GEO3D and action.action_type == "explore_earthquake":
+        place = action.payload.get("place")
+        magnitude = action.payload.get("magnitude")
+        if not isinstance(place, str) or not isinstance(magnitude, (int, float)):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нужны place/magnitude")
+        return SimulationActionResponse(
+            action_type=action.action_type,
+            result={"place": place, "magnitude": magnitude},
+        )
+
     if simulation.module == SimulationModule.GEO3D and action.action_type == "explore_layer":
         layer_key = action.payload.get("layer")
         layer = get_layer_info(layer_key)
