@@ -83,6 +83,7 @@ export default function GeoWorldSceneMapLibre({ simulation }: GeoWorldSceneMapLi
           esriEnabledByDefault={false}
           showControlPoints={isDev}
           showDiagnostics={isDev}
+          showEsriToggle={isDev}
           onMapClick={handleMapClick}
           onCameraChange={setCamera}
         />

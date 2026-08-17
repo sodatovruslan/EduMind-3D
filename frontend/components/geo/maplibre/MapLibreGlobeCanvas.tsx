@@ -18,6 +18,16 @@ export interface MapLibreGlobeCanvasProps {
   esriEnabledByDefault?: boolean;
   showControlPoints?: boolean;
   showDiagnostics?: boolean;
+  /**
+   * G6.11 (post-review) — тот же переключатель, что уже есть в
+   * `/geoworld-maplibre-spike`, для визуального сравнения deep zoom с
+   * NASA HLS (default) против Esri (eval-only, суб-метровая детализация).
+   * По умолчанию `false` — НЕ показывается реальному пользователю
+   * production-сборки (вызывающий код гейтит на dev-режим, как и
+   * `showDiagnostics`/`showControlPoints`), сам Esri остаётся выключен по
+   * умолчанию даже когда переключатель виден.
+   */
+  showEsriToggle?: boolean;
   className?: string;
   /** G6.11 — реальное геовзаимодействие: клик по глобусу отдаёт lng/lat, без образовательной семантики (та остаётся на вызывающем коде/бэкенде). */
   onMapClick?: (lngLat: { lng: number; lat: number }) => void;
@@ -29,6 +39,7 @@ export default function MapLibreGlobeCanvas({
   esriEnabledByDefault = false,
   showControlPoints = false,
   showDiagnostics = false,
+  showEsriToggle = false,
   className,
   onMapClick,
   onCameraChange,
@@ -81,6 +92,20 @@ export default function MapLibreGlobeCanvas({
             {LOCATIONS[key].label}
           </button>
         ))}
+        {showEsriToggle && (
+          <button
+            onClick={engine.toggleEsri}
+            disabled={engine.status !== "ready"}
+            title="Esri World Imagery — EVALUATION ONLY (Esri Master Agreement disallows production use outside an ArcGIS subscription)"
+            className={`ds-focus-ring pointer-events-auto rounded-full border px-3 py-1.5 text-ds-caption font-medium backdrop-blur transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+              engine.esriEnabled
+                ? "border-danger/50 bg-danger/20 text-danger"
+                : "border-border/20 bg-surface-deep/60 text-text-secondary hover:text-text-primary"
+            }`}
+          >
+            {engine.esriEnabled ? "Esri (eval-only): ON" : "Esri (eval-only): OFF"}
+          </button>
+        )}
       </div>
 
       {showDiagnostics && (
