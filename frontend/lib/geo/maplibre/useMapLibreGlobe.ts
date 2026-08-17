@@ -156,13 +156,23 @@ export function useMapLibreGlobe(options: MapLibreGlobeOptions = {}): MapLibreGl
             el.style.background = "#ec4899";
             el.style.border = "3px solid #ffffff";
             el.style.boxShadow = "0 0 0 2px #ec4899, 0 0 8px rgba(236,72,153,0.9)";
+            // Та же причина и тот же приём, что и у `MapLibreGlobeCanvas`
+            // (см. комментарий там про CSS-специфичность): `.maplibregl-
+            // popup-content` получает фон/рамку из `maplibre-gl.css`,
+            // который подключается В РАНТАЙМЕ и проигрывает Tailwind по
+            // порядку каскада — попап рендерился почти невидимым (найдено
+            // по реальному скриншоту владельца продукта). Вместо того
+            // чтобы полагаться на класс из чужого стиля — оборачиваем
+            // содержимое в СВОЙ div с явным инлайн-фоном/цветом, который
+            // не зависит от порядка подключения CSS вообще.
+            const popupHtml = `<div style="background:#0f172a;color:#f1f5f9;padding:10px 12px;border-radius:8px;font-family:ui-sans-serif,system-ui,sans-serif;font-size:13px;line-height:1.5;max-width:220px;box-shadow:0 4px 16px rgba(0,0,0,0.4);">
+              <b style="color:#f9a8d4;">${point.label}</b><br/>
+              ${point.center[1].toFixed(6)}, ${point.center[0].toFixed(6)}<br/>
+              <span style="font-size:10px;color:#94a3b8;">${point.source}</span>
+            </div>`;
             const marker = new maplibregl.Marker({ element: el, anchor: "center" })
               .setLngLat(point.center)
-              .setPopup(
-                new maplibregl.Popup({ offset: 14 }).setHTML(
-                  `<b>${point.label}</b><br/>${point.center[1].toFixed(6)}, ${point.center[0].toFixed(6)}<br/><span style="font-size:10px">${point.source}</span>`
-                )
-              )
+              .setPopup(new maplibregl.Popup({ offset: 14, className: "geoworld-control-point-popup" }).setHTML(popupHtml))
               .addTo(map);
             controlMarkersRef.current.push(marker);
           }
@@ -185,7 +195,7 @@ export function useMapLibreGlobe(options: MapLibreGlobeOptions = {}): MapLibreGl
             await new Promise<void>((resolve) => map.once("load", () => resolve()));
           }
           if (cancelled || mapRef.current !== map) return;
-          upgradeStyleWithHls(map, HLS_TILE_TEMPLATE.replace("{date}", resolvedHlsDate), HLS_ATTRIBUTION);
+          upgradeStyleWithHls(map, HLS_TILE_TEMPLATE.replace("{date}", resolvedHlsDate), HLS_ATTRIBUTION, esriEnabledByDefault);
         })().catch((hlsErr) => {
           if (!cancelled) setHlsDate("unavailable");
           // eslint-disable-next-line no-console

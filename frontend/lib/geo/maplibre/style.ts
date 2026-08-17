@@ -136,24 +136,41 @@ export function buildBaseStyle(options: BuildStyleOptions = {}): any {
  * кадра (см. G6.9). Мутирует уже созданную `map` через addSource/addLayer/
  * setPaintProperty, а не пересоздаёт стиль.
  */
-export function upgradeStyleWithHls(map: any, hlsTileUrl: string, hlsAttribution: string): void {
+export function upgradeStyleWithHls(map: any, hlsTileUrl: string, hlsAttribution: string, esriEnabled: boolean): void {
   map.addSource("gibs-hls", {
     type: "raster",
     tiles: [hlsTileUrl],
     tileSize: 256,
     minzoom: 5,
+    // Source-maxzoom НЕ ограничивает, докуда HLS остаётся ВИДИМЫМ (это
+    // делает paint-opacity ниже) — только докуда MapLibre сам тянет новые
+    // тайлы; за пределами он честно overzoom'ит последний загруженный.
     maxzoom: 10,
     attribution: hlsAttribution,
   });
+  // РЕАЛЬНЫЙ баг, найденный по скриншоту владельца продукта (deep zoom на
+  // Памир): прежняя кривая гасила HLS к zoom 10 в расчёте, что Esri
+  // "подхватит" выше по zoom — но если Esri по умолчанию ВЫКЛЮЧЕН
+  // (production, §16 — не production dependency), слой скрыт
+  // (`layout.visibility: "none"`) НЕЗАВИСИМО от своей opacity, и после
+  // zoom 10 не остаётся вообще никакой картинки — только hillshade-рельеф
+  // без цвета. Если Esri не включён — HLS не гаснет вообще (пусть
+  // overzoom'ленный/размытый, но видимый), затухание до Esri актуально
+  // ТОЛЬКО когда Esri реально будет показан.
+  const hlsOpacity = esriEnabled
+    ? ["interpolate", ["linear"], ["zoom"], 5, 0, 7, 1, 8, 1, 10, 0]
+    : ["interpolate", ["linear"], ["zoom"], 5, 0, 7, 1];
   map.addLayer(
     {
       id: "hls",
       type: "raster",
       source: "gibs-hls",
-      paint: { "raster-opacity": ["interpolate", ["linear"], ["zoom"], 5, 0, 7, 1, 8, 1, 10, 0], "raster-fade-duration": 400 },
+      paint: { "raster-opacity": hlsOpacity, "raster-fade-duration": 400 },
     },
     "esri-imagery"
   );
   map.setPaintProperty("bluemarble", "raster-opacity", ["interpolate", ["linear"], ["zoom"], 5, 1, 7, 0]);
-  map.setPaintProperty("esri-imagery", "raster-opacity", ["interpolate", ["linear"], ["zoom"], 7, 0, 9, 1]);
+  if (esriEnabled) {
+    map.setPaintProperty("esri-imagery", "raster-opacity", ["interpolate", ["linear"], ["zoom"], 7, 0, 9, 1]);
+  }
 }
