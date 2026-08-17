@@ -6,6 +6,7 @@ import { useLocale } from "@/lib/locale-context";
 import { getWorldByModule, ACCENT_TEXT_CLASS } from "@/lib/landing-worlds";
 import { LocaleSwitcher, ThemeToggle } from "@/components/design-system";
 import type { Simulation } from "@/lib/types";
+import { localizeSimulationTitle } from "@/lib/simulation-title-localization";
 
 export interface SimulationShellProps {
   simulation: Simulation;
@@ -28,7 +29,7 @@ export interface SimulationShellProps {
  * underneath its (otherwise empty, transparent) left/right margins.
  */
 export default function SimulationShell({ simulation, children }: SimulationShellProps) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const world = getWorldByModule(simulation.module);
   const Icon = world?.icon;
   const accentClass = world ? ACCENT_TEXT_CLASS[world.accent] : "text-accent";
@@ -47,7 +48,7 @@ export default function SimulationShell({ simulation, children }: SimulationShel
           <div className="h-6 w-px shrink-0 bg-border/10" />
           <div className="flex min-w-0 items-center gap-2">
             {Icon && <Icon size={18} className={`shrink-0 ${accentClass}`} />}
-            <span className="truncate text-ds-body font-medium text-text-primary">{simulation.title}</span>
+            <span className="truncate text-ds-body font-medium text-text-primary">{localizeSimulationTitle(simulation.title, locale)}</span>
           </div>
         </div>
 

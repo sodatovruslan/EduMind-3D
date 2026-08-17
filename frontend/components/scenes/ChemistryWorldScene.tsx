@@ -27,7 +27,7 @@ import {
   useInteractable,
 } from "@/components/core/ChemistryInteractionProvider";
 import { getInteractable } from "@/lib/interactables";
-import { CABINET_REGISTRY, getCabinet, type CabinetConfig } from "@/lib/cabinets";
+import { CABINET_REGISTRY, getCabinet, getCabinetDisplayName, type CabinetConfig } from "@/lib/cabinets";
 import { findSlotsForCabinet, getSlot } from "@/lib/storage-slots";
 import { suppressRaycastTree } from "@/lib/interaction-raycast";
 import {
@@ -571,6 +571,7 @@ function useWallProximityFade() {
 }
 
 function CabinetMesh({ config, woodTexture, onRegisterCollider }: { config: CabinetConfig; woodTexture: THREE.Texture; onRegisterCollider?: (collider: RegisteredCollider) => void }) {
+  const { locale } = useLocale();
   const interaction = useCabinetInteractable(config.id);
   const { state: workspace } = useChemistryWorkspace();
   const { cameraMode, playerXZ } = useContext(SandboxReachContext);
@@ -670,7 +671,7 @@ function CabinetMesh({ config, woodTexture, onRegisterCollider }: { config: Cabi
 
       <Html position={[0, 0.43, 0.3]} center distanceFactor={10} style={{ pointerEvents: "none" }}>
         <div className="w-36 rounded border border-slate-300 bg-slate-50/95 px-2 py-1 text-center text-[9px] font-semibold leading-tight text-slate-800 shadow-sm">
-          {config.displayName}
+          {getCabinetDisplayName(config.id, locale)}
         </div>
       </Html>
 

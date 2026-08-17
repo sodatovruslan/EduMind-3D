@@ -51,6 +51,17 @@ export const CABINET_REGISTRY: Record<string, CabinetConfig> = {
 
 export const CABINET_IDS = Object.freeze(Object.keys(CABINET_REGISTRY));
 
+const CABINET_NAMES = {
+  "cabinet-left-outer": { ru: "Кислоты", en: "Acids", tg: "Кислотаҳо" },
+  "cabinet-left-inner": { ru: "Основания и индикаторы", en: "Bases and indicators", tg: "Асосҳо ва индикаторҳо" },
+  "cabinet-right-inner": { ru: "Соли и растворы", en: "Salts and solutions", tg: "Намакҳо ва маҳлулҳо" },
+  "cabinet-right-outer": { ru: "Твёрдые вещества и оборудование", en: "Solids and equipment", tg: "Моддаҳои сахт ва таҷҳизот" },
+} as const;
+
+export function getCabinetDisplayName(id: string, locale: "ru" | "en" | "tg"): string {
+  return CABINET_NAMES[id as keyof typeof CABINET_NAMES]?.[locale] ?? CABINET_REGISTRY[id]?.displayName ?? id;
+}
+
 export function getCabinet(id: string): CabinetConfig | null {
   return CABINET_REGISTRY[id] ?? null;
 }

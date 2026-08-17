@@ -7,6 +7,7 @@ import AutosaveBadge from "@/components/lab/AutosaveBadge";
 import { autosaveEngine } from "@/lib/autosave-engine";
 import { serializeChemistrySave } from "@/lib/chemistry-save-serializer";
 import { useLocale } from "@/lib/locale-context";
+import { localizeLabExperiment } from "@/lib/chemistry-lab-localization";
 
 /**
  * Chemistry World — Guided Laboratory Mode UI (Stage 5.6 & S-8).
@@ -21,7 +22,7 @@ import { useLocale } from "@/lib/locale-context";
  * and not localized — it's a developer tool, not product surface.
  */
 export default function GuidedLabPanel() {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const g = t.chemistry.guidedLab;
   const {
     selectedExperiment,
@@ -46,6 +47,7 @@ export default function GuidedLabPanel() {
   }, []);
 
   if (!selectedExperiment) return null;
+  const localizedExperiment = localizeLabExperiment(selectedExperiment, locale);
 
   const totalSteps = selectedExperiment.steps.length;
   const progressPct = Math.round(((currentStepIndex + 1) / totalSteps) * 100);
@@ -74,7 +76,7 @@ export default function GuidedLabPanel() {
 
       <div className="mb-3 flex items-center justify-between">
         <div>
-          <h3 className="text-ds-title text-text-primary">{selectedExperiment.title}</h3>
+          <h3 className="text-ds-title text-text-primary">{localizedExperiment.title}</h3>
           <p className="font-mono text-ds-caption uppercase tracking-widest text-text-muted" data-testid="guided-lab-progress-label">
             {g.stepCounter.replace("{current}", String(currentStepIndex + 1)).replace("{total}", String(totalSteps))}
           </p>

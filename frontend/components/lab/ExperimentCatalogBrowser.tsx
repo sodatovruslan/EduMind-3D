@@ -10,6 +10,7 @@ import { offlineSaveDB } from "@/lib/offline-save-db";
 import type { ChemistrySaveSnapshotV1 } from "@/lib/chemistry-save-schema";
 import ResumeExperimentModal from "@/components/lab/ResumeExperimentModal";
 import { useLocale } from "@/lib/locale-context";
+import { localizeLabExperiment } from "@/lib/chemistry-lab-localization";
 
 /**
  * Chemistry World — Laboratory Experiment Catalog UI (Stage 5.6 & S8.4).
@@ -21,9 +22,8 @@ import { useLocale } from "@/lib/locale-context";
  * — `bg-white/5` reads as "a card" only against a dark background; on a
  * light `bg-surface` it was nearly invisible, which is why the whole
  * browser looked "stuck in dark mode" even when the OS/app theme was
- * Light. `exp.title`/`.description` stay untranslated — catalog DATA
- * (lib/chemistry-lab-catalog.ts), a separate deferred item (see D6.1/D6.2
- * notes).
+ * Light. Experiment summaries are resolved by stable catalog ID so locale
+ * changes update mounted cards without mutating progression/domain data.
  */
 const DIFFICULTY_FILTERS: ("all" | LabDifficulty)[] = ["all", "beginner", "intermediate", "advanced"];
 
@@ -50,7 +50,7 @@ export function computeActiveSaveMap(saves: unknown): Record<string, ChemistrySa
 }
 
 export default function ExperimentCatalogBrowser() {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const c = t.chemistry.catalog;
   const DIFFICULTY_LABEL: Record<LabDifficulty, string> = {
     beginner: c.difficultyBeginner,
@@ -93,14 +93,18 @@ export default function ExperimentCatalogBrowser() {
   }, []);
 
   const results = useMemo(() => {
-    const bySearch = searchExperiments(query);
+    const bySearch = searchExperiments("").map((experiment) => localizeLabExperiment(experiment, locale)).filter((experiment) => {
+      const normalized = query.trim().toLocaleLowerCase(locale);
+      return !normalized || experiment.title.toLocaleLowerCase(locale).includes(normalized) || experiment.description.toLocaleLowerCase(locale).includes(normalized);
+    });
     return bySearch.filter((e) => difficultyFilter === "all" || e.difficulty === difficultyFilter);
-  }, [query, difficultyFilter]);
+  }, [query, difficultyFilter, locale]);
 
   const activeModalExp = useMemo(() => {
     if (!modalSnapshot) return null;
-    return searchExperiments("").find((e) => e.id === modalSnapshot.expId) || null;
-  }, [modalSnapshot]);
+    const experiment = searchExperiments("").find((e) => e.id === modalSnapshot.expId);
+    return experiment ? localizeLabExperiment(experiment, locale) : null;
+  }, [modalSnapshot, locale]);
 
   return (
     <div className="rounded-ds-panel border border-border/[0.08] bg-surface p-4" data-testid="experiment-catalog-browser">
