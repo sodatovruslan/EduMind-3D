@@ -107,6 +107,39 @@ describe("chemistry-lab-catalog — разблокировка по сложно
     expect(isExperimentUnlocked(advancedExp, [])).toBe(false);
     expect(isExperimentUnlocked(advancedExp, ["lab-intermediate-gas-formation"])).toBe(true);
   });
+
+  it("fresh student: все 4 beginner доступны, все 6 intermediate и 6 advanced заблокированы", () => {
+    const unlocked = LAB_CATALOG.filter((experiment) => isExperimentUnlocked(experiment, []));
+    expect(unlocked.map((experiment) => experiment.difficulty)).toEqual(Array(4).fill("beginner"));
+  });
+
+  it("после любого beginner открываются все intermediate, но advanced остаются locked", () => {
+    const completed = ["lab-beginner-heating-water"];
+    for (const experiment of LAB_CATALOG) {
+      expect(isExperimentUnlocked(experiment, completed)).toBe(experiment.difficulty !== "advanced");
+    }
+  });
+
+  it("после любого intermediate открываются все 16 экспериментов", () => {
+    const completed = ["lab-beginner-heating-water", "lab-intermediate-exothermic"];
+    expect(LAB_CATALOG.every((experiment) => isExperimentUnlocked(experiment, completed))).toBe(true);
+  });
+
+  it("все четыре expansion-эксперимента используют те же level prerequisites", () => {
+    const newIntermediateIds = ["lab-intermediate-carbonate-gas", "lab-intermediate-zinc-acid"];
+    const newAdvancedIds = ["lab-advanced-metal-displacement", "lab-advanced-peroxide-decomposition"];
+
+    for (const id of newIntermediateIds) {
+      const experiment = getLabExperiment(id)!;
+      expect(isExperimentUnlocked(experiment, [])).toBe(false);
+      expect(isExperimentUnlocked(experiment, ["lab-beginner-state-changes"])).toBe(true);
+    }
+    for (const id of newAdvancedIds) {
+      const experiment = getLabExperiment(id)!;
+      expect(isExperimentUnlocked(experiment, ["lab-beginner-state-changes"])).toBe(false);
+      expect(isExperimentUnlocked(experiment, ["lab-intermediate-gas-formation"])).toBe(true);
+    }
+  });
 });
 
 describe("chemistry-lab-catalog — реальные условия завершения (без выдуманной химии)", () => {

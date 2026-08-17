@@ -190,6 +190,15 @@ describe("ChemistryLabExperienceProvider — Лабораторный журна
 });
 
 describe("ChemistryLabExperienceProvider — разблокировка сложности через реальный прогресс", () => {
+  it("fresh student не может обойти lock прямым selectExperiment для нового intermediate", () => {
+    const { result } = renderHook(() => useChemistryLabExperience(), { wrapper: wrapperFor(makeContext()) });
+
+    act(() => result.current.selectExperiment("lab-intermediate-carbonate-gas"));
+
+    expect(result.current.selectedExperiment).toBeNull();
+    expect(result.current.completedExperimentIds).toEqual([]);
+  });
+
   it("intermediate недоступен, пока не пройден ни один beginner-эксперимент, и открывается после", () => {
     let container: Container = createEmptyContainer("beaker-1", "beaker", 20);
     const ctxEmpty = makeContext({ activeContainer: container });
@@ -208,6 +217,8 @@ describe("ChemistryLabExperienceProvider — разблокировка слож
 
     const { result: result3 } = renderHook(() => useChemistryLabExperience(), { wrapper: wrapperFor(makeContext()) });
     expect(result3.current.isExperimentUnlockedFor(intermediateExp)).toBe(true);
+    act(() => result3.current.selectExperiment("lab-intermediate-carbonate-gas"));
+    expect(result3.current.selectedExperiment?.id).toBe("lab-intermediate-carbonate-gas");
   });
 });
 

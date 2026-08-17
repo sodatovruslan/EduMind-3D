@@ -432,6 +432,11 @@ export function ChemistryLabExperienceProvider({
   function selectExperiment(id: string) {
     const experiment = getLabExperiment(id);
     if (!experiment) return;
+    // Progression is a domain invariant, not merely a disabled/hidden
+    // catalog button. Every entry point that starts a fresh experiment
+    // passes through this guard, so newly added catalog records cannot be
+    // started before the same prerequisite used by existing records.
+    if (!isExperimentUnlocked(experiment, completedExperimentIds)) return;
 
     lastSavedSigRef.current = computeStateSig(createInitialState());
     setHydrationStatus("default");
