@@ -726,6 +726,15 @@ export const ru = {
     connectionFailed: "Соединение прервано",
     remoteMediaFailed: "У собеседника не удалось подключить камеру/микрофон",
     mediaOwnedElsewhere: "Звонок активен в другой вкладке",
+    shareScreen: "Демонстрация экрана",
+    stopSharing: "Остановить демонстрацию",
+    youAreSharingScreen: "Вы показываете свой экран",
+    sharingScreen: (name: string) => `${name} показывает экран`,
+    screenShareUnavailable: "Демонстрация экрана недоступна",
+    screenShareCancelled: "Демонстрация экрана отменена",
+    screenShareFailed: "Не удалось начать демонстрацию экрана",
+    anotherParticipantSharing: "Собеседник сейчас показывает экран",
+    screenSharingStopped: "Демонстрация экрана завершена",
   },
   shell: {
     nav: {

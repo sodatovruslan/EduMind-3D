@@ -714,6 +714,15 @@ export const en: typeof ru = {
     connectionFailed: "Connection lost",
     remoteMediaFailed: "The other person couldn't connect their camera/microphone",
     mediaOwnedElsewhere: "Call is active in another tab",
+    shareScreen: "Share screen",
+    stopSharing: "Stop sharing",
+    youAreSharingScreen: "You are sharing your screen",
+    sharingScreen: (name: string) => `${name} is sharing their screen`,
+    screenShareUnavailable: "Screen sharing unavailable",
+    screenShareCancelled: "Screen sharing cancelled",
+    screenShareFailed: "Could not start screen sharing",
+    anotherParticipantSharing: "Another participant is sharing",
+    screenSharingStopped: "Screen sharing stopped",
   },
   shell: {
     nav: {

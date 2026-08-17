@@ -36,6 +36,10 @@ export type SocketStatus = "connecting" | "connected" | "disconnected";
  * ephemeral mute/camera-off signal — never persisted, never trusted for
  * `user_id` beyond what the backend derived from the sending socket's own
  * authentication.
+ *
+ * T9 — adds `screen-share:started` / `screen-share:stopped`, the same
+ * ephemeral-signal pattern as `media:state` (never persisted, `user_id`
+ * always backend-derived), carrying no extra fields.
  */
 export type CallSocketEvent = { type: `call:${CallStatus}`; call: Call };
 
@@ -44,7 +48,9 @@ export type WebRTCSignalEvent =
   | { type: "webrtc:answer"; call_id: string; user_id: string; sdp: string }
   | { type: "webrtc:ice-candidate"; call_id: string; user_id: string; candidate: RTCIceCandidateInit }
   | { type: "webrtc:media-failed"; call_id: string; user_id: string; reason: string }
-  | { type: "media:state"; call_id: string; user_id: string; audio_muted: boolean; video_disabled: boolean };
+  | { type: "media:state"; call_id: string; user_id: string; audio_muted: boolean; video_disabled: boolean }
+  | { type: "screen-share:started"; call_id: string; user_id: string }
+  | { type: "screen-share:stopped"; call_id: string; user_id: string };
 
 export type ConversationSocketEvent =
   | { type: "message"; message: Message }
@@ -61,7 +67,7 @@ export function isCallSocketEvent(event: ConversationSocketEvent): event is Call
 }
 
 export function isWebRTCSignalEvent(event: ConversationSocketEvent): event is WebRTCSignalEvent {
-  return event.type.startsWith("webrtc:") || event.type === "media:state";
+  return event.type.startsWith("webrtc:") || event.type === "media:state" || event.type.startsWith("screen-share:");
 }
 
 // The OUTGOING shapes `sendEvent` accepts — never includes `user_id`, the
@@ -73,7 +79,9 @@ export type OutgoingSignal =
   | { type: "webrtc:answer"; call_id: string; sdp: string }
   | { type: "webrtc:ice-candidate"; call_id: string; candidate: RTCIceCandidateInit }
   | { type: "webrtc:media-failed"; call_id: string; reason: string }
-  | { type: "media:state"; call_id: string; audio_muted: boolean; video_disabled: boolean };
+  | { type: "media:state"; call_id: string; audio_muted: boolean; video_disabled: boolean }
+  | { type: "screen-share:started"; call_id: string }
+  | { type: "screen-share:stopped"; call_id: string };
 
 /**
  * T5 — realtime delivery for one open conversation. REST

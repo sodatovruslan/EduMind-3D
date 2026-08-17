@@ -2,8 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PeerConnectionManager } from "./PeerConnectionManager";
 
 class FakeSender {
-  track: { stop: ReturnType<typeof vi.fn> } | null;
-  constructor(track: { stop: ReturnType<typeof vi.fn> } | null) {
+  track: { kind: string; stop: ReturnType<typeof vi.fn> } | null;
+  replaceTrack = vi.fn(async (track: unknown) => {
+    this.track = track as FakeSender["track"];
+  });
+  constructor(track: { kind: string; stop: ReturnType<typeof vi.fn> } | null) {
     this.track = track;
   }
 }
@@ -11,10 +14,18 @@ class FakeSender {
 class FakeRTCPeerConnection {
   static instances: FakeRTCPeerConnection[] = [];
   onicecandidate: ((event: { candidate: RTCIceCandidate | null }) => void) | null = null;
-  ontrack: ((event: { track: unknown; streams: MediaStream[] }) => void) | null = null;
+  ontrack: ((event: { track: { onended?: (() => void) | null } & Record<string, unknown>; streams: MediaStream[] }) => void) | null = null;
   onconnectionstatechange: (() => void) | null = null;
   connectionState = "new";
-  addTrack = vi.fn();
+  signalingState = "stable";
+  addTrack = vi.fn((track: unknown) => {
+    const sender = new FakeSender(track as FakeSender["track"]);
+    this.senders.push(sender);
+    return sender;
+  });
+  removeTrack = vi.fn((sender: FakeSender) => {
+    this.senders = this.senders.filter((s) => s !== sender);
+  });
   createOffer = vi.fn(async (_opts?: unknown) => ({ type: "offer", sdp: "offer-sdp" }));
   createAnswer = vi.fn(async () => ({ type: "answer", sdp: "answer-sdp" }));
   setLocalDescription = vi.fn(async () => undefined);
@@ -45,6 +56,9 @@ class FakeMediaStream {
   }
   addTrack(track: unknown) {
     this.tracks.push(track);
+  }
+  removeTrack(track: unknown) {
+    this.tracks = this.tracks.filter((t) => t !== track);
   }
 }
 
@@ -173,8 +187,8 @@ describe("PeerConnectionManager — remote track / connection state", () => {
 describe("PeerConnectionManager — cleanup (brief §29: camera indicator must disappear)", () => {
   it("close() stops every sender's track and closes the connection", () => {
     const { manager, pc } = makeManager();
-    const trackA = { stop: vi.fn() };
-    const trackB = { stop: vi.fn() };
+    const trackA = { kind: "audio", stop: vi.fn() };
+    const trackB = { kind: "video", stop: vi.fn() };
     pc.__setSenders([new FakeSender(trackA), new FakeSender(trackB)]);
 
     manager.close();
@@ -194,5 +208,69 @@ describe("PeerConnectionManager — cleanup (brief §29: camera indicator must d
     const { manager, pc } = makeManager();
     manager.restartIce();
     expect(pc.restartIce).toHaveBeenCalled();
+  });
+});
+
+describe("PeerConnectionManager — screen sharing (T9)", () => {
+  it("replaceVideoTrack swaps the existing video sender's track in place, no renegotiation", async () => {
+    const { manager, pc } = makeManager();
+    const cameraTrack = { kind: "video", stop: vi.fn() };
+    const sender = new FakeSender(cameraTrack);
+    pc.__setSenders([sender]);
+
+    const screenTrack = { kind: "video", stop: vi.fn() };
+    await manager.replaceVideoTrack(screenTrack as unknown as MediaStreamTrack);
+
+    expect(sender.replaceTrack).toHaveBeenCalledWith(screenTrack);
+    expect(pc.createOffer).not.toHaveBeenCalled();
+  });
+
+  it("replaceVideoTrack is a safe no-op when there is no existing video sender", async () => {
+    const { manager } = makeManager();
+    const screenTrack = { kind: "video", stop: vi.fn() };
+    await expect(manager.replaceVideoTrack(screenTrack as unknown as MediaStreamTrack)).resolves.toBeUndefined();
+  });
+
+  it("addVideoTrack adds a new sender for a call that had no video sender (audio call + share)", () => {
+    const { manager, pc } = makeManager();
+    const screenTrack = { kind: "video", stop: vi.fn() };
+    const sender = manager.addVideoTrack(screenTrack as unknown as MediaStreamTrack);
+    expect(pc.addTrack).toHaveBeenCalledWith(screenTrack);
+    expect(pc.getSenders()).toContain(sender);
+  });
+
+  it("removeVideoTrack removes the sender previously returned by addVideoTrack", () => {
+    const { manager, pc } = makeManager();
+    const screenTrack = { kind: "video", stop: vi.fn() };
+    const sender = manager.addVideoTrack(screenTrack as unknown as MediaStreamTrack);
+    manager.removeVideoTrack(sender);
+    expect(pc.removeTrack).toHaveBeenCalledWith(sender);
+    expect(pc.getSenders()).not.toContain(sender);
+  });
+
+  it("exposes the underlying signalingState for glare detection", () => {
+    const { manager, pc } = makeManager();
+    pc.signalingState = "have-local-offer";
+    expect(manager.signalingState).toBe("have-local-offer");
+  });
+
+  it("rollback() discards the pending local description", async () => {
+    const { manager, pc } = makeManager();
+    await manager.rollback();
+    expect(pc.setLocalDescription).toHaveBeenCalledWith({ type: "rollback" });
+  });
+
+  it("removes a track from remoteStream and re-reports it once the receiver's track ends (renegotiated-away screen share)", () => {
+    const { pc, onRemoteStream } = makeManager();
+    const track: { onended: (() => void) | null } = { onended: null };
+    pc.ontrack?.({ track, streams: [] });
+    const streamAfterAdd = onRemoteStream.mock.calls[0][0] as MediaStream;
+    expect(streamAfterAdd.getTracks()).toContain(track);
+
+    onRemoteStream.mockClear();
+    track.onended?.();
+    expect(onRemoteStream).toHaveBeenCalled();
+    const streamAfterEnd = onRemoteStream.mock.calls[0][0] as MediaStream;
+    expect(streamAfterEnd.getTracks()).not.toContain(track);
   });
 });

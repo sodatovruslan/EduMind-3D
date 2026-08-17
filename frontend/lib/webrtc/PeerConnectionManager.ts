@@ -48,6 +48,15 @@ export class PeerConnectionManager {
       if (!this.remoteStream.getTracks().includes(track)) {
         this.remoteStream.addTrack(track);
       }
+      // T9 — a renegotiated-away track (e.g. the remote side stopped
+      // screen-sharing in an audio call, removing its video track) fires
+      // `ended` on the receiver's track rather than a fresh `ontrack`;
+      // without this the stale track would linger in `remoteStream`
+      // forever pointing at dead media.
+      track.onended = () => {
+        this.remoteStream.removeTrack(track);
+        this.options.onRemoteStream(this.remoteStream);
+      };
       this.options.onRemoteStream(this.remoteStream);
     };
     this.pc.onconnectionstatechange = () => {
@@ -104,6 +113,39 @@ export class PeerConnectionManager {
 
   get connectionState(): PeerConnectionState {
     return this.pc.connectionState as PeerConnectionState;
+  }
+
+  get signalingState(): RTCSignalingState {
+    return this.pc.signalingState;
+  }
+
+  /** T9 — glare recovery for the perfect-negotiation-lite pattern used by
+   * screen-share renegotiation (see useWebRTCSession's offer handling):
+   * discards our own not-yet-answered local offer so an incoming
+   * colliding offer can be accepted instead. */
+  async rollback(): Promise<void> {
+    await this.pc.setLocalDescription({ type: "rollback" });
+  }
+
+  /** T9 — video calls only: swap the existing video sender's outgoing
+   * track (camera <-> screen) with NO renegotiation (brief §4 — the
+   * preferred, simpler path; same m-line, same track kind). A no-op if
+   * this call never had a video sender (e.g. called on an audio call by
+   * mistake) — audio calls use addVideoTrack/removeVideoTrack instead. */
+  async replaceVideoTrack(track: MediaStreamTrack): Promise<void> {
+    const sender = this.pc.getSenders().find((s) => s.track && s.track.kind === "video");
+    await sender?.replaceTrack(track);
+  }
+
+  /** T9 — audio calls only: adding a video track where none existed
+   * requires renegotiation (brief §7). Returns the sender so the caller
+   * can remove it again on Stop Sharing. */
+  addVideoTrack(track: MediaStreamTrack): RTCRtpSender {
+    return this.pc.addTrack(track);
+  }
+
+  removeVideoTrack(sender: RTCRtpSender): void {
+    this.pc.removeTrack(sender);
   }
 
   /** Cleanup (brief §29 — critical acceptance criterion: the browser's

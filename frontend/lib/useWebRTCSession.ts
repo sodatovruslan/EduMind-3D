@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Call } from "@/lib/call-client";
+import type { Call, CallType } from "@/lib/call-client";
 import type { OutgoingSignal, WebRTCSignalEvent } from "@/lib/useConversationSocket";
 import { acquireLocalMedia, MediaAcquisitionError, setAudioEnabled, setVideoEnabled, stopAllTracks } from "@/lib/webrtc/media";
 import { PeerConnectionManager, type PeerConnectionState } from "@/lib/webrtc/PeerConnectionManager";
 import { claimMediaOwnership, createTabId, LEASE_RENEWAL_INTERVAL_MS, releaseMediaOwnership, renewMediaOwnership } from "@/lib/webrtc/mediaOwnership";
 import { CONNECTION_TIMEOUT_MS, ICE_RESTART_DELAY_MS } from "@/lib/webrtc/config";
+import { acquireScreenStream, ScreenShareAcquisitionError, type ScreenShareFailureReason } from "@/lib/webrtc/screenShare";
 
 export type MediaConnectionState = "idle" | "needs-reconnect" | "acquiring-media" | "connecting" | "connected" | "failed" | "closed";
 
@@ -49,10 +50,15 @@ export function useWebRTCSession(
   const [remoteVideoDisabled, setRemoteVideoDisabled] = useState(false);
   const [mediaError, setMediaError] = useState<MediaErrorReason | null>(null);
   const [isMediaOwner, setIsMediaOwner] = useState(false);
+  const [isSharingScreen, setIsSharingScreen] = useState(false);
+  const [remoteSharingScreen, setRemoteSharingScreen] = useState(false);
+  const [screenShareError, setScreenShareError] = useState<ScreenShareFailureReason | null>(null);
 
   const pcRef = useRef<PeerConnectionManager | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const activeCallIdRef = useRef<string | null>(null);
+  const callTypeRef = useRef<CallType | null>(null);
+  const isCallerRef = useRef(false);
   const tabIdRef = useRef(createTabId());
   const sawRingingRef = useRef<Set<string>>(new Set());
   const startedForCallIdRef = useRef<Set<string>>(new Set());
@@ -61,6 +67,20 @@ export function useWebRTCSession(
   const ownershipRenewalIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMediaOwnerRef = useRef(false);
+  // T9 — screen sharing (extends T8's PeerConnectionManager, never a
+  // second RTCPeerConnection). `screenStreamRef` is the local capture;
+  // `screenSenderRef` is only used for the audio-call add/removeTrack
+  // path (video calls swap the existing sender in place via
+  // replaceVideoTrack, no sender bookkeeping needed).
+  const screenStreamRef = useRef<MediaStream | null>(null);
+  const screenSenderRef = useRef<RTCRtpSender | null>(null);
+  // Perfect-negotiation-lite (brief §8/§30): only ever exercised by two
+  // audio-call renegotiation offers colliding (video-call sharing uses
+  // replaceTrack, which never renegotiates and so never collides). The
+  // caller is impolite (wins collisions) — the SAME stable, call-derived
+  // rule also used as the ephemeral screen-share ownership tie-break.
+  const politeRef = useRef(false);
+  const makingOfferRef = useRef(false);
 
   const clearConnectionTimeout = useCallback(() => {
     if (connectionTimeoutRef.current) {
@@ -97,6 +117,17 @@ export function useWebRTCSession(
     setIsVideoDisabled(false);
     setRemoteAudioMuted(false);
     setRemoteVideoDisabled(false);
+    // T9 — screen capture must be included in every cleanup path (brief
+    // §24/§25/§26/§29): End Call, remote-driven terminal status, and
+    // unmount all funnel through this single function already.
+    stopAllTracks(screenStreamRef.current);
+    screenStreamRef.current = null;
+    screenSenderRef.current = null;
+    makingOfferRef.current = false;
+    setIsSharingScreen(false);
+    setRemoteSharingScreen(false);
+    setScreenShareError(null);
+    callTypeRef.current = null;
     setMediaState(nextState);
   }, [clearConnectionTimeout]);
 
@@ -151,11 +182,35 @@ export function useWebRTCSession(
     [clearConnectionTimeout, restartConnection]
   );
 
+  // T9 — the SAME offer/answer path T8 already uses for the initial
+  // connection and for ICE-restart recovery, reused a third time for
+  // screen-share renegotiation (brief §8: "не строить гигантский
+  // signaling framework"). `makingOfferRef` feeds the glare check in
+  // handleSignalEvent's "webrtc:offer" case below.
+  const renegotiate = useCallback(
+    async (callId: string) => {
+      const pc = pcRef.current;
+      if (!pc || activeCallIdRef.current !== callId) return;
+      makingOfferRef.current = true;
+      try {
+        const offer = await pc.createOffer();
+        if (activeCallIdRef.current !== callId) return;
+        sendSignal({ type: "webrtc:offer", call_id: callId, sdp: offer.sdp ?? "" });
+      } finally {
+        makingOfferRef.current = false;
+      }
+    },
+    [sendSignal]
+  );
+
   const startMediaFlow = useCallback(
     async (call: Call) => {
       if (!currentUserId) return;
       activeCallIdRef.current = call.id;
       const isCaller = call.caller.id === currentUserId;
+      isCallerRef.current = isCaller;
+      callTypeRef.current = call.call_type;
+      politeRef.current = !isCaller;
 
       const owns = claimMediaOwnership(call.id, tabIdRef.current);
       isMediaOwnerRef.current = owns;
@@ -263,6 +318,109 @@ export function useWebRTCSession(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // T9 — brief §12: stop always fully restores state, whether triggered
+  // by the user's own "Stop Sharing" click, the browser's native "Stop
+  // sharing" bar (via `track.onended`, wired below), losing an ownership
+  // tie-break, or being folded into `cleanup()`. Deliberately reads
+  // everything through refs (never `activeCall`/react state) so a
+  // `track.onended` callback captured once at share-start time is never
+  // stale.
+  const stopScreenShare = useCallback(
+    async (notifyRemote = true) => {
+      const stream = screenStreamRef.current;
+      if (!stream) return;
+      stopAllTracks(stream);
+      screenStreamRef.current = null;
+      const pc = pcRef.current;
+      const callId = activeCallIdRef.current;
+      if (pc && callId) {
+        try {
+          if (callTypeRef.current === "video") {
+            // Camera track was never stopped (brief §5/§29 — kept alive
+            // in the background so Stop Sharing is instant, no repeat
+            // getUserMedia/permission prompt); its `.enabled` already
+            // reflects whatever the user's mute/camera-off toggle set
+            // most recently, DURING sharing included, so simply putting
+            // it back on the wire is already the correct, deterministic
+            // "current intended state" (brief §29), not a stale snapshot.
+            const cameraTrack = localStreamRef.current?.getVideoTracks()[0];
+            if (cameraTrack) await pc.replaceVideoTrack(cameraTrack);
+          } else if (screenSenderRef.current) {
+            pc.removeVideoTrack(screenSenderRef.current);
+            await renegotiate(callId);
+          }
+        } catch {
+          // Best-effort restore — a genuine connection-level failure is
+          // surfaced through the existing WebRTC failure/timeout path,
+          // not duplicated here.
+        }
+      }
+      screenSenderRef.current = null;
+      setIsSharingScreen(false);
+      setScreenShareError(null);
+      if (notifyRemote && callId) {
+        sendSignal({ type: "screen-share:stopped", call_id: callId });
+      }
+    },
+    [renegotiate, sendSignal]
+  );
+
+  // T9 — explicit "Share Screen" click only (brief §2/§3). Video calls
+  // swap the existing video sender in place (no renegotiation, brief
+  // §4); audio calls add a new video track, which does require
+  // renegotiation (brief §7) via the same offer/answer path as everything
+  // else in this hook.
+  const startScreenShare = useCallback(async () => {
+    const call = activeCall;
+    if (!call || mediaState !== "connected" || !isMediaOwnerRef.current) return;
+    if (screenStreamRef.current || remoteSharingScreen) return;
+    setScreenShareError(null);
+    let stream: MediaStream;
+    try {
+      stream = await acquireScreenStream();
+    } catch (err) {
+      const reason = err instanceof ScreenShareAcquisitionError ? err.reason : "failed";
+      setScreenShareError(reason);
+      return;
+    }
+    if (activeCallIdRef.current !== call.id || !pcRef.current) {
+      // Call ended/changed while the picker was open.
+      stopAllTracks(stream);
+      return;
+    }
+    const track = stream.getVideoTracks()[0];
+    // Browser-native "Stop sharing" bar (brief §12) — must behave
+    // identically to clicking our own Stop Sharing button.
+    track.onended = () => {
+      stopScreenShare();
+    };
+    screenStreamRef.current = stream;
+    try {
+      if (call.call_type === "video") {
+        await pcRef.current.replaceVideoTrack(track);
+      } else {
+        screenSenderRef.current = pcRef.current.addVideoTrack(track);
+        await renegotiate(call.id);
+      }
+    } catch {
+      stopAllTracks(stream);
+      screenStreamRef.current = null;
+      screenSenderRef.current = null;
+      setScreenShareError("failed");
+      return;
+    }
+    setIsSharingScreen(true);
+    sendSignal({ type: "screen-share:started", call_id: call.id });
+  }, [activeCall, mediaState, remoteSharingScreen, renegotiate, sendSignal, stopScreenShare]);
+
+  const toggleScreenShare = useCallback(() => {
+    if (isSharingScreen) {
+      stopScreenShare();
+    } else {
+      startScreenShare();
+    }
+  }, [isSharingScreen, startScreenShare, stopScreenShare]);
+
   const handleSignalEvent = useCallback(
     (event: WebRTCSignalEvent) => {
       if (!activeCallIdRef.current || event.call_id !== activeCallIdRef.current) return;
@@ -273,14 +431,34 @@ export function useWebRTCSession(
             pendingOfferRef.current = { sdp: event.sdp };
             return;
           }
-          pc.createAnswer(event.sdp).then((answer) => {
-            if (activeCallIdRef.current !== event.call_id) return;
-            sendSignal({ type: "webrtc:answer", call_id: event.call_id, sdp: answer.sdp ?? "" });
-          });
+          // T9 — perfect-negotiation-lite glare guard (brief §8/§30). A
+          // true collision only happens when a renegotiation offer we
+          // just sent (screen-share start/stop on an audio call) crosses
+          // one arriving from the other side. The impolite peer (caller)
+          // just ignores the incoming offer and keeps its own in flight;
+          // the polite peer (callee) rolls its own back and accepts the
+          // incoming one instead. For every other case (the very first
+          // offer, an offerer-only ICE restart) `stable` is already true
+          // here and this is a no-op passthrough to the existing flow.
+          const collision = makingOfferRef.current || pc.signalingState !== "stable";
+          if (collision && !politeRef.current) return;
+          const accept = collision
+            ? pc.rollback().then(() => pc.createAnswer(event.sdp))
+            : pc.createAnswer(event.sdp);
+          accept
+            .then((answer) => {
+              if (activeCallIdRef.current !== event.call_id) return;
+              sendSignal({ type: "webrtc:answer", call_id: event.call_id, sdp: answer.sdp ?? "" });
+            })
+            .catch(() => undefined);
           return;
         }
         case "webrtc:answer":
-          pcRef.current?.acceptAnswer(event.sdp);
+          // A rolled-back local offer can make an in-flight answer land
+          // in the wrong signaling state — harmless, matches the same
+          // "ignore, the other side already reconciled" pattern used for
+          // ICE candidates.
+          pcRef.current?.acceptAnswer(event.sdp).catch(() => undefined);
           return;
         case "webrtc:ice-candidate":
           pcRef.current?.addRemoteIceCandidate(event.candidate);
@@ -293,9 +471,21 @@ export function useWebRTCSession(
           setRemoteAudioMuted(event.audio_muted);
           setRemoteVideoDisabled(event.video_disabled);
           return;
+        case "screen-share:started":
+          setRemoteSharingScreen(true);
+          // Ownership tie-break for the video-call case (no SDP-level
+          // negotiation to resolve it for us there): if I'm ALSO sharing
+          // and I'm not the priority side, yield.
+          if (screenStreamRef.current && !isCallerRef.current) {
+            stopScreenShare();
+          }
+          return;
+        case "screen-share:stopped":
+          setRemoteSharingScreen(false);
+          return;
       }
     },
-    [sendSignal]
+    [sendSignal, stopScreenShare]
   );
 
   const toggleMute = useCallback(() => {
@@ -335,8 +525,12 @@ export function useWebRTCSession(
     remoteVideoDisabled,
     mediaError,
     isMediaOwner,
+    isSharingScreen,
+    remoteSharingScreen,
+    screenShareError,
     toggleMute,
     toggleCamera,
+    toggleScreenShare,
     reconnectToCall,
     handleSignalEvent,
   };

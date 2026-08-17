@@ -28,6 +28,12 @@ delivery doesn't depend on the recipient having a socket open on this
 SPECIFIC conversation_id. Payloads are shape/size validated (never
 trusted verbatim) and never logged — see `_relay_call_signaling`.
 
+T9 adds `screen-share:started` / `screen-share:stopped` to the SAME
+signaling relay — purely ephemeral ownership/UI-state signals (never
+written to the DB, no new access-control primitive), carrying no fields
+beyond the same `call_id`/authenticated `user_id` every other signaling
+event already carries.
+
 Auth: a `?token=` query param carrying the SAME access token
 `POST /api/auth/login` issues, decoded with the same
 `app.core.security.decode_token` every REST route uses — not a separate
@@ -54,7 +60,15 @@ from app.services import call_service, messaging_service
 router = APIRouter(tags=["messaging"])
 
 _TYPING_EVENT_TYPES = {"typing:start", "typing:stop"}
-_SIGNALING_EVENT_TYPES = {"webrtc:offer", "webrtc:answer", "webrtc:ice-candidate", "webrtc:media-failed", "media:state"}
+_SIGNALING_EVENT_TYPES = {
+    "webrtc:offer",
+    "webrtc:answer",
+    "webrtc:ice-candidate",
+    "webrtc:media-failed",
+    "media:state",
+    "screen-share:started",
+    "screen-share:stopped",
+}
 # Generous but bounded — a real SDP is a few KB, a real ICE candidate
 # string a couple hundred bytes; these caps exist only to stop an
 # oversized/abusive payload from being relayed, not to constrain normal
@@ -99,9 +113,11 @@ async def _relay_call_signaling(db: AsyncSession, user: User, event_type: str, e
     elif event_type == "media:state":
         payload["audio_muted"] = bool(event.get("audio_muted"))
         payload["video_disabled"] = bool(event.get("video_disabled"))
-    else:  # webrtc:media-failed
+    elif event_type == "webrtc:media-failed":
         reason = event.get("reason")
         payload["reason"] = reason if isinstance(reason, str) and len(reason) <= _MAX_REASON_LENGTH else "unknown"
+    # else: screen-share:started / screen-share:stopped — ephemeral,
+    # carry no fields beyond call_id/user_id already in `payload`.
 
     await presence.broadcast_to_user(target_user_id, payload)
 

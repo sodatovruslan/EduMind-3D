@@ -5,6 +5,7 @@ import { Phone, PhoneOff, Video, X } from "lucide-react";
 import { useLocale } from "@/lib/locale-context";
 import type { Call } from "@/lib/call-client";
 import type { MediaConnectionState, MediaErrorReason } from "@/lib/useWebRTCSession";
+import type { ScreenShareFailureReason } from "@/lib/webrtc/screenShare";
 import { parseUtcTimestamp } from "@/lib/messaging-time";
 import { GlassPanel } from "@/components/design-system";
 import CallMediaSurface from "./CallMediaSurface";
@@ -39,8 +40,12 @@ export default function CallPanel({
   remoteVideoDisabled,
   mediaError,
   isMediaOwner,
+  isSharingScreen,
+  remoteSharingScreen,
+  screenShareError,
   onToggleMute,
   onToggleCamera,
+  onToggleScreenShare,
   onReconnectToCall,
 }: {
   call: Call;
@@ -58,8 +63,12 @@ export default function CallPanel({
   remoteVideoDisabled: boolean;
   mediaError: MediaErrorReason | null;
   isMediaOwner: boolean;
+  isSharingScreen: boolean;
+  remoteSharingScreen: boolean;
+  screenShareError: ScreenShareFailureReason | null;
   onToggleMute: () => void;
   onToggleCamera: () => void;
+  onToggleScreenShare: () => void;
   onReconnectToCall: () => void;
 }) {
   const { t } = useLocale();
@@ -136,8 +145,12 @@ export default function CallPanel({
             isVideoDisabled={isVideoDisabled}
             remoteAudioMuted={remoteAudioMuted}
             remoteVideoDisabled={remoteVideoDisabled}
+            isSharingScreen={isSharingScreen}
+            remoteSharingScreen={remoteSharingScreen}
+            screenShareError={screenShareError}
             onToggleMute={onToggleMute}
             onToggleCamera={onToggleCamera}
+            onToggleScreenShare={onToggleScreenShare}
             onEnd={onEnd}
           />
           {call.answered_at && (

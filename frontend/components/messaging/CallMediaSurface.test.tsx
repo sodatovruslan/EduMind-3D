@@ -1,10 +1,21 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CallMediaSurface from "./CallMediaSurface";
 import { LocaleProvider } from "@/lib/locale-context";
 import { ru } from "@/lib/i18n/dictionaries/ru";
 import type { Call } from "@/lib/call-client";
+
+// isScreenShareSupported() checks for a real getDisplayMedia — jsdom has
+// none by default, so tests that need the Share Screen control enabled
+// stub one in; tests that don't care leave it absent (disabled state is
+// covered separately below).
+function stubScreenShareSupport() {
+  Object.defineProperty(navigator, "mediaDevices", {
+    value: { ...(navigator as unknown as { mediaDevices?: object }).mediaDevices, getDisplayMedia: vi.fn() },
+    configurable: true,
+  });
+}
 
 function fakeStream(): MediaStream {
   return {} as MediaStream;
@@ -35,8 +46,12 @@ function renderSurface(props: Partial<React.ComponentProps<typeof CallMediaSurfa
     isVideoDisabled: false,
     remoteAudioMuted: false,
     remoteVideoDisabled: false,
+    isSharingScreen: false,
+    remoteSharingScreen: false,
+    screenShareError: null,
     onToggleMute: vi.fn(),
     onToggleCamera: vi.fn(),
+    onToggleScreenShare: vi.fn(),
     onEnd: vi.fn(),
   };
   return render(
@@ -46,6 +61,9 @@ function renderSurface(props: Partial<React.ComponentProps<typeof CallMediaSurfa
   );
 }
 
+beforeEach(() => {
+  Object.defineProperty(navigator, "mediaDevices", { value: {}, configurable: true });
+});
 afterEach(() => cleanup());
 
 describe("CallMediaSurface — video calls", () => {
@@ -159,5 +177,88 @@ describe("CallMediaSurface — controls (shared)", () => {
   it("controls are grouped under an accessible label", () => {
     renderSurface();
     expect(screen.getByRole("group", { name: ru.calls.mediaControlsLabel })).toBeDefined();
+  });
+});
+
+describe("CallMediaSurface — screen sharing (T9)", () => {
+  it("the Share Screen control is disabled when the browser has no getDisplayMedia", () => {
+    renderSurface({ call: makeCall({ call_type: "video" }) });
+    expect(screen.getByTestId("toggle-screen-share")).toHaveProperty("disabled", true);
+  });
+
+  it("clicking Share Screen calls onToggleScreenShare", () => {
+    stubScreenShareSupport();
+    const onToggleScreenShare = vi.fn();
+    renderSurface({ call: makeCall({ call_type: "video" }), onToggleScreenShare });
+    fireEvent.click(screen.getByTestId("toggle-screen-share"));
+    expect(onToggleScreenShare).toHaveBeenCalled();
+  });
+
+  it("shows a prominent 'you are sharing' banner with its own Stop Sharing button while sharing", () => {
+    stubScreenShareSupport();
+    const onToggleScreenShare = vi.fn();
+    renderSurface({ call: makeCall({ call_type: "video" }), isSharingScreen: true, onToggleScreenShare });
+    expect(screen.getByTestId("local-sharing-banner").textContent).toContain(ru.calls.youAreSharingScreen);
+    fireEvent.click(screen.getByTestId("stop-sharing-prominent"));
+    expect(onToggleScreenShare).toHaveBeenCalled();
+  });
+
+  it("disables Share Screen and explains why when the remote is already sharing", () => {
+    stubScreenShareSupport();
+    renderSurface({ call: makeCall({ call_type: "video" }), remoteSharingScreen: true });
+    const button = screen.getByTestId("toggle-screen-share");
+    expect(button).toHaveProperty("disabled", true);
+    expect(button.getAttribute("aria-label")).toBe(ru.calls.anotherParticipantSharing);
+  });
+
+  it("renders the remote's shared screen as the primary surface with a named banner (video call)", () => {
+    const remote = fakeStream();
+    renderSurface({ call: makeCall({ call_type: "video" }), remoteStream: remote, remoteSharingScreen: true });
+    const video = screen.getByTestId("remote-video") as HTMLVideoElement;
+    expect(video.srcObject).toBe(remote);
+    expect(screen.getByTestId("remote-sharing-banner").textContent).toContain("Teacher One");
+  });
+
+  it("suppresses the camera-off overlay while the remote is sharing their screen instead of camera", () => {
+    renderSurface({ call: makeCall({ call_type: "video" }), remoteVideoDisabled: true, remoteSharingScreen: true });
+    expect(screen.queryByTestId("remote-camera-off-overlay")).toBeNull();
+  });
+
+  it("shows a screen-share error message (cancelled) without treating it as a fatal call error", () => {
+    renderSurface({ call: makeCall({ call_type: "video" }), screenShareError: "cancelled" });
+    expect(screen.getByTestId("screen-share-error").textContent).toContain(ru.calls.screenShareCancelled);
+    // Call surface itself is still fully rendered — not replaced by an error state.
+    expect(screen.getByTestId("video-call-surface")).toBeDefined();
+  });
+
+  it("shows a screen-share error message (failed) for a real getDisplayMedia failure", () => {
+    renderSurface({ call: makeCall({ call_type: "video" }), screenShareError: "failed" });
+    expect(screen.getByTestId("screen-share-error").textContent).toContain(ru.calls.screenShareFailed);
+  });
+
+  it("audio calls: switches from the avatar surface to a real remote <video> surface once the remote starts sharing", () => {
+    const remote = fakeStream();
+    renderSurface({ call: makeCall({ call_type: "audio" }), remoteStream: remote, remoteSharingScreen: true });
+    expect(screen.queryByTestId("audio-call-surface")).toBeNull();
+    const video = screen.getByTestId("remote-video") as HTMLVideoElement;
+    expect(video.srcObject).toBe(remote);
+    expect(screen.getByTestId("audio-call-screen-share-surface")).toBeDefined();
+  });
+
+  it("audio calls: shows the sharer's own 'you are sharing' banner without a giant empty video box", () => {
+    renderSurface({ call: makeCall({ call_type: "audio" }), isSharingScreen: true });
+    expect(screen.getByTestId("local-sharing-banner").textContent).toContain(ru.calls.youAreSharingScreen);
+    expect(screen.queryByTestId("remote-video")).toBeNull();
+  });
+
+  it("audio calls: reverts to the avatar surface once sharing ends on both sides", () => {
+    renderSurface({ call: makeCall({ call_type: "audio" }), isSharingScreen: false, remoteSharingScreen: false });
+    expect(screen.getByTestId("audio-call-surface")).toBeDefined();
+  });
+
+  it("Share Screen is offered from audio calls too, not only video calls", () => {
+    stubScreenShareSupport();
+    renderSurface({ call: makeCall({ call_type: "audio" }) });
+    expect(screen.getByTestId("toggle-screen-share")).toBeDefined();
   });
 });

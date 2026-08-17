@@ -319,6 +319,170 @@ async def test_malformed_signaling_payload_is_ignored(client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_screen_share_started_and_stopped_relay_between_accepted_call_participants(client, db_session):
+    """T9 — same relay path as webrtc:offer/answer, no new access-control
+    primitive: screen-share:started/stopped just need to reach the OTHER
+    participant of an ACCEPTED call, with no extra fields beyond call_id."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    w = await _world(client, db_session)
+    _, sa_headers, sa_token = w["student_a"]
+    teacher_a, a_headers, a_token = w["teacher_a"]
+    call_id, conversation_id = await _accepted_call(client, sa_headers, a_headers, teacher_a.id)
+
+    ws_client = TestClient(app)
+    with ws_client.websocket_connect(f"/ws/conversations/{conversation_id}?token={sa_token}") as student_socket:
+        with ws_client.websocket_connect(f"/ws/conversations/{conversation_id}?token={a_token}") as teacher_socket:
+            student_socket.receive_json()  # drain the teacher's connect presence:update
+
+            student_socket.send_json({"type": "screen-share:started", "call_id": call_id})
+            started_event = teacher_socket.receive_json()
+            assert started_event["type"] == "screen-share:started"
+            assert started_event["call_id"] == call_id
+            assert started_event["user_id"] == w["student_a"][0].id
+
+            student_socket.send_json({"type": "screen-share:stopped", "call_id": call_id})
+            stopped_event = teacher_socket.receive_json()
+            assert stopped_event["type"] == "screen-share:stopped"
+            assert stopped_event["user_id"] == w["student_a"][0].id
+
+            await _graceful_close(teacher_socket)
+        await _graceful_close(student_socket)
+
+
+@pytest.mark.asyncio
+async def test_screen_share_relay_uses_authenticated_sender_never_a_spoofed_one(client, db_session):
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    w = await _world(client, db_session)
+    _, sa_headers, sa_token = w["student_a"]
+    teacher_a, a_headers, a_token = w["teacher_a"]
+    call_id, conversation_id = await _accepted_call(client, sa_headers, a_headers, teacher_a.id)
+
+    ws_client = TestClient(app)
+    with ws_client.websocket_connect(f"/ws/conversations/{conversation_id}?token={sa_token}") as student_socket:
+        with ws_client.websocket_connect(f"/ws/conversations/{conversation_id}?token={a_token}") as teacher_socket:
+            student_socket.receive_json()
+            teacher_socket.send_json({"type": "screen-share:started", "call_id": call_id, "user_id": "spoofed-someone-else"})
+            event = student_socket.receive_json()
+            assert event["user_id"] == teacher_a.id  # never the spoofed value
+
+            await _graceful_close(teacher_socket)
+        await _graceful_close(student_socket)
+
+
+@pytest.mark.asyncio
+async def test_screen_share_denied_for_unrelated_user(client, db_session):
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    w = await _world(client, db_session)
+    _, sa_headers, sa_token = w["student_a"]
+    teacher_a, a_headers, a_token = w["teacher_a"]
+    teacher_b, b_headers, b_token = w["teacher_b"]
+    call_id, conversation_id = await _accepted_call(client, sa_headers, a_headers, teacher_a.id)
+
+    other_student, other_headers, _ = await _register(client, db_session, "sig-student-d@example.com", UserRole.STUDENT, "Student D")
+    other_classroom = Classroom(teacher_id=teacher_b.id, name="Class C")
+    db_session.add(other_classroom)
+    await db_session.flush()
+    db_session.add(ClassMembership(class_id=other_classroom.id, student_id=other_student.id))
+    await db_session.commit()
+    _, other_conversation_id = await _accepted_call(client, other_headers, b_headers, teacher_b.id)
+
+    ws_client = TestClient(app)
+    with ws_client.websocket_connect(f"/ws/conversations/{conversation_id}?token={sa_token}") as student_socket:
+        with ws_client.websocket_connect(f"/ws/conversations/{conversation_id}?token={a_token}") as teacher_a_socket:
+            with ws_client.websocket_connect(f"/ws/conversations/{other_conversation_id}?token={b_token}") as teacher_b_socket:
+                teacher_b_socket.send_json({"type": "screen-share:started", "call_id": call_id})
+                await _graceful_close(teacher_b_socket)
+
+            student_socket.send_json({"type": "typing:start"})
+            event = teacher_a_socket.receive_json()
+            assert event["type"] == "typing:start"  # the intruder's screen-share:started never arrived
+
+            await _graceful_close(teacher_a_socket)
+        await _graceful_close(student_socket)
+
+
+@pytest.mark.asyncio
+async def test_screen_share_denied_for_call_still_ringing(client, db_session):
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    w = await _world(client, db_session)
+    _, sa_headers, sa_token = w["student_a"]
+    teacher_a, a_headers, a_token = w["teacher_a"]
+    conv = await client.post("/api/conversations", headers=sa_headers, json={"counterpart_id": teacher_a.id})
+    conversation_id = conv.json()["id"]
+    call = (
+        await client.post("/api/calls", headers=sa_headers, json={"conversation_id": conversation_id, "call_type": "audio"})
+    ).json()
+    # deliberately NOT accepted — still ringing
+
+    ws_client = TestClient(app)
+    with ws_client.websocket_connect(f"/ws/conversations/{conversation_id}?token={sa_token}") as student_socket:
+        with ws_client.websocket_connect(f"/ws/conversations/{conversation_id}?token={a_token}") as teacher_socket:
+            student_socket.send_json({"type": "screen-share:started", "call_id": call["id"]})
+            student_socket.send_json({"type": "typing:start"})
+            event = teacher_socket.receive_json()
+            assert event["type"] == "typing:start"
+
+            await _graceful_close(teacher_socket)
+        await _graceful_close(student_socket)
+
+
+@pytest.mark.asyncio
+async def test_screen_share_denied_after_call_ends(client, db_session):
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    w = await _world(client, db_session)
+    _, sa_headers, sa_token = w["student_a"]
+    teacher_a, a_headers, a_token = w["teacher_a"]
+    call_id, conversation_id = await _accepted_call(client, sa_headers, a_headers, teacher_a.id)
+    await client.post(f"/api/calls/{call_id}/end", headers=sa_headers)
+
+    ws_client = TestClient(app)
+    with ws_client.websocket_connect(f"/ws/conversations/{conversation_id}?token={sa_token}") as student_socket:
+        with ws_client.websocket_connect(f"/ws/conversations/{conversation_id}?token={a_token}") as teacher_socket:
+            student_socket.send_json({"type": "screen-share:started", "call_id": call_id})
+            student_socket.send_json({"type": "typing:start"})
+            event = teacher_socket.receive_json()
+            assert event["type"] == "typing:start"
+
+            await _graceful_close(teacher_socket)
+        await _graceful_close(student_socket)
+
+
+@pytest.mark.asyncio
+async def test_screen_share_malformed_payload_is_ignored(client, db_session):
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    w = await _world(client, db_session)
+    _, sa_headers, sa_token = w["student_a"]
+    teacher_a, a_headers, a_token = w["teacher_a"]
+    call_id, conversation_id = await _accepted_call(client, sa_headers, a_headers, teacher_a.id)
+
+    ws_client = TestClient(app)
+    with ws_client.websocket_connect(f"/ws/conversations/{conversation_id}?token={sa_token}") as student_socket:
+        with ws_client.websocket_connect(f"/ws/conversations/{conversation_id}?token={a_token}") as teacher_socket:
+            # missing call_id entirely
+            student_socket.send_json({"type": "screen-share:started"})
+            # call_id present but wrong type
+            student_socket.send_json({"type": "screen-share:started", "call_id": 12345})
+            student_socket.send_json({"type": "typing:start"})
+            event = teacher_socket.receive_json()
+            assert event["type"] == "typing:start"
+
+            await _graceful_close(teacher_socket)
+        await _graceful_close(student_socket)
+
+
+@pytest.mark.asyncio
 async def test_admin_cannot_relay_signaling_for_a_call_they_are_not_part_of(client, db_session):
     from fastapi.testclient import TestClient
     from app.main import app

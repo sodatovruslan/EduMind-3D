@@ -413,8 +413,12 @@ export default function ConversationView({ conversationId, onBack }: { conversat
             remoteVideoDisabled={webrtc.remoteVideoDisabled}
             mediaError={webrtc.mediaError}
             isMediaOwner={webrtc.isMediaOwner}
+            isSharingScreen={webrtc.isSharingScreen}
+            remoteSharingScreen={webrtc.remoteSharingScreen}
+            screenShareError={webrtc.screenShareError}
             onToggleMute={webrtc.toggleMute}
             onToggleCamera={webrtc.toggleCamera}
+            onToggleScreenShare={webrtc.toggleScreenShare}
             onReconnectToCall={webrtc.reconnectToCall}
           />
         )}

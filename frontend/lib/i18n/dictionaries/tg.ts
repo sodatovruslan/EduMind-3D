@@ -714,6 +714,15 @@ export const tg: typeof ru = {
     connectionFailed: "Пайваст қатъ шуд",
     remoteMediaFailed: "Ҳамсӯҳбат натавонист камера/микрофони худро пайваст кунад",
     mediaOwnedElsewhere: "Занг дар варақаи дигар фаъол аст",
+    shareScreen: "Намоиши экран",
+    stopSharing: "Қатъ кардани намоиш",
+    youAreSharingScreen: "Шумо экрани худро намоиш медиҳед",
+    sharingScreen: (name: string) => `${name} экрани худро намоиш медиҳад`,
+    screenShareUnavailable: "Намоиши экран дастнорас аст",
+    screenShareCancelled: "Намоиши экран бекор карда шуд",
+    screenShareFailed: "Оғоз кардани намоиши экран имконнопазир аст",
+    anotherParticipantSharing: "Ҳамсӯҳбат ҳоло экрани худро намоиш медиҳад",
+    screenSharingStopped: "Намоиши экран қатъ шуд",
   },
   shell: {
     nav: {
