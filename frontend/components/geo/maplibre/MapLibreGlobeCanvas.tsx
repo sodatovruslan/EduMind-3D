@@ -77,7 +77,20 @@ export default function MapLibreGlobeCanvas({
         </div>
       )}
 
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex flex-wrap gap-2 p-3">
+      {/*
+        G6.11 (post-review) — реальный баг, найденный по скриншоту
+        владельца продукта: `SimulationShell` рисует свою шапку
+        (назад/название/Locale/Theme) как `fixed` элемент, который
+        "плавает" НАД контентом и НЕ резервирует под себя место (см.
+        комментарий в самом SimulationShell.tsx — так сделано намеренно,
+        чтобы не давить своей высотой на каждую сцену). Это значит, что
+        любой элемент, начинающийся у самого верха СВОЕГО контейнера
+        (здесь — `top-0` внутри канваса карты, который сам стартует у
+        верха страницы), визуально перекрывается шапкой. `top-20` — тот же
+        приём, что уже применяли для канваса/попапов: явный отступ, не
+        зависящий от того, как SimulationShell решит спозиционировать себя.
+      */}
+      <div className="pointer-events-none absolute inset-x-0 top-20 z-10 flex flex-wrap gap-2 p-3">
         {(Object.keys(LOCATIONS) as LocationKey[]).map((key) => (
           <button
             key={key}
@@ -109,7 +122,7 @@ export default function MapLibreGlobeCanvas({
       </div>
 
       {showDiagnostics && (
-        <div className="pointer-events-none absolute right-3 top-3 z-10 max-w-[280px] rounded-ds-control bg-surface-deep/80 p-2.5 font-mono text-[11px] text-text-secondary backdrop-blur">
+        <div className="pointer-events-none absolute right-3 top-20 z-10 max-w-[280px] rounded-ds-control bg-surface-deep/80 p-2.5 font-mono text-[11px] text-text-secondary backdrop-blur">
           <div className="mb-1 text-accent">MapLibre GL JS — dev diagnostics</div>
           <div>Engine: {engine.engineSource ?? "loading..."}</div>
           <div>FPS: {engine.fps}</div>
