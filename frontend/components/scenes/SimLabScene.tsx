@@ -6,21 +6,29 @@ import { useFrame } from "@react-three/fiber";
 import { MeshTransmissionMaterial } from "@react-three/drei";
 import CanvasShell from "@/components/scenes/CanvasShell";
 import AIAssistantChat from "@/components/ai/AIAssistantChat";
-import { apiFetch, ApiError } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { celsiusToKelvin, idealGasPressure, newtonCoolingTemperature } from "@/lib/simlab-formulas";
 import type { Simulation } from "@/lib/types";
+import { useLocale } from "@/lib/locale-context";
+import type { Locale } from "@/lib/i18n/locales";
 
 const REAGENTS = [
-  { value: "vinegar", label: "Уксус (CH₃COOH)" },
-  { value: "baking_soda", label: "Сода (NaHCO₃)" },
-  { value: "hcl", label: "Соляная кислота (HCl)" },
-  { value: "naoh", label: "Гидроксид натрия (NaOH)" },
-  { value: "copper_sulfate", label: "Сульфат меди (CuSO₄)" },
-  { value: "iron", label: "Железо (Fe)" },
-  { value: "phenolphthalein", label: "Фенолфталеин" },
-  { value: "silver_nitrate", label: "Нитрат серебра (AgNO₃)" },
-  { value: "sodium_chloride", label: "Хлорид натрия (NaCl)" },
+  { value: "vinegar", label: { ru: "Уксус (CH₃COOH)", en: "Vinegar (CH₃COOH)", tg: "Сирко (CH₃COOH)" } },
+  { value: "baking_soda", label: { ru: "Сода (NaHCO₃)", en: "Baking soda (NaHCO₃)", tg: "Сода (NaHCO₃)" } },
+  { value: "hcl", label: { ru: "Соляная кислота (HCl)", en: "Hydrochloric acid (HCl)", tg: "Кислотаи хлоридӣ (HCl)" } },
+  { value: "naoh", label: { ru: "Гидроксид натрия (NaOH)", en: "Sodium hydroxide (NaOH)", tg: "Гидроксиди натрий (NaOH)" } },
+  { value: "copper_sulfate", label: { ru: "Сульфат меди (CuSO₄)", en: "Copper sulfate (CuSO₄)", tg: "Сулфати мис (CuSO₄)" } },
+  { value: "iron", label: { ru: "Железо (Fe)", en: "Iron (Fe)", tg: "Оҳан (Fe)" } },
+  { value: "phenolphthalein", label: { ru: "Фенолфталеин", en: "Phenolphthalein", tg: "Фенолфталеин" } },
+  { value: "silver_nitrate", label: { ru: "Нитрат серебра (AgNO₃)", en: "Silver nitrate (AgNO₃)", tg: "Нитрати нуқра (AgNO₃)" } },
+  { value: "sodium_chloride", label: { ru: "Хлорид натрия (NaCl)", en: "Sodium chloride (NaCl)", tg: "Хлориди натрий (NaCl)" } },
 ] as const;
+
+const COPY = {
+  ru: { reagent: "Реагент", and: "и", pouring: "Наливаем...", mix: "Смешать реагенты", reactionError: "Не удалось выполнить реакцию", completeError: "Не удалось завершить попытку", exothermic: "Экзотермическая реакция", noHeat: "Без выделения тепла", gas: "выделяется газ", precipitate: "выпадает осадок", temperature: "Температура", volume: "Объём сосуда", vessel: "Сосуд", pressure: "Давление", mole: "моль", liter: "л", atmosphere: "атм", complete: "Завершить попытку", score: "Оценка", yes: "да", no: "нет", mixed: "Ученик смешал", result: "Результат", notMixed: "Ученик ещё не смешивал реагенты" },
+  en: { reagent: "Reagent", and: "and", pouring: "Pouring...", mix: "Mix reagents", reactionError: "Could not perform the reaction", completeError: "Could not complete the attempt", exothermic: "Exothermic reaction", noHeat: "No heat released", gas: "gas released", precipitate: "precipitate formed", temperature: "Temperature", volume: "Vessel volume", vessel: "Vessel", pressure: "Pressure", mole: "mol", liter: "L", atmosphere: "atm", complete: "Complete attempt", score: "Score", yes: "yes", no: "no", mixed: "The student mixed", result: "Result", notMixed: "The student has not mixed the reagents yet" },
+  tg: { reagent: "Реактив", and: "ва", pouring: "Рехта истодааст...", mix: "Омехтани реактивҳо", reactionError: "Реаксия иҷро нашуд", completeError: "Кӯшиш анҷом дода нашуд", exothermic: "Реаксияи экзотермӣ", noHeat: "Бе хориҷшавии гармӣ", gas: "газ хориҷ мешавад", precipitate: "таҳшин ҳосил мешавад", temperature: "Ҳарорат", volume: "Ҳаҷми зарф", vessel: "Зарф", pressure: "Фишор", mole: "мол", liter: "л", atmosphere: "атм", complete: "Анҷом додани кӯшиш", score: "Хол", yes: "ҳа", no: "не", mixed: "Хонанда омехт", result: "Натиҷа", notMixed: "Хонанда ҳанӯз реактивҳоро омехта накардааст" },
+} satisfies Record<Locale, Record<string, string>>;
 
 // приблизительный визуальный цвет реагента в мерном стакане до реакции —
 // не химически точный, только для правдоподобности анимации налива
@@ -354,6 +362,8 @@ interface SimLabSceneProps {
 }
 
 export default function SimLabScene({ simulation }: SimLabSceneProps) {
+  const { locale } = useLocale();
+  const copy = COPY[locale];
   const [reagentA, setReagentA] = useState<string>(REAGENTS[0].value);
   const [reagentB, setReagentB] = useState<string>(REAGENTS[1].value);
   const [reaction, setReaction] = useState<ReactionResult | null>(null);
@@ -417,7 +427,7 @@ export default function SimLabScene({ simulation }: SimLabSceneProps) {
       setReactionStartedAt(performance.now());
       setActionsLog((prev) => [...prev, { action_type: "mix_reagents", reagent_a: reagentA, reagent_b: reagentB }]);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Не удалось выполнить реакцию");
+      setError(copy.reactionError);
     } finally {
       setIsMixing(false);
       setIsPouring(false);
@@ -436,18 +446,18 @@ export default function SimLabScene({ simulation }: SimLabSceneProps) {
       });
       setCompletionScore(result.score);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Не удалось завершить попытку");
+      setError(copy.completeError);
     }
   }
 
   const liquidColor = reaction?.result_color ?? "#BFE3F2";
   const sceneStateDescription = reaction
-    ? `Ученик смешал ${reagentA} и ${reagentB}. Результат: ${reaction.product_name}, газ: ${
-        reaction.gas_released ? "да" : "нет"
-      }, осадок: ${reaction.precipitate_formed ? "да" : "нет"}. Температура сосуда: ${displayedTempC.toFixed(
+    ? `${copy.mixed} ${reagentA} ${copy.and} ${reagentB}. ${copy.result}: ${reaction.product_name}, ${copy.gas}: ${
+        reaction.gas_released ? copy.yes : copy.no
+      }, ${copy.precipitate}: ${reaction.precipitate_formed ? copy.yes : copy.no}. ${copy.temperature}: ${displayedTempC.toFixed(
         1
-      )}°C, объем: ${volumeL} л, давление: ${pressureAtm.toFixed(2)} атм.`
-    : `Ученик еще не смешивал реагенты. Температура: ${ambientTempC}°C, объем: ${volumeL} л.`;
+      )}°C, ${copy.volume}: ${volumeL} ${copy.liter}, ${copy.pressure}: ${pressureAtm.toFixed(2)} ${copy.atmosphere}.`
+    : `${copy.notMixed}. ${copy.temperature}: ${ambientTempC}°C, ${copy.volume}: ${volumeL} ${copy.liter}.`;
 
   return (
     <div className="rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">
@@ -484,7 +494,7 @@ export default function SimLabScene({ simulation }: SimLabSceneProps) {
 
       <div className="glass-panel mt-4 grid grid-cols-1 gap-4 rounded-2xl p-4 sm:grid-cols-2">
         <div>
-          <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">Реагент A</label>
+          <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">{copy.reagent} A</label>
           <select
             value={reagentA}
             onChange={(e) => setReagentA(e.target.value)}
@@ -492,14 +502,14 @@ export default function SimLabScene({ simulation }: SimLabSceneProps) {
           >
             {REAGENTS.map((r) => (
               <option key={r.value} value={r.value} className="bg-surface-slate">
-                {r.label}
+                {r.label[locale]}
               </option>
             ))}
           </select>
         </div>
 
         <div>
-          <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">Реагент B</label>
+          <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">{copy.reagent} B</label>
           <select
             value={reagentB}
             onChange={(e) => setReagentB(e.target.value)}
@@ -507,7 +517,7 @@ export default function SimLabScene({ simulation }: SimLabSceneProps) {
           >
             {REAGENTS.map((r) => (
               <option key={r.value} value={r.value} className="bg-surface-slate">
-                {r.label}
+                {r.label[locale]}
               </option>
             ))}
           </select>
@@ -519,7 +529,7 @@ export default function SimLabScene({ simulation }: SimLabSceneProps) {
             disabled={isPouring || isMixing}
             className="neon-glow-indigo w-full rounded-full bg-brand py-2 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
           >
-            {isPouring ? "Наливаем..." : "Смешать реагенты"}
+            {isPouring ? copy.pouring : copy.mix}
           </button>
         </div>
 
@@ -527,16 +537,16 @@ export default function SimLabScene({ simulation }: SimLabSceneProps) {
           <div className="rim-light rounded-xl border border-glass-border bg-surface-container-lowest/60 p-3 text-sm text-slate-300 sm:col-span-2">
             <p className="font-headline font-semibold text-slate-100">{reaction.product_name}</p>
             <p className="text-slate-400">
-              {reaction.is_exothermic ? "Экзотермическая реакция" : "Без выделения тепла"}
-              {reaction.gas_released && " · выделяется газ"}
-              {reaction.precipitate_formed && " · выпадает осадок"}
+              {reaction.is_exothermic ? copy.exothermic : copy.noHeat}
+              {reaction.gas_released && ` · ${copy.gas}`}
+              {reaction.precipitate_formed && ` · ${copy.precipitate}`}
             </p>
           </div>
         )}
 
         <div>
           <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
-            Температура: {ambientTempC}°C
+            {copy.temperature}: {ambientTempC}°C
           </label>
           <input
             type="range"
@@ -550,7 +560,7 @@ export default function SimLabScene({ simulation }: SimLabSceneProps) {
 
         <div>
           <label className="mb-1 block font-mono text-xs uppercase tracking-widest text-slate-400">
-            Объем сосуда: {volumeL} л
+            {copy.volume}: {volumeL} {copy.liter}
           </label>
           <input
             type="range"
@@ -563,8 +573,8 @@ export default function SimLabScene({ simulation }: SimLabSceneProps) {
         </div>
 
         <div className="rounded-xl border border-glass-border bg-surface-container-lowest/60 p-3 text-sm text-slate-400 sm:col-span-2">
-          Сосуд: <span className="font-semibold text-slate-100">{displayedTempC.toFixed(1)}°C</span> · Давление
-          (P·V=nRT, n=1 моль): <span className="font-semibold text-slate-100">{pressureAtm.toFixed(2)} атм</span>
+          {copy.vessel}: <span className="font-semibold text-slate-100">{displayedTempC.toFixed(1)}°C</span> · {copy.pressure}
+          (P·V=nRT, n=1 {copy.mole}): <span className="font-semibold text-slate-100">{pressureAtm.toFixed(2)} {copy.atmosphere}</span>
         </div>
 
         <div className="sm:col-span-2">
@@ -590,10 +600,10 @@ export default function SimLabScene({ simulation }: SimLabSceneProps) {
             disabled={actionsLog.length === 0}
             className="rounded-full border border-glass-border px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/5 disabled:opacity-50"
           >
-            Завершить попытку
+            {copy.complete}
           </button>
           {completionScore !== null && (
-            <span className="font-mono text-sm font-medium text-slate-100">Оценка: {completionScore}/100</span>
+            <span className="font-mono text-sm font-medium text-slate-100">{copy.score}: {completionScore}/100</span>
           )}
         </div>
       </div>

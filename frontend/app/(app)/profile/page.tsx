@@ -8,6 +8,7 @@ import { apiFetch, ApiError } from "@/lib/api";
 import type { User } from "@/lib/types";
 import { Button, Skeleton, Surface } from "@/components/design-system";
 import ProgressDashboard from "@/components/progress/ProgressDashboard";
+import { INTL_LOCALE_TAG } from "@/lib/i18n/locales";
 
 function initialsOf(fullName: string): string {
   const parts = fullName.trim().split(/\s+/).filter(Boolean);
@@ -93,7 +94,7 @@ export default function ProfilePage() {
               <label className="mb-1 block text-ds-caption font-semibold uppercase tracking-widest text-text-muted">
                 {t.profile.joinedLabel}
               </label>
-              <div className="ds-input text-text-muted">{new Date(user.created_at).toLocaleDateString(locale)}</div>
+              <div className="ds-input text-text-muted">{new Date(user.created_at).toLocaleDateString(INTL_LOCALE_TAG[locale])}</div>
             </div>
 
             <div role="alert" className="min-h-[1.25rem] text-ds-caption text-danger">

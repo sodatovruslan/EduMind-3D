@@ -12,6 +12,7 @@
  */
 
 import { Html } from "@react-three/drei";
+import { useLocale } from "@/lib/locale-context";
 
 export interface GeoFeatureInfo {
   title: string;
@@ -26,6 +27,7 @@ export interface GeoFeatureInfoCardProps {
 }
 
 export default function GeoFeatureInfoCard({ info, onClose }: GeoFeatureInfoCardProps) {
+  const { t } = useLocale();
   return (
     <Html position={info.position} center distanceFactor={3} zIndexRange={[100, 0]}>
       <div className="glass-panel w-56 rounded-xl border border-glass-border p-3 text-xs text-slate-200 shadow-2xl" data-testid="geo-feature-info-card">
@@ -33,7 +35,7 @@ export default function GeoFeatureInfoCard({ info, onClose }: GeoFeatureInfoCard
           <p className="font-headline font-semibold text-slate-100">{info.title}</p>
           <button
             onClick={onClose}
-            aria-label="Закрыть"
+            aria-label={t.common.close}
             className="shrink-0 rounded-full px-1.5 text-slate-400 hover:bg-white/10 hover:text-slate-200"
           >
             ×

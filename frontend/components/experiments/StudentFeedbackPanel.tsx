@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { CheckCircle2, AlertTriangle, XCircle, Clock, Award, ShieldCheck, ChevronDown, ChevronUp } from "lucide-react";
 import type { DeterministicAssessmentReport } from "@/lib/chemistry-assessment";
+import { useLocale } from "@/lib/locale-context";
 
 interface StudentFeedbackPanelProps {
   assessment: DeterministicAssessmentReport;
@@ -10,6 +11,12 @@ interface StudentFeedbackPanelProps {
 }
 
 export default function StudentFeedbackPanel({ assessment, onClose }: StudentFeedbackPanelProps) {
+  const { locale } = useLocale();
+  const copy = {
+    ru: { report: "Отчёт о прохождении эксперимента", session: "Сессия", complete: "Эксперимент завершён", incomplete: "Эксперимент не завершён", criteria: "Критерии оценки", evidence: "Доказательства", safety: "Нарушения техники безопасности", timeline: "Пошаговая хронология сессии", continue: "Продолжить работу" },
+    en: { report: "Experiment report", session: "Session", complete: "Experiment completed", incomplete: "Experiment not completed", criteria: "Assessment criteria", evidence: "Evidence", safety: "Safety violations", timeline: "Session timeline", continue: "Continue" },
+    tg: { report: "Ҳисоботи таҷриба", session: "Ҷаласа", complete: "Таҷриба анҷом ёфт", incomplete: "Таҷриба анҷом наёфт", criteria: "Меъёрҳои баҳогузорӣ", evidence: "Далелҳо", safety: "Вайронкунии қоидаҳои бехатарӣ", timeline: "Раванди қадам ба қадами ҷаласа", continue: "Идома додан" },
+  }[locale];
   const [showTimeline, setShowTimeline] = useState(true);
 
   return (
@@ -18,10 +25,10 @@ export default function StudentFeedbackPanel({ assessment, onClose }: StudentFee
       <div className="flex items-center justify-between border-b border-slate-800 pb-4">
         <div>
           <h2 className="text-xl font-bold text-sky-400 flex items-center gap-2">
-            <Award className="w-6 h-6 text-amber-400" /> Отчёт о прохождении эксперимента
+            <Award className="w-6 h-6 text-amber-400" /> {copy.report}
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            Сессия: <span className="font-mono text-slate-300">{assessment.sessionId}</span>
+            {copy.session}: <span className="font-mono text-slate-300">{assessment.sessionId}</span>
           </p>
         </div>
         <div className="text-right">
@@ -31,14 +38,14 @@ export default function StudentFeedbackPanel({ assessment, onClose }: StudentFee
               assessment.isComplete ? "bg-emerald-500/20 text-emerald-400" : "bg-amber-500/20 text-amber-400"
             }`}
           >
-            {assessment.isComplete ? "Эксперимент завершён" : "Эксперимент не завершён"}
+            {assessment.isComplete ? copy.complete : copy.incomplete}
           </span>
         </div>
       </div>
 
       {/* Criteria Breakdown */}
       <div className="space-y-3">
-        <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">Критерии оценки</h3>
+        <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">{copy.criteria}</h3>
         <div className="grid grid-cols-1 gap-2.5">
           {assessment.criteria.map((c) => (
             <div
@@ -54,7 +61,7 @@ export default function StudentFeedbackPanel({ assessment, onClose }: StudentFee
                   <div className="text-xs text-slate-400 mt-0.5">{c.message}</div>
                   {c.evidenceEventIds.length > 0 && (
                     <div className="text-[10px] font-mono text-slate-500 mt-1">
-                      Доказательства: {c.evidenceEventIds.join(", ")}
+                      {copy.evidence}: {c.evidenceEventIds.join(", ")}
                     </div>
                   )}
                 </div>
@@ -71,7 +78,7 @@ export default function StudentFeedbackPanel({ assessment, onClose }: StudentFee
       {assessment.safetyViolations.length > 0 && (
         <div className="bg-rose-950/30 border border-rose-800/50 rounded-lg p-4 space-y-2">
           <h4 className="text-sm font-bold text-rose-400 flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4" /> Нарушения техники безопасности ({assessment.safetyViolations.length})
+            <ShieldCheck className="w-4 h-4" /> {copy.safety} ({assessment.safetyViolations.length})
           </h4>
           <ul className="space-y-1 text-xs text-rose-200 list-disc list-inside">
             {assessment.safetyViolations.map((v) => (
@@ -88,7 +95,7 @@ export default function StudentFeedbackPanel({ assessment, onClose }: StudentFee
           className="flex items-center justify-between w-full text-xs font-semibold text-slate-300 uppercase tracking-wider hover:text-white transition-colors"
         >
           <span className="flex items-center gap-2">
-            <Clock className="w-4 h-4 text-sky-400" /> Пошаговая хронология сессии ({assessment.timelineSummary.length})
+            <Clock className="w-4 h-4 text-sky-400" /> {copy.timeline} ({assessment.timelineSummary.length})
           </span>
           {showTimeline ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
         </button>
@@ -113,7 +120,7 @@ export default function StudentFeedbackPanel({ assessment, onClose }: StudentFee
             onClick={onClose}
             className="px-5 py-2 bg-sky-600 hover:bg-sky-500 text-white font-medium text-sm rounded-lg shadow transition-colors"
           >
-            Продолжить работу
+            {copy.continue}
           </button>
         </div>
       )}

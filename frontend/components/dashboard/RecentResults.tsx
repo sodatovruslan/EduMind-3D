@@ -5,6 +5,7 @@ import { getMyResults } from "@/lib/results-client";
 import { useLocale } from "@/lib/locale-context";
 import { ACCENT_TEXT_CLASS, getWorldByModule, worldCopy } from "@/lib/landing-worlds";
 import { Skeleton, Surface } from "@/components/design-system";
+import { INTL_LOCALE_TAG } from "@/lib/i18n/locales";
 
 const MAX_VISIBLE = 5;
 
@@ -44,7 +45,7 @@ export default function RecentResults() {
                 )}
                 <p className="truncate text-ds-body font-medium text-text-primary">{result.simulation_title}</p>
                 <p className="text-ds-caption text-text-muted">
-                  {new Date(result.completed_at).toLocaleDateString(locale)} · {Math.round(result.duration_seconds / 60)}{" "}
+                  {new Date(result.completed_at).toLocaleDateString(INTL_LOCALE_TAG[locale])} · {Math.round(result.duration_seconds / 60)}{" "}
                   {t.dashboard.recentResults.durationLabel}
                 </p>
               </div>

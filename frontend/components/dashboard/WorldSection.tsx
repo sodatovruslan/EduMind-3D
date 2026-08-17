@@ -7,6 +7,7 @@ import { ACCENT_TEXT_CLASS, LANDING_WORLDS, worldCopy } from "@/lib/landing-worl
 import { getMyResults } from "@/lib/results-client";
 import type { LabResult, Simulation } from "@/lib/types";
 import { ButtonLink, Skeleton, Surface } from "@/components/design-system";
+import { INTL_LOCALE_TAG } from "@/lib/i18n/locales";
 
 /**
  * D5.1 — "Explore the worlds", reworked as a major visual section (the D5
@@ -51,7 +52,7 @@ function WorldPortal({
   const avgScore = scored.length > 0 ? Math.round(scored.reduce((sum, r) => sum + (r.score ?? 0), 0) / scored.length) : null;
   const lastActivity =
     worldResults.length > 0
-      ? new Date(Math.max(...worldResults.map((r) => new Date(r.completed_at).getTime()))).toLocaleDateString(locale)
+      ? new Date(Math.max(...worldResults.map((r) => new Date(r.completed_at).getTime()))).toLocaleDateString(INTL_LOCALE_TAG[locale])
       : null;
 
   return (

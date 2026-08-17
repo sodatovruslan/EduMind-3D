@@ -20,6 +20,13 @@ export const ru = {
     signIn: "Войти",
     openDashboard: "Открыть кабинет",
     exploreWorlds: "Исследовать миры",
+    close: "Закрыть",
+    language: "Язык",
+    theme: "Тема оформления",
+    themeLight: "Светлая",
+    themeDark: "Тёмная",
+    themeSystem: "Системная",
+    rotate: "Повернуть",
   },
   nav: {
     worlds: "Миры",

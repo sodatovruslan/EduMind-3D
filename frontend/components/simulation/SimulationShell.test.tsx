@@ -58,7 +58,7 @@ describe("SimulationShell — D6 immersive route chrome", () => {
     renderShell(makeSimulation());
     await act(async () => {});
 
-    expect(screen.getByRole("radiogroup", { name: "Язык / Language / Забон" })).toBeDefined();
+    expect(screen.getByRole("radiogroup", { name: "Язык" })).toBeDefined();
     expect(screen.getByRole("radiogroup", { name: "Тема оформления" })).toBeDefined();
   });
 

@@ -9,6 +9,13 @@ export const tg: typeof ru = {
     signIn: "Ворид шудан",
     openDashboard: "Кушодани кабинет",
     exploreWorlds: "Ҷаҳонҳоро омӯхтан",
+    close: "Пӯшидан",
+    language: "Забон",
+    theme: "Намуди зоҳирӣ",
+    themeLight: "Равшан",
+    themeDark: "Торик",
+    themeSystem: "Системавӣ",
+    rotate: "Гардондан",
   },
   nav: {
     worlds: "Ҷаҳонҳо",

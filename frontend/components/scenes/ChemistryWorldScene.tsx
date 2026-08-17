@@ -1432,6 +1432,7 @@ function InteractionPrompt() {
 
 function RotateHandle({ id }: { id: string }) {
   const { rotateItem } = useChemistryWorkspace();
+  const { t } = useLocale();
   return (
     <Html position={[0, 0.6, 0]} center distanceFactor={8} style={{ pointerEvents: "auto" }}>
       <button
@@ -1440,7 +1441,7 @@ function RotateHandle({ id }: { id: string }) {
           rotateItem(id);
         }}
         data-testid={`rotate-${id}`}
-        title="Повернуть"
+        title={t.common.rotate}
         className="flex h-6 w-6 items-center justify-center rounded-full border border-white/20 bg-slate-900/85 text-white hover:bg-slate-800"
       >
         <RotateCw size={12} />

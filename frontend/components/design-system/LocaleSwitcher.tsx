@@ -9,10 +9,10 @@ import { useLocale } from "@/lib/locale-context";
  * sessions. Same visual pattern as ThemeToggle for consistency.
  */
 export default function LocaleSwitcher() {
-  const { locale, setLocale } = useLocale();
+  const { locale, setLocale, t } = useLocale();
 
   return (
-    <div role="radiogroup" aria-label="Язык / Language / Забон" className="ds-glass inline-flex items-center gap-1 rounded-ds-control p-1">
+    <div role="radiogroup" aria-label={t.common.language} className="ds-glass inline-flex items-center gap-1 rounded-ds-control p-1">
       {LOCALES.map((code) => {
         const isActive = locale === code;
         return (

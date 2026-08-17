@@ -70,7 +70,7 @@ describe("LoginPage — D3 auth shell", () => {
 
     expect(screen.getAllByRole("link", { name: /EduMind 3D/i }).length).toBeGreaterThan(0);
     expect(screen.getByRole("radiogroup", { name: "Тема оформления" })).toBeDefined();
-    expect(screen.getByRole("radiogroup", { name: "Язык / Language / Забон" })).toBeDefined();
+    expect(screen.getByRole("radiogroup", { name: "Язык" })).toBeDefined();
   });
 
   it("has no forgot-password link or flow (not supported by the backend contract)", async () => {

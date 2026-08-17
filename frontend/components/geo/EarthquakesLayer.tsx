@@ -13,6 +13,8 @@ import { latLngToVector3 } from "@/lib/geo/coordinates";
 import { createEarthquakeLoader, magnitudeColor, type EarthquakeFeatureCollection } from "@/lib/geo/providers/earthquakes";
 import { isFacingCamera } from "@/lib/geo/geo-vector-lod";
 import type { GeoFeatureInfo } from "./GeoFeatureInfoCard";
+import { useLocale } from "@/lib/locale-context";
+import { INTL_LOCALE_TAG } from "@/lib/i18n/locales";
 
 const MARKER_RADIUS = 1.012;
 const TICK_INTERVAL_S = 0.5;
@@ -39,6 +41,12 @@ export interface EarthquakesLayerProps {
 }
 
 export default function EarthquakesLayer({ onSelect }: EarthquakesLayerProps) {
+  const { locale } = useLocale();
+  const labels = {
+    ru: { depth: "Глубина", date: "Дата", km: "км" },
+    en: { depth: "Depth", date: "Date", km: "km" },
+    tg: { depth: "Чуқурӣ", date: "Сана", km: "км" },
+  }[locale];
   const loaderRef = useRef(createEarthquakeLoader());
   const [data, setData] = useState<EarthquakeFeatureCollection | null>(null);
   const [visibleIds, setVisibleIds] = useState<Set<string>>(new Set());
@@ -100,7 +108,7 @@ export default function EarthquakesLayer({ onSelect }: EarthquakesLayerProps) {
     onSelect({
       title: `M ${entry.mag.toFixed(1)}`,
       subtitle: entry.place,
-      lines: [`Глубина: ${entry.depth.toFixed(0)} км`, `Дата: ${new Date(Number(entry.id.split("-")[0])).toLocaleDateString("ru-RU")}`],
+      lines: [`${labels.depth}: ${entry.depth.toFixed(0)} ${labels.km}`, `${labels.date}: ${new Date(Number(entry.id.split("-")[0])).toLocaleDateString(INTL_LOCALE_TAG[locale])}`],
       position: [e.point.x, e.point.y, e.point.z],
     });
   }

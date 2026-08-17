@@ -9,6 +9,13 @@ export const en: typeof ru = {
     signIn: "Sign In",
     openDashboard: "Open Dashboard",
     exploreWorlds: "Explore Worlds",
+    close: "Close",
+    language: "Language",
+    theme: "Appearance",
+    themeLight: "Light",
+    themeDark: "Dark",
+    themeSystem: "System",
+    rotate: "Rotate",
   },
   nav: {
     worlds: "Worlds",

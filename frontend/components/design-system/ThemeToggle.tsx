@@ -2,29 +2,32 @@
 
 import { Monitor, Moon, Sun } from "lucide-react";
 import { useTheme, type ThemePreference } from "@/lib/theme-context";
+import { useLocale } from "@/lib/locale-context";
 
 /**
  * Design System V2 §25/§27 — Light/Dark/System switcher. Reads/writes
  * ThemeProvider (lib/theme-context.tsx); selection persists across
  * sessions and "System" stays live-subscribed to the OS preference.
  */
-const OPTIONS: Array<{ value: ThemePreference; label: string; icon: typeof Sun }> = [
-  { value: "light", label: "Светлая", icon: Sun },
-  { value: "dark", label: "Тёмная", icon: Moon },
-  { value: "system", label: "Системная", icon: Monitor },
+const OPTIONS: Array<{ value: ThemePreference; labelKey: "themeLight" | "themeDark" | "themeSystem"; icon: typeof Sun }> = [
+  { value: "light", labelKey: "themeLight", icon: Sun },
+  { value: "dark", labelKey: "themeDark", icon: Moon },
+  { value: "system", labelKey: "themeSystem", icon: Monitor },
 ];
 
 export default function ThemeToggle() {
   const { theme, setTheme } = useTheme();
+  const { t } = useLocale();
 
   return (
     <div
       role="radiogroup"
-      aria-label="Тема оформления"
+      aria-label={t.common.theme}
       className="ds-glass inline-flex items-center gap-1 rounded-ds-control p-1"
     >
-      {OPTIONS.map(({ value, label, icon: Icon }) => {
+      {OPTIONS.map(({ value, labelKey, icon: Icon }) => {
         const isActive = theme === value;
+        const label = t.common[labelKey];
         return (
           <button
             key={value}
