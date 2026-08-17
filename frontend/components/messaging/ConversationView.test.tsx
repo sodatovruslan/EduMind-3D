@@ -69,6 +69,39 @@ vi.mock("@/lib/call-client", () => {
   };
 });
 
+// T8 — ConversationView.test.tsx (this file) exercises T7 call
+// LIFECYCLE; the real useWebRTCSession touches browser-only APIs
+// (RTCPeerConnection/getUserMedia) that don't exist in jsdom. Mocked here
+// with a controllable default ("connected", owns media) so every
+// existing T7 test keeps asserting on T7's own concerns unchanged — the
+// WebRTC layer itself (offer/answer, ICE queueing, permission errors,
+// cleanup, multi-tab ownership) has its own dedicated unit tests in
+// lib/useWebRTCSession.test.ts and lib/webrtc/*.test.ts.
+const toggleMuteMock = vi.fn();
+const toggleCameraMock = vi.fn();
+const reconnectToCallMock = vi.fn();
+const handleSignalEventMock = vi.fn();
+let mockWebRTCState = {
+  mediaState: "connected" as const,
+  localStream: null as MediaStream | null,
+  remoteStream: null as MediaStream | null,
+  isAudioMuted: false,
+  isVideoDisabled: false,
+  remoteAudioMuted: false,
+  remoteVideoDisabled: false,
+  mediaError: null as string | null,
+  isMediaOwner: true,
+};
+vi.mock("@/lib/useWebRTCSession", () => ({
+  useWebRTCSession: () => ({
+    ...mockWebRTCState,
+    toggleMute: toggleMuteMock,
+    toggleCamera: toggleCameraMock,
+    reconnectToCall: reconnectToCallMock,
+    handleSignalEvent: handleSignalEventMock,
+  }),
+}));
+
 class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
   static readonly OPEN = 1;
@@ -377,6 +410,21 @@ describe("ConversationView — T7 call signaling", () => {
     cancelCallMock.mockReset();
     endCallMock.mockReset();
     listCallHistoryMock.mockReset().mockResolvedValue([]);
+    toggleMuteMock.mockReset();
+    toggleCameraMock.mockReset();
+    reconnectToCallMock.mockReset();
+    handleSignalEventMock.mockReset();
+    mockWebRTCState = {
+      mediaState: "connected",
+      localStream: null,
+      remoteStream: null,
+      isAudioMuted: false,
+      isVideoDisabled: false,
+      remoteAudioMuted: false,
+      remoteVideoDisabled: false,
+      mediaError: null,
+      isMediaOwner: true,
+    };
     FakeWebSocket.instances = [];
     window.localStorage.setItem("edumind_access_token", "fake-token");
     Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
@@ -452,7 +500,10 @@ describe("ConversationView — T7 call signaling", () => {
     fireEvent.click(screen.getByTestId("call-accept"));
 
     expect(acceptCallMock).toHaveBeenCalledWith("call-1");
-    await screen.findByText(ru.calls.connected, { exact: false });
+    // T8 — once T7's call is accepted AND the (mocked) WebRTC layer
+    // reports "connected", the real media surface renders instead of a
+    // plain "Connected" label.
+    expect(await screen.findByTestId("audio-call-surface")).toBeDefined();
     expect(screen.getByTestId("call-end")).toBeDefined();
   });
 
@@ -549,7 +600,7 @@ describe("ConversationView — T7 call signaling", () => {
       });
     });
 
-    await screen.findByText(ru.calls.connected, { exact: false });
+    expect(await screen.findByTestId("audio-call-surface")).toBeDefined();
     expect(acceptCallMock).not.toHaveBeenCalled();
     expect(screen.queryByTestId("call-decline")).toBeNull();
   });

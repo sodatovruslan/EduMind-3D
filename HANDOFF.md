@@ -2736,3 +2736,45 @@ Climate — только backend-контракт в хуке, визуализ�
 
 ### Статус на конец продолжения №44
 **GeoWorld G6.11 (первый реальный образовательный урок на MapLibre) — завершён, код верифицирован (tsc/eslint/189 тестов чисто, authenticated browser QA пройден на desktop+mobile), старый renderer НЕ заменён по умолчанию (`?engine=maplibre` остаётся реверсивным).** Часть кода физически лежит в коммите владельца продукта `433a788` (см. "Важное событие сессии" выше) — контент проверен независимо от того, в каком коммите он оказался. G6.12 не начат — решение за владельцем продукта после его собственного сравнения старого/нового GeoWorld.
+
+## Обновление 2026-08-17 (продолжение №45) — T8: Real Student ↔ Teacher WebRTC Audio/Video
+
+### Задача
+T7 (call signaling foundation) одобрен владельцем продукта после browser-проверки. Владелец вручную перевёл проект на `main` (синхронизирован с `origin/main`, `6d138ea` — merge PR #4), и T8 выполнен целиком в `main`, без отдельной feature-ветки, параллельно с ещё двумя AI-сессиями (GeoWorld G6.11, Codex — Chemistry engine). T8 добавляет НАСТОЯЩИЙ WebRTC audio/video поверх T7's lifecycle-фундамента — ни разу не переписывая его.
+
+### Pre-flight и Alembic
+`git branch --show-current` = `main`, подтверждено. `git status`/`log` перед стартом показали чужие незакоммиченные файлы (GeoWorld G6.11, Chemistry engine — оба не тронуты ни строкой). Alembic: обнаружено, что perf-миграция `0f12aa5fce35`, которую T5/T6/T7 каждый раз находили uncommitted и намеренно не трогали, **теперь реально закоммичена** (perf-сессия `433a788`, попала в `main` через тот же merge PR #4). Раз обе стороны — теперь настоящая, стабильная, закоммиченная история, это больше не "чужая uncommitted работа", а обычная two-head ситуация — создана нормальная merge-миграция `d5e9c3a7f2b4` (`down_revision = (0f12aa5fce35, b3e7f9a1c2d4)`, пустые `upgrade()`/`downgrade()`, ни одна из родительских миграций не тронута). Проверено на реальном dev Postgres: `alembic heads` → один head, `alembic current` → `d5e9c3a7f2b4 (mergepoint)`.
+
+### Архитектура (задокументированное решение)
+PostgreSQL остаётся source of truth только для CALL LIFECYCLE (T7, не тронут). WebSocket (тот же `/ws/conversations/{id}`, что T5/T6/T7 уже используют) — ТОЛЬКО транспорт сигналинга (offer/answer/ICE), никогда не переносит сам audio/video. Реальный медиапоток идёт ИСКЛЮЧИТЕЛЬНО через WebRTC P2P (или, в будущем, через TURN relay) — backend его вообще не видит. `Call.id` (T7) — единственный связывающий идентификатор, WebRTC-состояние никогда не пишется в БД (эфемерно, только в памяти вкладки).
+
+### Backend — signaling relay (не вторая call-модель)
+`_relay_call_signaling` в `routers/ws_messaging.py` (не новый роутер/эндпоинт — то же соединение, что typing/presence уже использует): принимает `webrtc:offer/answer/ice-candidate/media-failed` и `media:state`, для каждого проверяет — звонок существует, отправитель РЕАЛЬНО участник ИМЕННО этого `call_id` (через `call_service.get_call_by_id` — переиспользован, не продублирован), и звонок сейчас **ACCEPTED** (ringing/declined/cancelled/missed/ended — сигналинг не релеится вообще, что закрывает replay против уже неактуального звонка). `user_id` всегда берётся из аутентификации сокета, никогда из тела сообщения. SDP ограничен 20 000 символов, ICE-candidate — 2000, reason — 200 — не как жёсткий лимит реального WebRTC-трафика, а именно защита от abuse-payload. Ничего из этого не логируется. Relay идёт через `presence.broadcast_to_user` (T7's же примитив) — долетает до ЛЮБОЙ открытой вкладки получателя, не только той, что на этой самой conversation_id.
+
+### Frontend — WebRTC layer
+Новый `frontend/lib/webrtc/`: `config.ts` (централизованная ICE-конфигурация — STUN по умолчанию публичный Google STUN для dev, TURN полностью опционален и НЕ настроен из коробки — задокументированный, честный limitation, а не production NAT traversal), `media.ts` (единственное место, где вызывается `getUserMedia` — audio call никогда не запрашивает камеру вообще, video запрашивает оба; полное маппирование `NotAllowedError`/`NotFoundError`/`NotReadableError`/`OverconstrainedError` в понятные причины), `PeerConnectionManager.ts` (единственное место `new RTCPeerConnection()` — trickle ICE, очередь ранних candidate'ов с flush после `setRemoteDescription`, единый cleanup, гарантированно останавливающий sender-треки), `mediaOwnership.ts` (multi-tab lease через `localStorage` — только владеющая вкладка вызывает `getUserMedia`/создаёт peer connection).
+
+`useWebRTCSession.ts` — оркестрация поверх T7's `useCallSession` (сам НЕ трогает call.status, только реагирует). Ключевое разделение состояний: T7's `call.status === "accepted"` ≠ T8's собственный `mediaState` (`idle → needs-reconnect | acquiring-media → connecting → connected | failed | closed`) — UI честно показывает "Call accepted / Connecting media..." отдельно от настоящего "Connected". Caller создаёт offer сразу после accept; callee создаёт answer как только придёт offer (с гонко-безопасной очередью, если offer пришёл раньше, чем локальные media готовы). Permission-denied/device-missing на любой стороне переводит звонок в честный failed-статус и уведомляет другую сторону (`webrtc:media-failed`) — никто не виснет в "Connecting..." навечно. Один bounded ICE-restart (только со стороны caller, через тот же offer/answer путь — отдельного "renegotiate" кода не потребовалось). Refresh во время активного звонка **не** включает камеру/микрофон автоматически — explicit "Reconnect to call" кнопка (privacy-решение из брифа, реализовано буквально).
+
+### UI
+`CallMediaSurface.tsx` — video: remote на весь surface, local preview (замьюченный, зеркальный, top-right — специально НЕ bottom-right, чтобы не перекрывать control bar на узких экранах) не bottom, а top-right после ручной проверки collision на 390px. Audio: инициалы вместо пустого video-прямоугольника, никакого fake waveform. Mute — `track.enabled`, без renegotiation. Camera off — оверлей на remote video вместо замороженного кадра. `CallPanel.tsx` теперь различает 6+ под-состояний accepted-звонка (needs-reconnect/acquiring-media/connecting/connected/failed/media-owned-elsewhere), ни одно не выдумывает данные.
+
+### Результаты проверок
+| Проверка | Результат |
+|---|---|
+| Backend `pytest` (полный) | **160/160** зелёных (T8: `test_call_signaling.py` 10/10) |
+| Frontend `npx vitest run` (полный) | **1053/1060** — 7 упавших ТОЛЬКО в Chemistry engine (`cabinets`/`interactables`/`storage-slots`/`ChemistryWorkspace*`), подтверждено git status + подтверждено владельцем продукта: параллельная Codex-сессия сейчас правит `chemistry-engine.ts`/`chemistry-inventory.ts` — не мой код, падает и в изоляции, не тронуто |
+| T8-тесты (новые) | **83/83** — `media.test.ts`, `mediaOwnership.test.ts`, `PeerConnectionManager.test.ts` (offer/answer, ранняя ICE-очередь + flush, trickle, cleanup), `useWebRTCSession.test.ts` (16 сценариев: sequencing/permission-denied/multi-tab non-owner/timeout/cleanup/refresh), `CallMediaSurface.test.tsx` (16, включая a11y) |
+| `npx tsc --noEmit` (frontend) | 0 ошибок |
+| `eslint` (T8-файлы) | 0 ошибок |
+| Forbidden-pattern audit | `getDisplayMedia`/`MediaRecorder`/`console.log(SDP)`/захардкоженные TURN-credentials/новые зависимости — везде ноль совпадений в реальном коде (только в docstring, объясняющем что T8 НЕ делает) |
+| Alembic | merge-миграция применена и подтверждена на реальном dev Postgres, один head |
+
+### Честная оговорка
+Ручная двух-пользовательская WebRTC QA (реальная camera/microphone, remote video/audio, mute, camera-off, cleanup — камера/микрофон реально недоступны в этой среде) **не выполнена**. Никакой код НЕ выдаётся за визуально подтверждённый — только unit/integration-тесты с mock'нутыми browser API.
+
+### Параллельная работа
+Три AI-сессии одновременно в `main`: эта (T8), GeoWorld (G6.11, см. продолжение №44 выше), Codex (Chemistry engine — `chemistry-engine.ts`/`chemistry-inventory.ts`/`cabinets.ts`/`interactables.ts`/`storage-slots.ts` и их тесты, подтверждено владельцем продукта). Ни один файл из этих двух направлений не включён в T8-коммит — `git status`/`git diff` проверены перед staging, коммит собран только из явно перечисленных T8-файлов.
+
+### Статус на конец продолжения №45
+**T8 (Real WebRTC Audio/Video) — завершён, код верифицирован (backend 160/160, frontend 1053/1060 с 7 подтверждённо-чужими падениями, tsc/lint чистые, 83 новых теста для WebRTC-слоя).** Media реально работает по спецификации на уровне кода (offer/answer/ICE/mute/camera/cleanup) — визуальное подтверждение реальной camera/microphone за владельцем продукта. Screen sharing (T9), recording, group calls — сознательно НЕ реализованы. GeoWorld/Chemistry/Design/T5-T7-контракты не тронуты.

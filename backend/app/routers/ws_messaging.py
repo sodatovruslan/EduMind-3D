@@ -16,6 +16,18 @@ Typing state is never written to the database; if a stop event is lost
 itself after a timeout (see components/messaging/TypingIndicator's
 consumer), not the server.
 
+T8 adds WebRTC SIGNALING relay over this SAME connection — never SDP/ICE
+storage, this process is a pure relay. `webrtc:offer` / `webrtc:answer` /
+`webrtc:ice-candidate` / `webrtc:media-failed` / `media:state` all carry
+an explicit `call_id`; each is relayed ONLY if the authenticated socket's
+user is a real participant of that call AND the call is currently
+ACCEPTED (never for a ringing/declined/ended call — closes off replay
+against a stale or otherwise-terminated call). Relayed via
+`presence.broadcast_to_user`, exactly like T7's own `call:*` events, so
+delivery doesn't depend on the recipient having a socket open on this
+SPECIFIC conversation_id. Payloads are shape/size validated (never
+trusted verbatim) and never logged — see `_relay_call_signaling`.
+
 Auth: a `?token=` query param carrying the SAME access token
 `POST /api/auth/login` issues, decoded with the same
 `app.core.security.decode_token` every REST route uses — not a separate
@@ -35,12 +47,63 @@ from app.core.classroom_scope import classroom_link_exists
 from app.core.security import decode_token
 from app.core.ws_manager import manager, presence
 from app.database import get_db, get_session_factory
+from app.models.call import CallStatus
 from app.models.user import User
-from app.services import messaging_service
+from app.services import call_service, messaging_service
 
 router = APIRouter(tags=["messaging"])
 
 _TYPING_EVENT_TYPES = {"typing:start", "typing:stop"}
+_SIGNALING_EVENT_TYPES = {"webrtc:offer", "webrtc:answer", "webrtc:ice-candidate", "webrtc:media-failed", "media:state"}
+# Generous but bounded — a real SDP is a few KB, a real ICE candidate
+# string a couple hundred bytes; these caps exist only to stop an
+# oversized/abusive payload from being relayed, not to constrain normal
+# WebRTC traffic.
+_MAX_SDP_LENGTH = 20_000
+_MAX_CANDIDATE_LENGTH = 2_000
+_MAX_REASON_LENGTH = 200
+
+
+async def _relay_call_signaling(db: AsyncSession, user: User, event_type: str, event: dict) -> None:
+    call_id = event.get("call_id")
+    if not isinstance(call_id, str):
+        return
+    call = await call_service.get_call_by_id(db, call_id)
+    if call is None or user.id not in (call.caller_id, call.callee_id):
+        # Same "look like it doesn't exist" pattern as every other
+        # authorization check in this project — no signal distinguishing
+        # "no such call" from "not your call".
+        return
+    if call.status != CallStatus.ACCEPTED:
+        # Never relay media negotiation for a call that isn't actually
+        # connected (or no longer is) — closes off replaying stale
+        # offers/candidates against an ended call, and matches T8's own
+        # sequencing rule that media negotiation only starts post-accept.
+        return
+    target_user_id = call.callee_id if user.id == call.caller_id else call.caller_id
+
+    payload: dict = {"type": event_type, "call_id": call_id, "user_id": user.id}
+    if event_type in ("webrtc:offer", "webrtc:answer"):
+        sdp = event.get("sdp")
+        if not isinstance(sdp, str) or not sdp or len(sdp) > _MAX_SDP_LENGTH:
+            return
+        payload["sdp"] = sdp
+    elif event_type == "webrtc:ice-candidate":
+        candidate = event.get("candidate")
+        if not isinstance(candidate, dict):
+            return
+        candidate_str = candidate.get("candidate")
+        if candidate_str is not None and (not isinstance(candidate_str, str) or len(candidate_str) > _MAX_CANDIDATE_LENGTH):
+            return
+        payload["candidate"] = candidate
+    elif event_type == "media:state":
+        payload["audio_muted"] = bool(event.get("audio_muted"))
+        payload["video_disabled"] = bool(event.get("video_disabled"))
+    else:  # webrtc:media-failed
+        reason = event.get("reason")
+        payload["reason"] = reason if isinstance(reason, str) and len(reason) <= _MAX_REASON_LENGTH else "unknown"
+
+    await presence.broadcast_to_user(target_user_id, payload)
 
 
 async def _broadcast_presence(
@@ -120,6 +183,8 @@ async def conversation_socket(
                 # any JSON it wants here, but never gets to claim to be
                 # someone else.
                 await manager.broadcast(conversation_id, {"type": event_type, "user_id": user.id}, exclude=websocket)
+            elif event_type in _SIGNALING_EVENT_TYPES:
+                await _relay_call_signaling(db, user, event_type, event)
     except WebSocketDisconnect:
         pass
     finally:

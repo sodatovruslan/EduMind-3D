@@ -4,16 +4,23 @@ import { useEffect, useState } from "react";
 import { Phone, PhoneOff, Video, X } from "lucide-react";
 import { useLocale } from "@/lib/locale-context";
 import type { Call } from "@/lib/call-client";
+import type { MediaConnectionState, MediaErrorReason } from "@/lib/useWebRTCSession";
 import { GlassPanel } from "@/components/design-system";
+import CallMediaSurface from "./CallMediaSurface";
 
 /**
- * T7 — call lifecycle panel: outgoing ringing, incoming ringing,
- * connected, and a brief flash for each terminal state (declined /
- * cancelled / missed / ended), auto-dismissed by the caller
- * (useCallSession.ts). Rendered INLINE above the message list, not a
- * full-screen takeover (brief §7: "не ломать весь AppShell"). No fake
- * video/camera preview, no getUserMedia/getDisplayMedia anywhere in this
- * component — see its own §32 privacy constraint. Design V2 tokens only.
+ * T7 — call lifecycle panel: outgoing ringing, incoming ringing, and a
+ * brief flash for each terminal state (declined / cancelled / missed /
+ * ended), auto-dismissed by the caller (useCallSession.ts). Rendered
+ * INLINE above the message list, not a full-screen takeover (brief §7:
+ * "не ломать весь AppShell"). Design V2 tokens only.
+ *
+ * T8 — the ACCEPTED branch now distinguishes T7's call.status from the
+ * real WebRTC `mediaState` (brief §23: "Call accepted / Connecting
+ * media..." vs "Connected" are different things) — acquiring
+ * camera/mic, negotiating the peer connection, actually connected
+ * (real `CallMediaSurface`), a media error, "active in another tab", or
+ * (after a refresh) an explicit reconnect prompt, never automatic.
  */
 export default function CallPanel({
   call,
@@ -22,6 +29,18 @@ export default function CallPanel({
   onDecline,
   onCancel,
   onEnd,
+  mediaState,
+  localStream,
+  remoteStream,
+  isAudioMuted,
+  isVideoDisabled,
+  remoteAudioMuted,
+  remoteVideoDisabled,
+  mediaError,
+  isMediaOwner,
+  onToggleMute,
+  onToggleCamera,
+  onReconnectToCall,
 }: {
   call: Call;
   currentUserId: string | undefined;
@@ -29,6 +48,18 @@ export default function CallPanel({
   onDecline: () => void;
   onCancel: () => void;
   onEnd: () => void;
+  mediaState: MediaConnectionState;
+  localStream: MediaStream | null;
+  remoteStream: MediaStream | null;
+  isAudioMuted: boolean;
+  isVideoDisabled: boolean;
+  remoteAudioMuted: boolean;
+  remoteVideoDisabled: boolean;
+  mediaError: MediaErrorReason | null;
+  isMediaOwner: boolean;
+  onToggleMute: () => void;
+  onToggleCamera: () => void;
+  onReconnectToCall: () => void;
 }) {
   const { t } = useLocale();
   const isCaller = call.caller.id === currentUserId;
@@ -93,35 +124,64 @@ export default function CallPanel({
         </div>
       )}
 
-      {call.status === "accepted" && (
+      {call.status === "accepted" && isMediaOwner && mediaState === "connected" && (
+        <>
+          <CallMediaSurface
+            call={call}
+            isCaller={isCaller}
+            localStream={localStream}
+            remoteStream={remoteStream}
+            isAudioMuted={isAudioMuted}
+            isVideoDisabled={isVideoDisabled}
+            remoteAudioMuted={remoteAudioMuted}
+            remoteVideoDisabled={remoteVideoDisabled}
+            onToggleMute={onToggleMute}
+            onToggleCamera={onToggleCamera}
+            onEnd={onEnd}
+          />
+          {call.answered_at && (
+            <p className="mt-2 text-center text-ds-caption text-text-muted">
+              <CallDuration answeredAt={call.answered_at} />
+            </p>
+          )}
+        </>
+      )}
+
+      {call.status === "accepted" && !(isMediaOwner && mediaState === "connected") && (
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <TypeIcon size={20} className="shrink-0 text-success" aria-hidden="true" />
             <div className="min-w-0">
               <p className="truncate text-ds-body font-medium text-text-primary">{otherParty.full_name}</p>
               <p className="truncate text-ds-caption text-text-muted">
-                {t.calls.connected}
-                {call.answered_at && (
-                  <>
-                    {" · "}
-                    <CallDuration answeredAt={call.answered_at} />
-                  </>
-                )}
+                {isMediaOwner ? intermediateMediaLabel(mediaState, mediaError, t) : t.calls.mediaOwnedElsewhere}
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onEnd}
-            aria-label={t.calls.endCall}
-            data-testid="call-end"
-            className="ds-focus-ring flex shrink-0 items-center gap-1.5 rounded-full bg-danger/10 px-3 py-1.5 text-ds-caption font-medium text-danger transition-colors hover:bg-danger/20"
-          >
-            <PhoneOff size={14} /> {t.calls.endCall}
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {isMediaOwner && mediaState === "needs-reconnect" && (
+              <button
+                type="button"
+                onClick={onReconnectToCall}
+                aria-label={t.calls.reconnectToCall}
+                data-testid="reconnect-to-call"
+                className="ds-focus-ring flex items-center gap-1.5 rounded-full bg-accent/15 px-3 py-1.5 text-ds-caption font-medium text-accent transition-colors hover:bg-accent/25"
+              >
+                {t.calls.reconnectToCall}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onEnd}
+              aria-label={t.calls.endCall}
+              data-testid="call-end"
+              className="ds-focus-ring flex shrink-0 items-center gap-1.5 rounded-full bg-danger/10 px-3 py-1.5 text-ds-caption font-medium text-danger transition-colors hover:bg-danger/20"
+            >
+              <PhoneOff size={14} /> {t.calls.endCall}
+            </button>
+          </div>
         </div>
       )}
-      {call.status === "accepted" && <p className="mt-2 text-ds-caption text-text-muted">{t.calls.mediaComingSoon}</p>}
 
       {(call.status === "declined" || call.status === "cancelled" || call.status === "missed" || call.status === "ended") && (
         <div className="flex min-w-0 items-center gap-3" data-testid="call-terminal-state">
@@ -148,6 +208,45 @@ function terminalLabel(status: Call["status"], t: ReturnType<typeof useLocale>["
       return t.calls.callEnded;
     default:
       return "";
+  }
+}
+
+function intermediateMediaLabel(
+  mediaState: MediaConnectionState,
+  mediaError: MediaErrorReason | null,
+  t: ReturnType<typeof useLocale>["t"]
+): string {
+  if (mediaState === "failed") return mediaErrorLabel(mediaError, t);
+  switch (mediaState) {
+    case "needs-reconnect":
+      return t.calls.needsReconnect;
+    case "acquiring-media":
+      return t.calls.acquiringMedia;
+    case "connecting":
+      return t.calls.connectingMedia;
+    default:
+      return t.calls.connectingMedia;
+  }
+}
+
+function mediaErrorLabel(reason: MediaErrorReason | null, t: ReturnType<typeof useLocale>["t"]): string {
+  switch (reason) {
+    case "permission-denied":
+      return t.calls.permissionDenied;
+    case "device-not-found":
+      return t.calls.deviceNotFound;
+    case "device-unavailable":
+      return t.calls.deviceUnavailable;
+    case "constraints-not-satisfiable":
+      return t.calls.deviceUnavailable;
+    case "connection-timeout":
+      return t.calls.connectionTimeout;
+    case "connection-failed":
+      return t.calls.connectionFailed;
+    case "remote-media-failed":
+      return t.calls.remoteMediaFailed;
+    default:
+      return t.calls.connectionFailed;
   }
 }
 

@@ -27,8 +27,24 @@ export type SocketStatus = "connecting" | "connected" | "disconnected";
  * ws_manager.PresenceManager.broadcast_to_user), so a `call:*` event can
  * arrive here even for a conversation other than the one this socket was
  * opened for; useCallSession.ts is what filters by conversation_id.
+ *
+ * T8 — adds WebRTC SIGNALING relay events (see
+ * routers/ws_messaging.py's `_relay_call_signaling`): `webrtc:offer` /
+ * `webrtc:answer` / `webrtc:ice-candidate` / `webrtc:media-failed` carry
+ * an explicit `call_id` and are only ever relayed by the backend between
+ * the two real participants of an ACCEPTED call. `media:state` is the
+ * ephemeral mute/camera-off signal — never persisted, never trusted for
+ * `user_id` beyond what the backend derived from the sending socket's own
+ * authentication.
  */
 export type CallSocketEvent = { type: `call:${CallStatus}`; call: Call };
+
+export type WebRTCSignalEvent =
+  | { type: "webrtc:offer"; call_id: string; user_id: string; sdp: string }
+  | { type: "webrtc:answer"; call_id: string; user_id: string; sdp: string }
+  | { type: "webrtc:ice-candidate"; call_id: string; user_id: string; candidate: RTCIceCandidateInit }
+  | { type: "webrtc:media-failed"; call_id: string; user_id: string; reason: string }
+  | { type: "media:state"; call_id: string; user_id: string; audio_muted: boolean; video_disabled: boolean };
 
 export type ConversationSocketEvent =
   | { type: "message"; message: Message }
@@ -37,11 +53,27 @@ export type ConversationSocketEvent =
   | { type: "typing:start"; user_id: string }
   | { type: "typing:stop"; user_id: string }
   | { type: "presence:update"; user_id: string; online: boolean; last_seen_at: string | null }
-  | CallSocketEvent;
+  | CallSocketEvent
+  | WebRTCSignalEvent;
 
 export function isCallSocketEvent(event: ConversationSocketEvent): event is CallSocketEvent {
   return event.type.startsWith("call:");
 }
+
+export function isWebRTCSignalEvent(event: ConversationSocketEvent): event is WebRTCSignalEvent {
+  return event.type.startsWith("webrtc:") || event.type === "media:state";
+}
+
+// The OUTGOING shapes `sendEvent` accepts — never includes `user_id`, the
+// backend always derives the sender from this socket's own authentication
+// (see `_relay_call_signaling`'s own docstring).
+export type OutgoingSignal =
+  | { type: "typing:start" | "typing:stop" }
+  | { type: "webrtc:offer"; call_id: string; sdp: string }
+  | { type: "webrtc:answer"; call_id: string; sdp: string }
+  | { type: "webrtc:ice-candidate"; call_id: string; candidate: RTCIceCandidateInit }
+  | { type: "webrtc:media-failed"; call_id: string; reason: string }
+  | { type: "media:state"; call_id: string; audio_muted: boolean; video_disabled: boolean };
 
 /**
  * T5 — realtime delivery for one open conversation. REST
@@ -120,14 +152,18 @@ export function useConversationSocket(conversationId: string | null, onEvent: (e
     };
   }, [conversationId]);
 
-  // T6 — used only for the ephemeral typing:start/typing:stop signals
-  // (see MessageComposer's debounce logic). Silently a no-op while
-  // disconnected — typing is best-effort, never queued/retried, matching
-  // its own "never persisted, never guaranteed" nature.
-  function sendEvent(event: { type: "typing:start" | "typing:stop" }) {
+  // T6/T8 — used for the ephemeral typing:start/typing:stop signals and
+  // (T8) outgoing WebRTC signaling. Silent no-op while disconnected:
+  // typing is best-effort by design; a lost offer/answer/ICE candidate
+  // here is handled by the caller (useWebRTCSession.ts treats "send
+  // failed to reach OPEN socket" as a real signaling failure, not
+  // silently swallowed the way typing is).
+  function sendEvent(event: OutgoingSignal): boolean {
     if (socketRef.current?.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify(event));
+      return true;
     }
+    return false;
   }
 
   return { status, sendEvent };

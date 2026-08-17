@@ -13,10 +13,17 @@ import {
   sendMessage,
   type Message,
 } from "@/lib/messaging-client";
-import { isCallSocketEvent, useConversationSocket, type ConversationSocketEvent } from "@/lib/useConversationSocket";
+import {
+  isCallSocketEvent,
+  isWebRTCSignalEvent,
+  useConversationSocket,
+  type ConversationSocketEvent,
+  type WebRTCSignalEvent,
+} from "@/lib/useConversationSocket";
 import { formatBubbleTime, formatDateSeparator, formatFullDateTime } from "@/lib/messaging-time";
 import { listCallHistory, type Call } from "@/lib/call-client";
 import { useCallSession } from "@/lib/useCallSession";
+import { useWebRTCSession } from "@/lib/useWebRTCSession";
 import { Skeleton, Surface } from "@/components/design-system";
 import MessageComposer from "./MessageComposer";
 import MessageStatusTicks from "./MessageStatusTicks";
@@ -62,17 +69,20 @@ export default function ConversationView({ conversationId, onBack }: { conversat
     conversationId ? `conversation-${conversationId}` : null,
     () => getConversation(conversationId!)
   );
-  const {
-    activeCall,
-    busy: callBusy,
-    start: startCall,
-    accept: acceptCall,
-    decline: declineCall,
-    cancel: cancelCall,
-    end: endCall,
-    handleCallEvent,
-    resyncAfterReconnect,
-  } = useCallSession(conversationId, user?.id);
+  // Breaks a genuine three-way circular dependency: useConversationSocket
+  // needs handleSocketEvent, handleSocketEvent needs to reach
+  // useCallSession's/useWebRTCSession's own event handlers, and those two
+  // hooks need `sendEvent` — which useConversationSocket only returns
+  // AFTER being called. Same ref-indirection useConversationSocket
+  // already uses internally for its own `onEvent` callback, applied one
+  // level up here so call order can be: socket -> call session -> webrtc
+  // session, each fed by the previous one's output, with
+  // handleSocketEvent's OWN identity never depending on any of them.
+  const latestHandlersRef = useRef<{
+    handleCallEvent: (call: Call) => void;
+    handleSignalEvent: (event: WebRTCSignalEvent) => void;
+  }>({ handleCallEvent: () => {}, handleSignalEvent: () => {} });
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [isLoadingInitial, setIsLoadingInitial] = useState(true);
@@ -93,15 +103,6 @@ export default function ConversationView({ conversationId, onBack }: { conversat
   useEffect(() => {
     if (conversation) setPresence({ online: conversation.counterpart.online, last_seen_at: conversation.counterpart.last_seen_at });
   }, [conversation]);
-
-  // A finished call (declined/cancelled/missed/ended) joins the
-  // permanent inline history the moment it's over — CallPanel itself only
-  // shows it briefly, this is what keeps it in the timeline afterward.
-  useEffect(() => {
-    const call = activeCall;
-    if (!call || call.status === "ringing" || call.status === "accepted") return;
-    setCallHistory((prev) => (prev.some((c) => c.id === call.id) ? prev.map((c) => (c.id === call.id ? call : c)) : [...prev, call]));
-  }, [activeCall]);
 
   const loadInitial = useCallback(async () => {
     if (!conversationId) return;
@@ -221,7 +222,11 @@ export default function ConversationView({ conversationId, onBack }: { conversat
   const handleSocketEvent = useCallback(
     (event: ConversationSocketEvent) => {
       if (isCallSocketEvent(event)) {
-        handleCallEvent(event.call);
+        latestHandlersRef.current.handleCallEvent(event.call);
+        return;
+      }
+      if (isWebRTCSignalEvent(event)) {
+        latestHandlersRef.current.handleSignalEvent(event);
         return;
       }
       switch (event.type) {
@@ -259,10 +264,37 @@ export default function ConversationView({ conversationId, onBack }: { conversat
           return;
       }
     },
-    [counterpartId, mutateGlobal, handleCallEvent]
+    [counterpartId, mutateGlobal]
   );
 
   const { status, sendEvent } = useConversationSocket(conversationId, handleSocketEvent);
+
+  const {
+    activeCall,
+    busy: callBusy,
+    start: startCall,
+    accept: acceptCall,
+    decline: declineCall,
+    cancel: cancelCall,
+    end: endCall,
+    handleCallEvent,
+    resyncAfterReconnect,
+  } = useCallSession(conversationId, user?.id);
+
+  const webrtc = useWebRTCSession(activeCall, user?.id, sendEvent);
+
+  // Keep the ref current every render — see its own declaration above for
+  // why this indirection exists at all.
+  latestHandlersRef.current = { handleCallEvent, handleSignalEvent: webrtc.handleSignalEvent };
+
+  // A finished call (declined/cancelled/missed/ended) joins the permanent
+  // inline history the moment it's over — CallPanel/CallMediaSurface only
+  // show it briefly, this is what keeps it in the timeline afterward.
+  useEffect(() => {
+    const call = activeCall;
+    if (!call || call.status === "ringing" || call.status === "accepted") return;
+    setCallHistory((prev) => (prev.some((c) => c.id === call.id) ? prev.map((c) => (c.id === call.id ? call : c)) : [...prev, call]));
+  }, [activeCall]);
 
   useEffect(() => {
     // Reconnect sync (brief §20): REST/DB stays the source of truth — a
@@ -372,6 +404,18 @@ export default function ConversationView({ conversationId, onBack }: { conversat
             onDecline={declineCall}
             onCancel={cancelCall}
             onEnd={endCall}
+            mediaState={webrtc.mediaState}
+            localStream={webrtc.localStream}
+            remoteStream={webrtc.remoteStream}
+            isAudioMuted={webrtc.isAudioMuted}
+            isVideoDisabled={webrtc.isVideoDisabled}
+            remoteAudioMuted={webrtc.remoteAudioMuted}
+            remoteVideoDisabled={webrtc.remoteVideoDisabled}
+            mediaError={webrtc.mediaError}
+            isMediaOwner={webrtc.isMediaOwner}
+            onToggleMute={webrtc.toggleMute}
+            onToggleCamera={webrtc.toggleCamera}
+            onReconnectToCall={webrtc.reconnectToCall}
           />
         )}
       </div>
