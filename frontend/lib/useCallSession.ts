@@ -13,6 +13,7 @@ import {
   type CallType,
   CallBusyError,
 } from "@/lib/call-client";
+import { parseUtcTimestamp } from "@/lib/messaging-time";
 
 // Documented to match backend's own CALL_RING_TIMEOUT_SECONDS
 // (app/services/call_service.py) — kept as a separate constant rather
@@ -87,16 +88,23 @@ export function useCallSession(conversationId: string | null, currentUserId: str
   useEffect(() => {
     clearRingTimer();
     if (!activeCall || activeCall.status !== "ringing") return;
-    const elapsedMs = Date.now() - new Date(activeCall.created_at).getTime();
+    const elapsedMs = Date.now() - parseUtcTimestamp(activeCall.created_at).getTime();
     const remainingMs = CALL_RING_TIMEOUT_SECONDS * 1000 - elapsedMs;
     const callId = activeCall.id;
+    // Floored at 1s, never 0: if the server's own elapsed-time check
+    // hasn't quite agreed yet (clock skew, request latency, or — the bug
+    // actually hit during T8 testing — a client/server timestamp parsing
+    // mismatch), a `getCall` response that's STILL "ringing" reruns this
+    // same effect and would otherwise recompute a ~0ms remainder forever,
+    // firing in a tight synchronous loop instead of settling within a
+    // second or two.
     ringTimerRef.current = setTimeout(
       () => {
         getCall(callId)
           .then((call) => applyCall(call))
           .catch(() => undefined);
       },
-      Math.max(0, remainingMs)
+      Math.max(1000, remainingMs)
     );
     return clearRingTimer;
   }, [activeCall, applyCall]);
@@ -114,6 +122,15 @@ export function useCallSession(conversationId: string | null, currentUserId: str
     [conversationId, applyCall]
   );
 
+  // Every action below resyncs from the server instead of throwing on
+  // failure. A 409 here almost always means the call's real state moved
+  // out from under the button the user just clicked (the other side
+  // acted first, a stale multi-tab render, a double-click racing itself)
+  // — the backend correctly rejected it, and the honest fix on THIS side
+  // is to re-fetch the real current state and let the UI reflect it, not
+  // to let an unhandled rejection crash the whole page. REST/DB stays the
+  // source of truth here exactly like every other reconnect/resync path
+  // in this project already does.
   async function start(callType: CallType) {
     if (!conversationId) return;
     setBusy(false);
@@ -126,25 +143,41 @@ export function useCallSession(conversationId: string | null, currentUserId: str
         setTimeout(() => setBusy(false), TERMINAL_STATE_DISPLAY_MS);
         return;
       }
-      throw err;
+      await restore();
     }
   }
 
   async function accept() {
     if (!activeCall) return;
-    applyCall(await apiAccept(activeCall.id));
+    try {
+      applyCall(await apiAccept(activeCall.id));
+    } catch {
+      await restore();
+    }
   }
   async function decline() {
     if (!activeCall) return;
-    applyCall(await apiDecline(activeCall.id));
+    try {
+      applyCall(await apiDecline(activeCall.id));
+    } catch {
+      await restore();
+    }
   }
   async function cancel() {
     if (!activeCall) return;
-    applyCall(await apiCancel(activeCall.id));
+    try {
+      applyCall(await apiCancel(activeCall.id));
+    } catch {
+      await restore();
+    }
   }
   async function end() {
     if (!activeCall) return;
-    applyCall(await apiEnd(activeCall.id));
+    try {
+      applyCall(await apiEnd(activeCall.id));
+    } catch {
+      await restore();
+    }
   }
 
   return { activeCall, busy, start, accept, decline, cancel, end, handleCallEvent, resyncAfterReconnect };

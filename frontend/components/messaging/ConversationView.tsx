@@ -20,7 +20,7 @@ import {
   type ConversationSocketEvent,
   type WebRTCSignalEvent,
 } from "@/lib/useConversationSocket";
-import { formatBubbleTime, formatDateSeparator, formatFullDateTime } from "@/lib/messaging-time";
+import { formatBubbleTime, formatDateSeparator, formatFullDateTime, parseUtcTimestamp } from "@/lib/messaging-time";
 import { listCallHistory, type Call } from "@/lib/call-client";
 import { useCallSession } from "@/lib/useCallSession";
 import { useWebRTCSession } from "@/lib/useWebRTCSession";
@@ -336,12 +336,12 @@ export default function ConversationView({ conversationId, onBack }: { conversat
     const merged: Array<{ timestamp: string } & ({ kind: "message"; message: Message } | { kind: "call"; call: Call })> = [
       ...messages.map((message) => ({ kind: "message" as const, message, timestamp: message.created_at })),
       ...callHistory.map((call) => ({ kind: "call" as const, call, timestamp: call.created_at })),
-    ].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    ].sort((a, b) => parseUtcTimestamp(a.timestamp).getTime() - parseUtcTimestamp(b.timestamp).getTime());
 
     const items: RenderItem[] = [];
     let lastDay: string | null = null;
     for (const entry of merged) {
-      const day = new Date(entry.timestamp).toDateString();
+      const day = parseUtcTimestamp(entry.timestamp).toDateString();
       if (day !== lastDay) {
         items.push({ kind: "separator", key: `sep-${entry.kind}-${entry.timestamp}`, label: formatDateSeparator(entry.timestamp, locale, t) });
         lastDay = day;

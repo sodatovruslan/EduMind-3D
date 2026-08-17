@@ -5,6 +5,7 @@ import { Phone, PhoneOff, Video, X } from "lucide-react";
 import { useLocale } from "@/lib/locale-context";
 import type { Call } from "@/lib/call-client";
 import type { MediaConnectionState, MediaErrorReason } from "@/lib/useWebRTCSession";
+import { parseUtcTimestamp } from "@/lib/messaging-time";
 import { GlassPanel } from "@/components/design-system";
 import CallMediaSurface from "./CallMediaSurface";
 
@@ -258,7 +259,7 @@ function CallDuration({ answeredAt }: { answeredAt: string }) {
     return () => clearInterval(interval);
   }, []);
 
-  const seconds = Math.max(0, Math.floor((Date.now() - new Date(answeredAt).getTime()) / 1000));
+  const seconds = Math.max(0, Math.floor((Date.now() - parseUtcTimestamp(answeredAt).getTime()) / 1000));
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
   return <span data-testid="call-duration">{`${minutes}:${String(remainder).padStart(2, "0")}`}</span>;

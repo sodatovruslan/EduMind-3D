@@ -1,7 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { formatDateSeparator, formatRelativeTime } from "./messaging-time";
+import { formatDateSeparator, formatRelativeTime, parseUtcTimestamp } from "./messaging-time";
 import { ru } from "./i18n/dictionaries/ru";
 import { en } from "./i18n/dictionaries/en";
+
+describe("parseUtcTimestamp — backend naive-datetime bug fix", () => {
+  it("treats a timezone-less backend timestamp (Pydantic's datetime.utcnow() serialization) as UTC, not local time", () => {
+    // This is EXACTLY the shape FastAPI/Pydantic sends for every
+    // `datetime.utcnow()` field in this backend — confirmed empirically,
+    // no 'Z', no offset.
+    const naive = "2026-08-17T16:22:52.885952";
+    const parsed = parseUtcTimestamp(naive);
+    expect(parsed.toISOString()).toBe("2026-08-17T16:22:52.885Z");
+  });
+
+  it("leaves an already-UTC ('Z'-suffixed) timestamp untouched", () => {
+    const withZ = "2026-08-17T16:22:52.885Z";
+    expect(parseUtcTimestamp(withZ).toISOString()).toBe("2026-08-17T16:22:52.885Z");
+  });
+
+  it("leaves a timestamp with an explicit offset untouched", () => {
+    const withOffset = "2026-08-17T21:22:52+05:00";
+    // 21:22 +05:00 is 16:22 UTC — must NOT get a second 'Z' appended and
+    // misparsed.
+    expect(parseUtcTimestamp(withOffset).toISOString()).toBe("2026-08-17T16:22:52.000Z");
+  });
+});
 
 // Built from LOCAL date components (not UTC "Z" strings) so calendar-day
 // math is self-consistent regardless of which timezone the test runner's

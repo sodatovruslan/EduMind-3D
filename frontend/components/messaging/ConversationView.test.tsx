@@ -507,6 +507,30 @@ describe("ConversationView — T7 call signaling", () => {
     expect(screen.getByTestId("call-end")).toBeDefined();
   });
 
+  it("a rejected accept (e.g. 409 — the call's real state moved under the button) resyncs instead of crashing the page", async () => {
+    renderView();
+    await screen.findByText(ru.messaging.noMessagesTitle);
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBe(1));
+
+    const incoming = makeCall({ caller: { id: "teacher-1", full_name: "Teacher One" }, callee: { id: "student-1", full_name: "Student One" } });
+    act(() => {
+      FakeWebSocket.instances[0].emitMessage({ type: "call:ringing", call: incoming });
+    });
+    await screen.findByTestId("call-accept");
+
+    acceptCallMock.mockRejectedValue(new Error("409: Only the callee can accept"));
+    getCurrentCallMock.mockResolvedValue({ ...incoming, status: "cancelled", ended_at: new Date().toISOString() });
+
+    // The click must never throw out of the event handler / crash to an
+    // unhandled-error overlay — it resyncs from REST instead.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("call-accept"));
+    });
+
+    expect(getCurrentCallMock).toHaveBeenCalled();
+    expect(screen.queryByTestId("call-accept")).toBeNull();
+  });
+
   it("declining an incoming call calls declineCall", async () => {
     renderView();
     await screen.findByText(ru.messaging.noMessagesTitle);

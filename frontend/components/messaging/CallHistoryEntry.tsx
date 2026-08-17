@@ -2,7 +2,7 @@
 
 import { Phone, PhoneMissed, Video } from "lucide-react";
 import { useLocale } from "@/lib/locale-context";
-import { formatBubbleTime } from "@/lib/messaging-time";
+import { formatBubbleTime, parseUtcTimestamp } from "@/lib/messaging-time";
 import type { Call } from "@/lib/call-client";
 
 /**
@@ -45,7 +45,7 @@ function outcomeLabel(call: Call, t: ReturnType<typeof useLocale>["t"]): string 
       return t.calls.cancelled;
     case "ended":
       if (call.answered_at && call.ended_at) {
-        const seconds = Math.max(0, Math.floor((new Date(call.ended_at).getTime() - new Date(call.answered_at).getTime()) / 1000));
+        const seconds = Math.max(0, Math.floor((parseUtcTimestamp(call.ended_at).getTime() - parseUtcTimestamp(call.answered_at).getTime()) / 1000));
         const minutes = Math.floor(seconds / 60);
         return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
       }
