@@ -38,7 +38,21 @@ export default function MapLibreGlobeCanvas({
 
   return (
     <div className={`relative h-full w-full overflow-hidden rounded-ds-panel bg-black ${className ?? ""}`}>
-      <div ref={engine.containerRef} className="absolute inset-0" />
+      {/*
+        G6.11 — реальный баг, найденный browser QA (не GPU-артефакт
+        песочницы): MapLibre САМ добавляет класс `maplibregl-map` этому
+        элементу (`container` в конструкторе `Map`), а стиль этого класса
+        (`position: relative`, maplibre-gl.css) грузится ПОСЛЕ Tailwind
+        (через `loadStylesheetOnce`, во время выполнения) — при равной
+        специфичности выигрывает источник, подключённый позже, поэтому
+        Tailwind-класс `absolute` тихо перебивался на `relative`, `inset-0`
+        переставал что-либо значить (применяется только к absolute/fixed),
+        и канвас схлопывался до дефолтных 300px высоты вместо контейнера.
+        Инлайн-стиль имеет более высокий приоритет, чем ЛЮБОЕ правило из
+        подключаемого класса (кроме `!important`, которого здесь нет) —
+        поэтому не зависит от порядка подключения стилей.
+      */}
+      <div ref={engine.containerRef} style={{ position: "absolute", inset: 0 }} />
 
       {engine.status === "loading" && (
         <div className="absolute inset-0 flex items-center justify-center text-ds-body text-text-secondary">

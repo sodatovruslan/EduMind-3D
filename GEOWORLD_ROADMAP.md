@@ -1007,6 +1007,118 @@ Control-point маркеры (маджента, debug-инструмент) от
 
 НЕ начинать самостоятельно (прямое указание задания). Возможные направления после решения владельца продукта: (а) перенос оставшихся geo-слоёв (tectonic plates/volcanoes/earthquakes) на MapLibre — низкий объём, паритет уже архитектурно готов; (б) проектное решение по cutaway/climate-педагогике — либо MapLibre custom layer с R3F-оверлеем, либо явное решение оставить эту конкретную симуляцию на старом рендерере навсегда и использовать MapLibre только для будущих geo-уроков без cutaway-механики; (в) если производительность на реальном железе владельца продукта всё ещё беспокоит — целевой terrain/GPU-профайлинг вне этой песочницы.
 
+## G6.11 — Educational GeoWorld migration: первый реальный урок на MapLibre
+
+G6.10 одобрен (commit `419f3cf`). Задача G6.11 — не "ещё один спайк", а первый шаг закрытия найденного в G6.10 разрыва: production GeoWorld — это структурированный урок (cutaway-разрез Земли, климатический сценарий, континент-факты, backend-scoring), а не просто "полетать над спутниковыми снимками". Цель — перенести ПЕРВЫЙ реальный образовательный поток на MapLibre, сохранив образовательное состояние renderer-независимым, не заменяя renderer по умолчанию.
+
+### Pre-flight находки
+
+- Параллельно работает T7 (Student ↔ Teacher Call Signaling) — messaging/calls/ws_manager/CallPanel/useWebRTCSession/webrtc-файлы и соответствующие миграции ни разу не тронуты (проверено `git status` до и после каждого крупного шага).
+- **Важное событие сессии**: владелец продукта самостоятельно переключился на `main`, смёл незакоммиченные изменения НЕСКОЛЬКИХ параллельных сессий (включая часть уже написанного кода G6.11) в один коммит `433a788 "all is good"`, затем смержил `feature/stage-s7-v2-locomotion` в `main` (`6d138ea`). Это ЕГО собственное действие, не моё — работа продолжена на `main` по его прямому указанию ("НЕ переключайся обратно... работай ТОЛЬКО в текущем main... в конце один чистый локальный commit"). Следствие: часть G6.11-кода (`GeoLessonPanel.tsx`, `useGeoLessonState.ts`, `aiContext.ts`, `camera-context.ts`, правки `useMapLibreGlobe.ts`/`MapLibreGlobeCanvas.tsx`/`GeoWorldSceneMapLibre.tsx`, `tg.ts`) физически лежит в `433a788`, а не в финальном коммите этого этапа — контент корректен и полностью проверен (тесты/tsc/browser QA), просто атрибуция коммита смешанная, как и в G6.10 с `ru.ts`/`en.ts`. Финальный коммит G6.11 содержит только то, что было сделано ПОСЛЕ этого события (тесты, документация, финальные правки).
+- Изучены перед началом: `GeoWorldScene.tsx` (745 строк, компатибилити-аудит уже был в G6.10), `GeoWorldSceneMapLibre.tsx`/`MapLibreGlobeCanvas.tsx`/`lib/geo/maplibre/*` (G6.10-фундамент), backend-контракт (`geography_engine.py`, `routers/simulations.py`, `grader_service.py`) — читан НАПРЯМУЮ, не по памяти.
+
+### Критическая находка backend-контракта (определила выбор первого урока)
+
+Единственная реально засеянная GeoWorld-симуляция (`seed_simulations.py`, "Строение Земли: кора, мантия, ядро") имеет `config.expected_steps = ["explore_layer", "explore_layer", "explore_layer", "explore_layer"]` — то есть её РЕАЛЬНЫЙ, уже работающий scoring привязан к исследованию 4 слоёв Земли, не к клику по континентам. `compute_score` (`grader_service.py`) сравнивает `actions_log[].action_type` с этим списком, порядок-сохраняющее сопоставление, лишние действия не штрафуются. Это и определило выбор "лучшего урока по совместимости" (§5 задания): **layer explorer** (список из 4 слоёв, клик → реальный backend-факт) стал ГЛАВНЫМ уроком (даёт реальный ненулевой score на РЕАЛЬНОЙ, уже существующей симуляции), **click-anywhere continent exploration** — вторым, полноправным геовзаимодействием (§6), использующим ТОТ ЖЕ backend-контракт (`explore_continent`), но не влияющим на scoring именно ЭТОЙ конкретной симуляции — то же самое верно и для старого Three.js-рендерера (там тоже можно кликать континенты вне cutaway, это не даёт баллов по этой симуляции) — не новое ограничение, точная параллель существующему поведению.
+
+### Архитектурное правило (§3 задания) — где живёт образовательное состояние
+
+```
+useGeoLessonState (lib/geo/education/) — renderer-independent
+        ↓
+   actionsLog / selectedLayer / selectedContinent / completionScore
+       ↙                                    ↘
+GeoWorldScene.tsx (Three.js,          GeoWorldSceneMapLibre.tsx (MapLibre,
+свой inline-код, НЕ тронут)           использует хук напрямую)
+```
+
+`useGeoLessonState` — скопирована ДОСЛОВНО (не переизобретена) из уже одобренной логики `GeoWorldScene.tsx` (`handleSelectLayer`/`handleSelectContinent`/`handleComplete`) — тот же API-контракт, те же поля `actionsLog`-записей, тот же `apiFetch`/`ApiError`. НЕ создано `MapLibreScore`/`MapLibreProgress`/отдельного формата сохранения (прямой запрет §3/§16) — обе реализации вызывают ОДИН И ТОТ ЖЕ `/api/simulations/{id}/action|complete`, поэтому попытка через MapLibre засчитывается той же самой серверной логикой, что и попытка через старый рендерер.
+
+**GeoWorldScene.tsx НЕ рефакторен** на использование этого хука (тот же риск-принцип, что в G6.10 со спайком — production-рендерер уже в работе, трогать его код ради архитектурной чистоты не стали). Обе реализации ДОКАЗУЕМО эквивалентны бэкенду не потому, что используют один код, а потому, что используют один HTTP-контракт — этого достаточно для полной согласованности прогресса.
+
+### Первый реальный урок — что реально работает (проверено authenticated browser QA)
+
+1. Ученик открывает `/geo3d/{id}?engine=maplibre` (реальная засеянная симуляция).
+2. Видит реальную цель урока (`t.geo.maplibre.lesson.objective`, RU/EN/TG).
+3. Нажимает на слой ("Земная кора") → **реальный** POST `/api/simulations/{id}/action` (`explore_layer`) → получает реальные данные из `EARTH_LAYERS["crust"]` (глубина 0–35 км, температура 0–1000°C, состав — базальт/гранит).
+4. Панель показывает прогресс "Изучено слоёв: 1/4", кнопка слоя помечена как "(Изучено)".
+5. Кликает по глобусу в любой точке → реальный POST `explore_continent` → backend классифицирует континент (`classify_continent`) или честно возвращает "Здесь океан" (реальная ошибка бэкенда, не выдуманная фронтендом).
+6. "Завершить попытку" → реальный POST `/complete` → реальный `compute_score` по `expected_steps` этой симуляции → реальный `LabResult` в БД.
+
+### Реальный баг, найденный в этой сессии (browser QA, не гипотеза)
+
+CSS-специфичность: MapLibre сам добавляет класс `maplibregl-map` контейнеру (стиль `position: relative`), а `maplibre-gl.css` подключается ВО ВРЕМЯ ВЫПОЛНЕНИЯ (`loadStylesheetOnce`) — позже, чем Tailwind. При равной специфичности выигрывает источник, подключённый позже, поэтому Tailwind-класс `absolute` тихо перебивался, `inset-0` переставал что-либо значить, канвас схлопывался до дефолтных 300px вместо заполнения контейнера. **Исправлено**: инлайн-стиль (`style={{position:"absolute", inset:0}}`) на контейнере в `MapLibreGlobeCanvas.tsx` — инлайн-стили имеют более высокий приоритет, чем любое правило из подключаемого класса, независимо от порядка загрузки CSS. Подтверждено повторным browser QA: канвас `1225×560` (desktop) / `351×591` (мобильный 390×844) — не схлопнут.
+
+### Геовзаимодействие (§6 задания)
+
+`useMapLibreGlobe` расширен `onMapClick`/`onCameraChange` колбэками (через `useRef`, не напрямую из `options` — та же stale-closure ловушка, что уже была найдена и исправлена для `terrainStatus` после G6.9, применена превентивно и здесь). Клик по глобусу отдаёт `lng/lat` САМОЙ точки клика (нативное MapLibre `click`-событие) — семантика 1:1 совпадает со старым рендерером (там тоже клик-где-угодно-по-сфере, не дискретные маркеры), классификацию континента делает бэкенд (`classify_continent`), не клиент — прямое требование §6 "if semantic vector data does not exist, do not fabricate it".
+
+### Образовательные маркеры (§7 задания) — осознанное решение НЕ добавлять отдельный слой
+
+Рассмотрено и отклонено: отдельный слой маркеров континентов/локаций. Причина: (а) континенты — огромные неправильные области, "маркер" как точечная модель для них не подходит педагогически (клик-где-угодно уже покрывает это лучше); (б) единственный существующий "маркерный" контент — три Дushanbe control-points из G6.8.x, явно помеченные заданием как "primarily regression/reference points, not necessarily lesson content" — превращать их в образовательный контент означало бы придумывать факты без доверенного источника (прямой запрет §10). Camera-preset локации (Earth/Asia/.../Pamir) остаются кнопками (уже data-driven из `LOCATIONS`, G6.10), не превращены в on-map маркеры — не давало бы новой ценности, только визуальный шум.
+
+### Terrain / climate / cutaway (§11-13 задания)
+
+- **Terrain**: не менялся, используется как есть (визуальный контекст урока про рельеф Земли, не отдельная образовательная метрика в G6.11 — точная высота не заявляется как измеренная, только визуальная, никакого нового claim не добавлено).
+- **Climate**: контракт (`useGeoLessonState.triggerClimateScenario`) СУЩЕСТВУЕТ и вызывает тот же реальный backend action, но НЕ подключён к UI в этом этапе (сознательно, воспользовались явным разрешением задания "leave full visualization to G6.12" — не рисковали фейковой схематичной визуализацией без чёткого дизайн-решения).
+- **Cutaway**: НЕ перестроен как 3D-движок (прямой запрет §13/§34). Педагогическая цель (концентрические слои разного состава/температуры) отделена от старой реализации (вложенные прозрачные сферы) — для MapLibre выбрана СОВСЕМ ДРУГАЯ, более простая метафора: список/карточки слоёв (`GeoLessonPanel`), не 3D-разрез. Это и есть "another visualization to teach the same concept" (§13) — задокументировано как решение, не как временная заглушка.
+
+### AI context foundation (§18 задания)
+
+`lib/geo/education/aiContext.ts` — `buildGeoAiContext()`, чистая функция, возвращает маленький JSON-сериализуемый объект (`world`, `renderer`, `camera`, `lastAction`, `exploredLayers`, `selectedContinent`, `actionsCount`, `completionScore`) — НЕ содержит сырых MapLibre/Three.js объектов, НЕ придумывает геолокацию (camera — координаты, никогда не подписаны как "ученик смотрит на X", см. camera-context.ts). Вычисляется в `GeoWorldSceneMapLibre.tsx` и виден ТОЛЬКО в dev-диагностике (`<details>` с JSON-превью, скрыт в production) — никуда не отправляется, ни к какому AI не подключён (полноценный AI Geo Guide — предмет G6.13, прямо запрещено начинать в G6.11).
+
+### Camera context (§19 задания)
+
+`normalizeCameraState(map)` — `{center, zoom, bearing, pitch}`, округлено до разумной точности. Обновляется на `moveend` (НЕ на каждый кадр `move`) — естественный троттлинг, событие приходит один раз на жест, не 60 раз в секунду (прямое требование §28 "no React state on every raw move frame").
+
+### Migration matrix (§2 задания — implementation-oriented, расширяет compatibility-таблицу G6.10)
+
+| Feature | Current source of truth | UI | Engine dependency | Backend dependency | Can be shared? | MapLibre implementation | Migration stage |
+|---|---|---|---|---|---|---|---|
+| Layer exploration (crust/mantle/core) | `EARTH_LAYERS` (backend) | R3F cutaway click / **GeoLessonPanel список** | Three.js (старый) / нет (MapLibre — 2D-панель) | `/action` `explore_layer` | ✅ Да — `useGeoLessonState.exploreLayer` | ✅ **Реализовано** | Готово |
+| Continent exploration | `CONTINENTS`/`classify_continent` (backend) | R3F click-on-sphere / **MapLibre click-on-globe** | Three.js raycasting / MapLibre native `click` | `/action` `explore_continent` | ✅ Да — `useGeoLessonState.exploreContinent` | ✅ **Реализовано** | Готово |
+| Task progress (actionsLog) | React state (клиент, обе реализации) | HUD-панель | Нет | Косвенно — `actions_log` в `/complete` | ✅ Да — тот же массив, тот же формат записи | ✅ **Реализовано** | Готово |
+| Scoring/completion | `compute_score` (backend, `grader_service.py`) | "Завершить попытку" кнопка + счёт | Нет | `/complete` | ✅ Да — идентичный payload | ✅ **Реализовано** | Готово |
+| Climate scenario (contract) | `evaluate_climate_scenario` (backend) | Слайдер потепления (старый) / нет UI (MapLibre) | Three.js частицы+морфинг / нет | `/action` `trigger_climate_scenario` | ✅ Хук готов, UI — нет | ⚠️ Контракт есть, визуализации нет | G6.12 |
+| Cutaway / cross-section | R3F вложенные сферы | Кнопка "показать разрез" | Three.js-специфично | Нет (чисто визуальное) | ❌ Метафора не переносится | ✅ Заменена на список-карточки (другая метафора, та же пед. цель) | Готово (иначе) |
+| Country/continent borders | Natural Earth (`country-borders` source) | — | MapLibre GeoJSON+line layer | Нет | ✅ Уже общий провайдер | ✅ Реализовано (G6.7) | Готово |
+| Tectonic plates/volcanoes/earthquakes | `layer-registry.ts` + свои providers | `LayerControlPanel` (старый) | R3F-специфичные layer-компоненты | Нет | ⚠️ Данные общие, layer-код — нет | ❌ Не перенесено | Не начато |
+| Educational markers | — (нет отдельного слоя ни там, ни там) | — | — | — | N/A | ❌ Осознанно не добавлено (см. выше) | Отклонено с обоснованием |
+| AI context / AI guide | `sceneStateDescription` строка (старый) / `buildGeoAiContext` (новый) | `AIAssistantChat` (старый) / dev-only JSON preview (новый) | Нет | Нет (контекст не отправляется) | ⚠️ Похожая идея, разный формат | ⚠️ Foundation готов, не подключён к чат-UI | G6.13 |
+| Terrain controls (exaggeration presets) | `elevation-sampling.ts` presets (старый) / `DEFAULT_TERRAIN_EXAGGERATION` константа (новый) | Кнопки 1×/15×/30×/off (старый) / нет UI-биндинга (новый) | Разные terrain-пайплайны (уже разные с G6.7) | Нет | ❌ Разные terrain-движки | ⚠️ MapLibre exaggeration есть, UI-переключатель — нет | Низкий приоритет, не начато |
+| Resume behaviour | **Отсутствует у ОБОИХ рендереров** — `actionsLog`/`completionScore` не подгружаются с сервера при монтировании, всегда с чистого листа | — | — | — | ✅ Уже одинаково (оба renderer-агностично "без resume") | ✅ Паритет по умолчанию (нечего мигрировать) | Готово (паритет = "нет" у обоих) |
+| Localization (RU/EN/TG) | `lib/i18n/dictionaries/*` | Оба рендерера через `useLocale()` | Нет | Нет | ✅ Общий словарь | ✅ Новые ключи `geo.maplibre.lesson.*`, все 3 языка | Готово |
+| Feature info card (layer/continent facts) | Backend response (реальные данные) | `GeoFeatureInfoCard` (R3F `Html`, старый) / **`GeoLessonPanel`** (обычный DOM, новый) | R3F-specific / нет | Нет (данные уже в `/action`-ответе) | ⚠️ Тот же принцип "данные не выдумываются", разные компоненты (R3F `Html` не переиспользуем в plain DOM) | ✅ Реализовано (адаптирован, не скопирован буквально — §10) | Готово |
+
+**Честная оговорка про "Resume" (§17 задания)**: аудит существующего поведения показал, что у СТАРОГО рендерера тоже нет resume для GeoWorld конкретно (`actionsLog`/`completionScore` — чистый локальный React state, ничего не подгружается с сервера при монтировании; для сравнения — Dashboard's "Unfinished experiment" резюме работает через ОТДЕЛЬНЫЙ механизм на уровне списка симуляций, не внутри самой сцены). Поэтому "паритет с существующим resume-поведением" в данном случае означает "у обоих одинаково нет resume внутри сцены" — не пробел этого этапа, а точное соответствие текущей архитектуре.
+
+### Mobile / Accessibility (§22/§25 задания)
+
+Проверено authenticated browser QA на 390×844: канвас `351×591` (заполняет контейнер, не схлопнут), **нет горизонтального overflow**, `GeoLessonPanel` остаётся под канвасом (не перекрывает глобус), кнопки слоёв — `flex-wrap`, тач-таргеты стандартного размера Design V2 (`px-4 py-2` кнопки). Accessibility: `role="group"` с `aria-label` на списке слоёв, `aria-pressed` на каждой кнопке слоя (изученное состояние не только через цвет — есть текстовая пометка "(Изучено)"), `role="alert"` на блоке ошибки. Полноценная keyboard-only альтернатива клику по глобусу (§25 "map-only interaction cannot be the ONLY way") — НЕ реализована в этом этапе (клик по континенту остаётся map-only) — честно зафиксировано как известное ограничение ниже, слой-explorer (главный, scoring-значимый путь) полностью доступен с клавиатуры через обычные `<button>`.
+
+### Тесты (§31 задания)
+
+| Проверка | Результат |
+|---|---|
+| `npx tsc --noEmit` (frontend) | 0 ошибок |
+| `npx eslint` (все новые/изменённые файлы) | 0 ошибок |
+| `npx vitest run` (geo-модули: `lib/geo/`, `components/geo/`, сцены) | **25/25 файлов, 189/189 тестов** passed, включая новые `useGeoLessonState.test.ts`/`aiContext.test.ts`/`camera-context.test.ts` |
+| Authenticated browser QA (реальный login/register через backend, реальная засеянная симуляция) | Desktop (1280×800) и Mobile (390×844) — canvas корректного размера, лекционная панель работает, реальный клик по слою даёт реальный backend-факт, прогресс считается верно, 0 неожиданных console errors (только уже задокументированные HLS date-probe 404, не блокирующие) |
+| Production route smoke (`/geo3d/{id}` default + `?engine=maplibre`) | Оба — HTTP 200, компилируются чисто |
+
+### Известные ограничения G6.11
+
+- Climate scenario — только backend-контракт готов (`triggerClimateScenario` в хуке), визуализации в MapLibre-сцене нет (сознательно отложено на G6.12, прямо разрешено заданием).
+- Tectonic plates/volcanoes/earthquakes слои НЕ перенесены (не было целью этого этапа — только "первый реальный урок", не полный layer-parity).
+- Полная keyboard-доступная альтернатива клику по глобусу для continent-exploration НЕ реализована (§25) — layer-explorer (главный, scoring-значимый путь) полностью доступен с клавиатуры, continent click — нет.
+- AI context собирается, но никуда не подключён (foundation-only, прямое требование "not full G6.13 AI Geo Guide yet").
+- `GeoWorldScene.tsx` не рефакторен на `useGeoLessonState` — architectural equivalence доказана через общий backend-контракт, не через общий код (см. "Архитектурное правило" выше, тот же риск-принцип, что и в G6.10).
+- Часть кода этого этапа физически лежит в коммите `433a788` (действие владельца продукта, не моё) — см. "Pre-flight находки" выше, контент проверен и корректен независимо от того, в каком коммите он оказался.
+
+### Рекомендация для G6.12
+
+Владелец продукта сравнивает старый/новый GeoWorld и решает судьбу этого этапа (НЕ начинать самостоятельно, прямое указание). Возможные направления: (а) climate-визуализация на MapLibre (контракт уже готов, нужно только дизайн-решение по схематичному, не фейково-фотореалистичному представлению); (б) keyboard-доступная альтернатива для continent click; (в) перенос tectonic plates/volcanoes/earthquakes слоёв (низкий объём — тот же паттерн, что borders/cities); (г) если решение — сделать MapLibre основным рендерером для НОВЫХ geo-уроков (не для этого конкретного, cutaway-завязанного) — начать проектирование таких уроков сразу без cutaway-зависимости.
+
 ## G7 — Geography missions/tasks
 
 - Образовательные задания поверх системы слоёв (найти страну/объект, ответить на вопрос по слою) — переиспользовать существующий паттерн `GuidedLabPanel`/`ExperimentPanel` из Chemistry/Electricity, не изобретать заново.
