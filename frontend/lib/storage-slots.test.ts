@@ -24,7 +24,8 @@ describe("Storage Slot Registry", () => {
   it("возвращает слот и все слоты владельца", () => {
     const slot = getSlot("cabinet-left-inner-slot-1");
     expect(slot).toBe(STORAGE_SLOT_REGISTRY["cabinet-left-inner-slot-1"]);
-    expect(findSlotsForCabinet("cabinet-left-inner")).toEqual([slot]);
+    expect(findSlotsForCabinet("cabinet-left-inner")).toHaveLength(9);
+    expect(findSlotsForCabinet("cabinet-left-inner")[0]).toBe(slot);
     expect(findSlotsForCabinet("missing")).toEqual([]);
   });
 

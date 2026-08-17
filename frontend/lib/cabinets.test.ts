@@ -8,7 +8,7 @@ describe("Cabinet Registry", () => {
   });
 
   it("возвращает config только для зарегистрированного шкафа", () => {
-    expect(getCabinet("cabinet-left-inner")?.displayName).toBe("Шкаф для посуды");
+    expect(getCabinet("cabinet-left-inner")?.displayName).toBe("Основания и индикаторы");
     expect(getCabinet("missing")).toBeNull();
   });
 

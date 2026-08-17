@@ -661,6 +661,18 @@ function CabinetMesh({ config, woodTexture, onRegisterCollider }: { config: Cabi
         <boxGeometry args={[0.98, 0.04, 0.52]} />
         <meshStandardMaterial map={woodTexture} color={materialColor} roughness={0.58} metalness={0.05} />
       </mesh>
+      {[0.04, 0.24].map((shelfY) => (
+        <mesh key={shelfY} position={[0, shelfY, 0.015]} castShadow receiveShadow>
+          <boxGeometry args={[0.98, 0.025, 0.52]} />
+          <meshStandardMaterial map={woodTexture} color={materialColor} roughness={0.58} metalness={0.05} />
+        </mesh>
+      ))}
+
+      <Html position={[0, 0.43, 0.3]} center distanceFactor={10} style={{ pointerEvents: "none" }}>
+        <div className="w-36 rounded border border-slate-300 bg-slate-50/95 px-2 py-1 text-center text-[9px] font-semibold leading-tight text-slate-800 shadow-sm">
+          {config.displayName}
+        </div>
+      </Html>
 
       <group ref={doorRef} position={[-0.51, 0, 0.28]}>
         <mesh position={[0.51, 0, 0]} onPointerOver={focus} onPointerOut={blur} onPointerDown={handleSelect} castShadow>
@@ -2114,6 +2126,13 @@ function StockBottleMesh({ bottle, isPouring }: { bottle: StockBottle; isPouring
               />
             </mesh>
             <BottleCapMesh capState={bottle.capState} />
+            {isAccessible && (
+              <Html position={[0, 0, 0.095]} center distanceFactor={12} style={{ pointerEvents: "none" }}>
+                <div className="max-w-20 rounded-sm bg-white/95 px-1 py-0.5 text-center text-[7px] font-semibold leading-none text-slate-900">
+                  {substance?.formula}
+                </div>
+              </Html>
+            )}
           </PourTilt>
         </GrabLift>
 

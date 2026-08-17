@@ -186,3 +186,90 @@ registerReaction({
   ],
   isExothermic: false,
 });
+
+registerReaction({
+  id: "neutralization-h2so4-naoh",
+  title: "Нейтрализация серной кислоты",
+  description: "H₂SO₄ + 2 NaOH → Na₂SO₄ + 2 H₂O",
+  reactants: [{ substanceId: "h2so4", coefficient: 1 }, { substanceId: "naoh", coefficient: 2 }],
+  products: [{ substanceId: "na2so4", coefficient: 1 }, { substanceId: "water", coefficient: 2 }],
+  isExothermic: true,
+  heatReleasedC: 45,
+});
+
+registerReaction({
+  id: "neutralization-acetic-naoh",
+  title: "Нейтрализация уксусной кислоты",
+  description: "CH₃COOH + NaOH → CH₃COONa + H₂O",
+  reactants: [{ substanceId: "ch3cooh", coefficient: 1 }, { substanceId: "naoh", coefficient: 1 }],
+  products: [{ substanceId: "ch3coona", coefficient: 1 }, { substanceId: "water", coefficient: 1 }],
+  isExothermic: true,
+  heatReleasedC: 25,
+});
+
+registerReaction({
+  id: "carbonate-hcl-co2",
+  title: "Получение углекислого газа",
+  description: "Na₂CO₃ + 2 HCl → 2 NaCl + H₂O + CO₂↑",
+  reactants: [{ substanceId: "na2co3", coefficient: 1 }, { substanceId: "hcl", coefficient: 2 }],
+  products: [{ substanceId: "nacl", coefficient: 2 }, { substanceId: "water", coefficient: 1 }, { substanceId: "co2", coefficient: 1 }],
+  isExothermic: false,
+});
+
+registerReaction({
+  id: "bicarbonate-hcl-co2",
+  title: "Кислота и гидрокарбонат",
+  description: "NaHCO₃ + HCl → NaCl + H₂O + CO₂↑",
+  reactants: [{ substanceId: "nahco3", coefficient: 1 }, { substanceId: "hcl", coefficient: 1 }],
+  products: [{ substanceId: "nacl", coefficient: 1 }, { substanceId: "water", coefficient: 1 }, { substanceId: "co2", coefficient: 1 }],
+  isExothermic: false,
+});
+
+registerReaction({
+  id: "calcium-carbonate-hcl",
+  title: "Карбонат кальция и кислота",
+  description: "CaCO₃ + 2 HCl → CaCl₂ + H₂O + CO₂↑",
+  reactants: [{ substanceId: "caco3", coefficient: 1 }, { substanceId: "hcl", coefficient: 2 }],
+  products: [{ substanceId: "cacl2", coefficient: 1 }, { substanceId: "water", coefficient: 1 }, { substanceId: "co2", coefficient: 1 }],
+  isExothermic: false,
+});
+
+registerReaction({
+  id: "zinc-hcl-hydrogen",
+  title: "Цинк и соляная кислота",
+  description: "Zn + 2 HCl → ZnCl₂ + H₂↑",
+  reactants: [{ substanceId: "zn", coefficient: 1 }, { substanceId: "hcl", coefficient: 2 }],
+  products: [{ substanceId: "zncl2", coefficient: 1 }, { substanceId: "h2", coefficient: 1 }],
+  isExothermic: true,
+  heatReleasedC: 20,
+});
+
+registerReaction({
+  id: "magnesium-hcl-hydrogen",
+  title: "Магний и соляная кислота",
+  description: "Mg + 2 HCl → MgCl₂ + H₂↑",
+  reactants: [{ substanceId: "mg", coefficient: 1 }, { substanceId: "hcl", coefficient: 2 }],
+  products: [{ substanceId: "mgcl2", coefficient: 1 }, { substanceId: "h2", coefficient: 1 }],
+  isExothermic: true,
+  heatReleasedC: 35,
+});
+
+registerReaction({
+  id: "iron-copper-displacement",
+  title: "Вытеснение меди железом",
+  description: "Fe + CuSO₄ → FeSO₄ + Cu",
+  reactants: [{ substanceId: "fe", coefficient: 1 }, { substanceId: "cuso4", coefficient: 1 }],
+  products: [{ substanceId: "feso4", coefficient: 1 }, { substanceId: "cu", coefficient: 1, formsPrecipitate: true }],
+  isExothermic: false,
+});
+
+registerReaction({
+  id: "hydrogen-peroxide-decomposition",
+  title: "Разложение пероксида водорода",
+  description: "2 H₂O₂ → 2 H₂O + O₂↑",
+  reactants: [{ substanceId: "h2o2", coefficient: 2 }],
+  products: [{ substanceId: "water", coefficient: 2 }, { substanceId: "o2", coefficient: 1 }],
+  isExothermic: true,
+  heatReleasedC: 15,
+  conditions: { minTemperatureC: 60 },
+});

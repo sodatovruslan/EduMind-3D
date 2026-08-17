@@ -586,6 +586,47 @@ const experimentalInvestigation: LabExperiment = {
   isComplete: (ctx) => ctx.allOccurredReactionIds.length > 0 || ctx.hazard.level !== "none",
 };
 
+function reactionGuidedLab(config: {
+  id: string;
+  title: string;
+  description: string;
+  reactionId: string;
+  difficulty: LabDifficulty;
+  substances: string[];
+  observation: string;
+  safety: string;
+  heat?: boolean;
+}): LabExperiment {
+  const complete = (ctx: LabStepContext) => ctx.allOccurredReactionIds.includes(config.reactionId);
+  return {
+    id: config.id,
+    title: config.title,
+    description: config.description,
+    difficulty: config.difficulty,
+    estimatedMinutes: config.heat ? 12 : 9,
+    objectives: [config.description],
+    requiredEquipment: config.heat ? ["Колба", "Горелка", "Термометр"] : ["Стакан", "Пипетка"],
+    requiredSubstances: config.substances,
+    safetyNotes: [config.safety],
+    expectedObservations: [config.observation],
+    xpReward: config.difficulty === "advanced" ? 25 : 18,
+    steps: [
+      { id: "goal", kind: "goal", instruction: `Цель: ${config.description}`, isUnlocked: alwaysUnlocked },
+      { id: "safety", kind: "safety_briefing", instruction: config.safety, isUnlocked: alwaysUnlocked },
+      { id: "prepare", kind: "prepare_equipment", instruction: "Подготовь чистый сосуд и нужные реагенты.", isUnlocked: alwaysUnlocked },
+      { id: "react", kind: config.heat ? "heat" : "add_substance", instruction: "Добавляй реагенты контролируемо и дождись реакции.", isUnlocked: complete },
+      { id: "observe", kind: "observe", instruction: config.observation, isUnlocked: complete },
+      { id: "finish", kind: "finish", instruction: "Запиши наблюдение и уравнение в журнал.", isUnlocked: complete },
+    ],
+    isComplete: complete,
+  };
+}
+
+const carbonateGasLab = reactionGuidedLab({ id: "lab-intermediate-carbonate-gas", title: "Получение CO₂", description: "Исследовать реакцию карбоната с кислотой", reactionId: "carbonate-hcl-co2", difficulty: "intermediate", substances: ["Карбонат натрия", "Соляная кислота"], observation: "Зафиксируй выделение CO₂ и рост давления в закрытом сосуде.", safety: "Не закрывай сосуд с активным газовыделением." });
+const zincAcidLab = reactionGuidedLab({ id: "lab-intermediate-zinc-acid", title: "Цинк и кислота", description: "Получить водород реакцией цинка с HCl", reactionId: "zinc-hcl-hydrogen", difficulty: "intermediate", substances: ["Цинк", "Соляная кислота"], observation: "Наблюдай пузырьки газа и изменение температуры.", safety: "Держи водород вдали от открытого пламени." });
+const displacementLab = reactionGuidedLab({ id: "lab-advanced-metal-displacement", title: "Ряд активности металлов", description: "Вытеснить медь железом из раствора CuSO₄", reactionId: "iron-copper-displacement", difficulty: "advanced", substances: ["Железо", "Сульфат меди"], observation: "Сравни цвет раствора и твёрдой меди до и после реакции.", safety: "Используй малые количества раствора CuSO₄." });
+const peroxideLab = reactionGuidedLab({ id: "lab-advanced-peroxide-decomposition", title: "Термическое разложение", description: "Разложить H₂O₂ при контролируемом нагреве", reactionId: "hydrogen-peroxide-decomposition", difficulty: "advanced", substances: ["Пероксид водорода"], observation: "Зафиксируй выделение O₂ после достижения порога температуры.", safety: "Пероксид — окислитель; не закрывай нагреваемый сосуд.", heat: true });
+
 export const LAB_CATALOG: LabExperiment[] = [
   heatingWater,
   stateChanges,
@@ -599,6 +640,10 @@ export const LAB_CATALOG: LabExperiment[] = [
   hazardPrevention,
   pressureAnalysis,
   experimentalInvestigation,
+  carbonateGasLab,
+  zincAcidLab,
+  displacementLab,
+  peroxideLab,
 ];
 
 export function getLabExperiment(id: string): LabExperiment | undefined {

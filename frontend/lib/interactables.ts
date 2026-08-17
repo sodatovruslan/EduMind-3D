@@ -1,3 +1,5 @@
+import { REAGENT_INVENTORY } from "./chemistry-inventory";
+
 /**
  * Универсальный capability registry Interaction Core.
  *
@@ -132,7 +134,15 @@ function stockBottle(displayName: string, storageKind: string): InteractableConf
   });
 }
 
+const INVENTORY_BOTTLE_INTERACTABLES = Object.fromEntries(
+  REAGENT_INVENTORY.map((reagent) => [
+    `stock-${reagent.id}`,
+    stockBottle(`Bottle: ${reagent.names.ru}`, `stock_${reagent.storageCategory}`),
+  ])
+) as Record<string, InteractableConfig>;
+
 export const INTERACTABLE_REGISTRY: Record<string, InteractableConfig> = {
+  ...INVENTORY_BOTTLE_INTERACTABLES,
   "beaker-1": container("Стакан", "beaker", 0.34),
   "flask-1": container("Колба", "flask", 0.34),
   "test-tube-1": container("Пробирка", "test_tube", 0.24),
@@ -210,6 +220,18 @@ export const INTERACTABLE_REGISTRY: Record<string, InteractableConfig> = {
     legacyDragMode: "move",
   }),
 };
+
+Object.assign(INTERACTABLE_REGISTRY, {
+  "beaker-2": container("Стакан 250 мл", "beaker", 0.34),
+  "test-tube-2": container("Пробирка 2", "test_tube", 0.24),
+  "test-tube-3": container("Пробирка 3", "test_tube", 0.24),
+  "test-tube-4": container("Пробирка 4", "test_tube", 0.24),
+  "flask-2": container("Колба 250 мл", "flask", 0.34),
+  "pipette-2": { ...INTERACTABLE_REGISTRY["pipette-1"], displayName: "Пипетка 2" },
+  "thermometer-2": { ...INTERACTABLE_REGISTRY["thermometer-1"], displayName: "Термометр 2" },
+  "glass-rod-2": { ...INTERACTABLE_REGISTRY["glass-rod-1"], displayName: "Стеклянная палочка 2" },
+  "scale-2": { ...INTERACTABLE_REGISTRY["scale-1"], displayName: "Электронные весы 2" },
+});
 
 export const PORTABLE_CHEMISTRY_IDS = Object.freeze(Object.keys(INTERACTABLE_REGISTRY));
 

@@ -12,7 +12,42 @@ export interface StorageSlot {
   allowedKinds: readonly string[];
 }
 
+const CABINET_SLOT_KINDS: Record<string, readonly string[]> = {
+  "cabinet-left-outer": ["stock_acids", "stock_safe_liquid"],
+  "cabinet-left-inner": ["stock_bases_indicators", "flask"],
+  "cabinet-right-inner": ["stock_salts_solutions", "pipette", "thermometer", "glass_rod"],
+  "cabinet-right-outer": ["stock_solids_equipment", "burner", "scale"],
+};
+
+function createAdditionalCabinetSlots(): Record<string, StorageSlot> {
+  const result: Record<string, StorageSlot> = {};
+  for (const cabinetId of Object.keys(CABINET_SLOT_KINDS)) {
+    const cabinet = getCabinet(cabinetId);
+    if (!cabinet) continue;
+    for (let index = 2; index <= 9; index += 1) {
+      const zeroBased = index - 1;
+      const column = zeroBased % 3;
+      const row = Math.floor(zeroBased / 3);
+      const id = `${cabinetId}-slot-${index}`;
+      result[id] = {
+        id,
+        cabinetId,
+        shelfId: `${cabinetId}-shelf-${row + 1}`,
+        position: [cabinet.worldPosition[0] + (column - 1) * 0.34, cabinet.worldPosition[2] + 0.0275],
+        elevation: 1.58 + row * 0.22,
+        rotationY: 0,
+        radius: 0.18,
+        // Added shelf positions are inventory-only. The original slot 1
+        // remains the backwards-compatible equipment return location.
+        allowedKinds: CABINET_SLOT_KINDS[cabinetId].filter((kind) => kind.startsWith("stock_")),
+      };
+    }
+  }
+  return result;
+}
+
 export const STORAGE_SLOT_REGISTRY: Record<string, StorageSlot> = {
+  ...createAdditionalCabinetSlots(),
   "cabinet-left-outer-slot-1": {
     id: "cabinet-left-outer-slot-1",
     cabinetId: "cabinet-left-outer",
@@ -21,7 +56,7 @@ export const STORAGE_SLOT_REGISTRY: Record<string, StorageSlot> = {
     elevation: 1.8,
     rotationY: 0,
     radius: 0.18,
-    allowedKinds: ["stock_safe_liquid", "stock_safe_solid"],
+    allowedKinds: CABINET_SLOT_KINDS["cabinet-left-outer"],
   },
   "cabinet-left-inner-slot-1": {
     id: "cabinet-left-inner-slot-1",
@@ -31,7 +66,7 @@ export const STORAGE_SLOT_REGISTRY: Record<string, StorageSlot> = {
     elevation: 1.85,
     rotationY: 0,
     radius: 0.34,
-    allowedKinds: ["flask"],
+    allowedKinds: CABINET_SLOT_KINDS["cabinet-left-inner"],
   },
   "cabinet-right-inner-slot-1": {
     id: "cabinet-right-inner-slot-1",
@@ -41,7 +76,7 @@ export const STORAGE_SLOT_REGISTRY: Record<string, StorageSlot> = {
     elevation: 1.72,
     rotationY: 0,
     radius: 0.16,
-    allowedKinds: ["pipette", "thermometer", "glass_rod"],
+    allowedKinds: CABINET_SLOT_KINDS["cabinet-right-inner"],
   },
   "cabinet-right-outer-slot-1": {
     id: "cabinet-right-outer-slot-1",
@@ -51,7 +86,7 @@ export const STORAGE_SLOT_REGISTRY: Record<string, StorageSlot> = {
     elevation: 1.66,
     rotationY: 0,
     radius: 0.35,
-    allowedKinds: ["burner", "scale"],
+    allowedKinds: CABINET_SLOT_KINDS["cabinet-right-outer"],
   },
 };
 
@@ -61,7 +96,9 @@ export function getSlot(id: string): StorageSlot | null {
 
 export function findSlotsForCabinet(cabinetId: string): StorageSlot[] {
   if (!getCabinet(cabinetId)) return [];
-  return Object.values(STORAGE_SLOT_REGISTRY).filter((slot) => slot.cabinetId === cabinetId);
+  return Object.values(STORAGE_SLOT_REGISTRY)
+    .filter((slot) => slot.cabinetId === cabinetId)
+    .sort((a, b) => Number(a.id.match(/slot-(\d+)$/)?.[1] ?? 0) - Number(b.id.match(/slot-(\d+)$/)?.[1] ?? 0));
 }
 
 export function isKindAllowedInSlot(slot: StorageSlot, kind: string): boolean {

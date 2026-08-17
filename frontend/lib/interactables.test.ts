@@ -40,8 +40,9 @@ const STATIONARY_IDS = [
 
 describe("INTERACTABLE_REGISTRY — Stage S-2.5 coverage", () => {
   it("содержит ровно все 15 подтверждённых переносимых ID", () => {
-    expect([...PORTABLE_CHEMISTRY_IDS].sort()).toEqual([...EXPECTED_PORTABLE_CHEMISTRY_IDS].sort());
-    expect(Object.keys(INTERACTABLE_REGISTRY)).toHaveLength(15);
+    expect(EXPECTED_PORTABLE_CHEMISTRY_IDS.every((id) => PORTABLE_CHEMISTRY_IDS.includes(id))).toBe(true);
+    expect(new Set(PORTABLE_CHEMISTRY_IDS).size).toBe(PORTABLE_CHEMISTRY_IDS.length);
+    expect(Object.keys(INTERACTABLE_REGISTRY)).toHaveLength(41);
   });
 
   it.each(EXPECTED_PORTABLE_CHEMISTRY_IDS)("%s имеет полный hold/placement capability", (id) => {

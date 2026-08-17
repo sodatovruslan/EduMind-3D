@@ -52,11 +52,11 @@ function baseContext(overrides: Partial<LabStepContext> = {}): LabStepContext {
 }
 
 describe("chemistry-lab-catalog — структура каталога", () => {
-  it("содержит ровно 12 экспериментов, по 4 на каждый уровень сложности", () => {
-    expect(LAB_CATALOG).toHaveLength(12);
+  it("содержит 16 экспериментов с сохранённой прогрессией сложности", () => {
+    expect(LAB_CATALOG).toHaveLength(16);
     expect(getExperimentsByDifficulty("beginner")).toHaveLength(4);
-    expect(getExperimentsByDifficulty("intermediate")).toHaveLength(4);
-    expect(getExperimentsByDifficulty("advanced")).toHaveLength(4);
+    expect(getExperimentsByDifficulty("intermediate")).toHaveLength(6);
+    expect(getExperimentsByDifficulty("advanced")).toHaveLength(6);
   });
 
   it("все id уникальны", () => {
@@ -83,7 +83,7 @@ describe("chemistry-lab-catalog — структура каталога", () => 
   });
 
   it("searchExperiments с пустым запросом возвращает весь каталог", () => {
-    expect(searchExperiments("")).toHaveLength(12);
+    expect(searchExperiments("")).toHaveLength(16);
   });
 });
 

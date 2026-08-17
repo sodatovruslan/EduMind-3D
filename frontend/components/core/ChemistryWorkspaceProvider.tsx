@@ -28,6 +28,7 @@ import { getInteractable } from "@/lib/interactables";
 import { canStoreItemNow, findAvailableSlot, findSlotsForCabinet, getSlot, type StorageSlot } from "@/lib/storage-slots";
 import { observationLogger } from "@/lib/observation-logger";
 import { getHeatingSocketByBurnerId, getRegisteredHeatingSockets } from "@/lib/placement-surfaces";
+import { REAGENT_INVENTORY, type StorageCategory } from "@/lib/chemistry-inventory";
 
 /**
  * Chemistry World — Laboratory Workspace state (Stage 5). Тот же принцип,
@@ -707,14 +708,48 @@ export function createInitialState(): WorkspaceState {
     flaskSlot.id
   );
 
-  const stockBottles: StockBottle[] = [
-    { id: "stock-water", substanceId: "water", position: [-3.2, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500, capState: "closed" },
-    { id: "stock-nacl", substanceId: "nacl", position: [-2.1, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500, capState: "closed" },
-    { id: "stock-hcl", substanceId: "hcl", position: [-1.0, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500, capState: "closed" },
-    { id: "stock-naoh", substanceId: "naoh", position: [0.1, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500, capState: "closed" },
-    { id: "stock-cuso4", substanceId: "cuso4", position: [1.2, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500, capState: "closed" },
-    { id: "stock-agno3", substanceId: "agno3", position: [2.3, -1.6], rotationY: 0, elevation: 0.16, storageSlotId: null, capacityGrams: 500, remainingGrams: 500, capState: "closed" },
-  ];
+  const cabinetByCategory: Record<StorageCategory, string> = {
+    acids: "cabinet-left-outer",
+    bases_indicators: "cabinet-left-inner",
+    salts_solutions: "cabinet-right-inner",
+    solids_equipment: "cabinet-right-outer",
+  };
+  const nextSlotByCabinet: Record<string, number> = {
+    "cabinet-left-outer": 2,
+    // Slot 1 deliberately remains the persistent flask location.
+    "cabinet-left-inner": 2,
+    "cabinet-right-inner": 2,
+    "cabinet-right-outer": 2,
+  };
+  const legacyTablePositions: Record<string, [number, number]> = {
+    water: [-3.2, -1.6], nacl: [-2.1, -1.6], hcl: [-1.0, -1.6],
+    naoh: [0.1, -1.6], cuso4: [1.2, -1.6], agno3: [2.3, -1.6],
+  };
+  const stockBottles: StockBottle[] = REAGENT_INVENTORY.map((reagent) => {
+    const legacyPosition = legacyTablePositions[reagent.id];
+    if (legacyPosition) {
+      return {
+        id: `stock-${reagent.id}`, substanceId: reagent.id, position: legacyPosition,
+        rotationY: 0, elevation: 0.16, storageSlotId: null,
+        capacityGrams: reagent.defaultAmountG, remainingGrams: reagent.defaultAmountG, capState: "closed",
+      };
+    }
+    const cabinetId = cabinetByCategory[reagent.storageCategory];
+    const slotNumber = nextSlotByCabinet[cabinetId]++;
+    const slot = getSlot(`${cabinetId}-slot-${slotNumber}`);
+    if (!slot) throw new Error(`Missing inventory storage slot for ${reagent.id}`);
+    return {
+      id: `stock-${reagent.id}`,
+      substanceId: reagent.id,
+      position: slot.position,
+      rotationY: slot.rotationY,
+      elevation: slot.elevation,
+      storageSlotId: slot.id,
+      capacityGrams: reagent.defaultAmountG,
+      remainingGrams: reagent.defaultAmountG,
+      capState: "closed",
+    };
+  });
 
   const tools: ToolItem[] = [
     { id: "burner-1", kind: "burner", position: [2.6, 1.4], rotationY: 0, elevation: 0, storageSlotId: null, isOn: false, temperatureC: 20 },
@@ -723,10 +758,23 @@ export function createInitialState(): WorkspaceState {
     { id: "thermometer-1", kind: "thermometer", position: [0, 1.4], rotationY: 0, elevation: 0.05, storageSlotId: null },
     { id: "glass-rod-1", kind: "glass_rod", position: [-1.8, 1.4], rotationY: 0, elevation: 0.05, storageSlotId: null },
     { id: "scale-1", kind: "scale", position: [1.5, -0.4], rotationY: 0, elevation: 0, storageSlotId: null },
+    { id: "pipette-2", kind: "pipette", position: [-3.35, 1.25], rotationY: 0, elevation: 0.05, storageSlotId: null },
+    { id: "thermometer-2", kind: "thermometer", position: [-2.95, 1.25], rotationY: 0, elevation: 0.05, storageSlotId: null },
+    { id: "glass-rod-2", kind: "glass_rod", position: [-2.55, 1.25], rotationY: 0, elevation: 0.05, storageSlotId: null },
+    { id: "scale-2", kind: "scale", position: [3.25, -0.35], rotationY: 0, elevation: 0, storageSlotId: null },
   ];
 
   return {
-    containers: [beaker, testTube, flask],
+    containers: [
+      beaker,
+      testTube,
+      flask,
+      createContainerItem("beaker-2", "beaker", [1.15, 0.15]),
+      createContainerItem("test-tube-2", "test_tube", [-0.85, 0.95]),
+      createContainerItem("test-tube-3", "test_tube", [-0.35, 0.95]),
+      createContainerItem("test-tube-4", "test_tube", [0.15, 0.95]),
+      createContainerItem("flask-2", "flask", [1.8, 0.45]),
+    ],
     tools,
     stockBottles,
     cabinets: CABINET_IDS.map((id) => ({ id, isOpen: false })),

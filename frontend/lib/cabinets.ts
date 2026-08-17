@@ -13,7 +13,7 @@ const CABINET_Z = -2.92;
 export const CABINET_REGISTRY: Record<string, CabinetConfig> = {
   "cabinet-left-outer": {
     id: "cabinet-left-outer",
-    displayName: "Левый шкаф",
+    displayName: "Кислоты / Acids",
     worldPosition: [-4.6, 1.8, CABINET_Z],
     size: [1.1, 0.7, 0.55],
     doorHitboxSize: [1.02, 0.62, 0.06],
@@ -22,7 +22,7 @@ export const CABINET_REGISTRY: Record<string, CabinetConfig> = {
   },
   "cabinet-left-inner": {
     id: "cabinet-left-inner",
-    displayName: "Шкаф для посуды",
+    displayName: "Основания и индикаторы",
     worldPosition: [-3.0, 1.8, CABINET_Z],
     size: [1.1, 0.7, 0.55],
     doorHitboxSize: [1.02, 0.62, 0.06],
@@ -31,7 +31,7 @@ export const CABINET_REGISTRY: Record<string, CabinetConfig> = {
   },
   "cabinet-right-inner": {
     id: "cabinet-right-inner",
-    displayName: "Правый шкаф",
+    displayName: "Соли и растворы",
     worldPosition: [3.0, 1.8, CABINET_Z],
     size: [1.1, 0.7, 0.55],
     doorHitboxSize: [1.02, 0.62, 0.06],
@@ -40,7 +40,7 @@ export const CABINET_REGISTRY: Record<string, CabinetConfig> = {
   },
   "cabinet-right-outer": {
     id: "cabinet-right-outer",
-    displayName: "Крайний правый шкаф",
+    displayName: "Твёрдые вещества и оборудование",
     worldPosition: [4.6, 1.8, CABINET_Z],
     size: [1.1, 0.7, 0.55],
     doorHitboxSize: [1.02, 0.62, 0.06],

@@ -11,6 +11,8 @@
  * сохранение массы при переливании — никаких случайных чисел.
  */
 
+import { REAGENT_INVENTORY } from "./chemistry-inventory";
+
 export type AggregateState = "solid" | "liquid" | "gas";
 
 export interface Substance {
@@ -148,6 +150,52 @@ export const SUBSTANCES: Record<string, Substance> = {
     boilingPointC: 380,
   },
 };
+
+// C-Lab 2.0 inventory records are the source of truth for selectable stock.
+// The original six entries above remain byte-for-byte compatible with old saves;
+// missing educational reagents receive conservative physical defaults used by the
+// existing mass/volume/temperature engine (not encyclopedia-only properties).
+const PHYSICAL_OVERRIDES: Record<string, Partial<Substance>> = {
+  h2so4: { densityGPerMl: 1.18, molarMassGPerMol: 98.08, meltingPointC: -10, boilingPointC: 120, isAcid: true },
+  ch3cooh: { densityGPerMl: 1.01, molarMassGPerMol: 60.05, meltingPointC: 0, boilingPointC: 100, isAcid: true },
+  caoh2: { densityGPerMl: 1.0, molarMassGPerMol: 74.09, meltingPointC: 0, boilingPointC: 100, isBase: true },
+  nh3: { densityGPerMl: 0.98, molarMassGPerMol: 17.03, meltingPointC: -57, boilingPointC: 38, isBase: true },
+  na2co3: { densityGPerMl: 2.54, molarMassGPerMol: 105.99, meltingPointC: 851, boilingPointC: 1600, solubilityGPerLiterWater: 215 },
+  nahco3: { densityGPerMl: 2.2, molarMassGPerMol: 84.01, meltingPointC: 50, boilingPointC: 270, solubilityGPerLiterWater: 96 },
+  feso4: { densityGPerMl: 1.9, molarMassGPerMol: 151.91, meltingPointC: 64, boilingPointC: 300, solubilityGPerLiterWater: 295 },
+  kmno4: { densityGPerMl: 2.7, molarMassGPerMol: 158.03, meltingPointC: 240, boilingPointC: 300, solubilityGPerLiterWater: 64 },
+  h2o2: { densityGPerMl: 1.01, molarMassGPerMol: 34.01, meltingPointC: -1, boilingPointC: 100 },
+  caco3: { densityGPerMl: 2.71, molarMassGPerMol: 100.09, meltingPointC: 825, boilingPointC: 900, solubilityGPerLiterWater: 0.01 },
+  mg: { densityGPerMl: 1.74, molarMassGPerMol: 24.31, meltingPointC: 650, boilingPointC: 1091 },
+  zn: { densityGPerMl: 7.14, molarMassGPerMol: 65.38, meltingPointC: 420, boilingPointC: 907 },
+  fe: { densityGPerMl: 7.87, molarMassGPerMol: 55.85, meltingPointC: 1538, boilingPointC: 2862 },
+  cu: { densityGPerMl: 8.96, molarMassGPerMol: 63.55, meltingPointC: 1085, boilingPointC: 2562 },
+};
+
+for (const reagent of REAGENT_INVENTORY) {
+  if (SUBSTANCES[reagent.id]) continue;
+  SUBSTANCES[reagent.id] = {
+    id: reagent.id,
+    name: reagent.names.ru,
+    formula: reagent.formula,
+    colorHex: reagent.solutionColor,
+    densityGPerMl: 1,
+    molarMassGPerMol: 100,
+    meltingPointC: 0,
+    boilingPointC: 100,
+    ...PHYSICAL_OVERRIDES[reagent.id],
+  };
+}
+
+Object.assign(SUBSTANCES, {
+  co2: { id: "co2", name: "Углекислый газ", formula: "CO₂", colorHex: "#e2e8f0", densityGPerMl: 0.00198, molarMassGPerMol: 44.01, meltingPointC: -78, boilingPointC: -57 },
+  h2: { id: "h2", name: "Водород", formula: "H₂", colorHex: "#f8fafc", densityGPerMl: 0.00009, molarMassGPerMol: 2.016, meltingPointC: -259, boilingPointC: -253 },
+  o2: { id: "o2", name: "Кислород", formula: "O₂", colorHex: "#dbeafe", densityGPerMl: 0.00143, molarMassGPerMol: 32, meltingPointC: -219, boilingPointC: -183 },
+  zncl2: { id: "zncl2", name: "Хлорид цинка", formula: "ZnCl₂", colorHex: "#f8fafc", densityGPerMl: 2.91, molarMassGPerMol: 136.28, meltingPointC: 290, boilingPointC: 732 },
+  mgcl2: { id: "mgcl2", name: "Хлорид магния", formula: "MgCl₂", colorHex: "#f8fafc", densityGPerMl: 2.32, molarMassGPerMol: 95.21, meltingPointC: 714, boilingPointC: 1412 },
+  cacl2: { id: "cacl2", name: "Хлорид кальция", formula: "CaCl₂", colorHex: "#f8fafc", densityGPerMl: 2.15, molarMassGPerMol: 110.98, meltingPointC: 772, boilingPointC: 1935 },
+  ch3coona: { id: "ch3coona", name: "Ацетат натрия", formula: "CH₃COONa", colorHex: "#f8fafc", densityGPerMl: 1.53, molarMassGPerMol: 82.03, meltingPointC: 324, boilingPointC: 400 },
+});
 
 export interface ContainedAmount {
   substanceId: string;

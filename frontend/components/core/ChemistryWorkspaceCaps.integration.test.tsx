@@ -12,7 +12,7 @@ function renderWorkspace() {
 describe("Stage S-4 — Chemistry Workspace Cap Integration Tests", () => {
   it("1. All 6 stock bottles start with capState = 'closed'", () => {
     const { result } = renderWorkspace();
-    expect(result.current.state.stockBottles).toHaveLength(6);
+    expect(result.current.state.stockBottles).toHaveLength(23);
     result.current.state.stockBottles.forEach((bottle) => {
       expect(bottle.capState).toBe("closed");
     });
