@@ -26,6 +26,8 @@ import ElectricityLabReportPanel from "@/components/lab/ElectricityLabReportPane
 import ElectricityLabNotebookPanel from "@/components/lab/ElectricityLabNotebookPanel";
 import ElectricityResumeModal from "@/components/lab/ElectricityResumeModal";
 import AITeacherDock from "@/components/simulation/AITeacherDock";
+import AskTeacherWidget from "@/components/help/AskTeacherWidget";
+import { buildElectricityHelpContext } from "@/lib/help/contextAdapters";
 import { COMPONENT_INFO } from "@/lib/component-info";
 import { useSimulationClock } from "@/lib/use-simulation-clock";
 import { useQuality, type QualityLevel } from "@/lib/quality-context";
@@ -1192,11 +1194,13 @@ export default function ElectricityLabScene({ simulation }: ElectricityLabSceneP
 // внутри TaskProgressProvider, поэтому может звать useTaskProgress()
 function TeacherChatPanel({
   simulationId,
+  selectedComponentId,
   components,
   connections,
   solution,
 }: {
   simulationId: string;
+  selectedComponentId: string | null;
   components: CircuitComponent[];
   connections: Connection[];
   solution: CircuitSolution;
@@ -1251,18 +1255,30 @@ function TeacherChatPanel({
       conclusionDraft,
     ]
   );
+  // T10 — the human "Ask Teacher" snapshot is a cheap re-shape of the SAME
+  // LabAIContext already built above for the AI Teacher chat (brief §43:
+  // never re-derived from raw state, never sent anywhere until the
+  // student actually presses Send inside the widget).
+  const helpSnapshot = buildElectricityHelpContext(context, { simulationId, selectedComponentId });
   return (
-    <AITeacherDock>
-      <AITeacherChat
-        simulationId={simulationId}
-        context={context}
-        learningProfile={learningProfile}
-        onMessageSent={() => {
-          recordHintUsed();
-          recordLabHintUsed();
-        }}
-      />
-    </AITeacherDock>
+    <>
+      <div className="pointer-events-none fixed bottom-4 left-4 z-40">
+        <div className="pointer-events-auto">
+          <AskTeacherWidget world="electricity" snapshot={helpSnapshot} />
+        </div>
+      </div>
+      <AITeacherDock>
+        <AITeacherChat
+          simulationId={simulationId}
+          context={context}
+          learningProfile={learningProfile}
+          onMessageSent={() => {
+            recordHintUsed();
+            recordLabHintUsed();
+          }}
+        />
+      </AITeacherDock>
+    </>
   );
 }
 
@@ -1756,6 +1772,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
 
     <TeacherChatPanel
       simulationId={simulation.id}
+      selectedComponentId={state.selectedId}
       components={state.components}
       connections={state.connections}
       solution={solution}

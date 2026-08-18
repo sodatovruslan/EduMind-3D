@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import { useLocale } from "@/lib/locale-context";
 import ConversationList from "@/components/messaging/ConversationList";
@@ -24,7 +25,13 @@ export default function MessagesPage() {
  */
 function MessagesShell() {
   const { t } = useLocale();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // T10 — "Message"/"Call student" links from a help request (elsewhere
+  // in the app, e.g. the Teacher Dashboard) open Messages with the right
+  // conversation already selected, via ?conversation=<id>. Read once at
+  // mount, not re-synced on every param change — normal in-page
+  // conversation switching stays plain client state, exactly as before.
+  const searchParams = useSearchParams();
+  const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get("conversation"));
 
   return (
     <div className="mx-auto flex h-[calc(100vh-9rem)] min-h-[28rem] max-w-[90rem] flex-col gap-4">

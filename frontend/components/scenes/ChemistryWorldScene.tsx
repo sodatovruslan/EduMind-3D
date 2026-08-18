@@ -100,6 +100,8 @@ import GuidedLabPanel from "@/components/lab/GuidedLabPanel";
 import CompletionScreen from "@/components/lab/CompletionScreen";
 import LabNotebookPanel from "@/components/lab/LabNotebookPanel";
 import AITeacherDock from "@/components/simulation/AITeacherDock";
+import AskTeacherWidget from "@/components/help/AskTeacherWidget";
+import { buildChemistryHelpContext } from "@/lib/help/contextAdapters";
 import { useLocale } from "@/lib/locale-context";
 
 // Stage 5.5 v2 — Hazard Simulation: доступность, без учета prefers-reduced-motion
@@ -3189,21 +3191,40 @@ function ChemistryTeacherChatPanel({ simulationId, safetyWarnings }: { simulatio
     ]
   );
 
+  // T10 — "Ask Teacher" (a real human) is intentionally NOT gated by
+  // `modeConfig.showAIExplanations`: that flag hides the AI chat
+  // specifically because Exam Mode never gives direct AI answers, but a
+  // human teacher exercising their own judgment is a different thing —
+  // if anything, more relevant while a student is stuck during an exam.
+  const helpSnapshot = context ? buildChemistryHelpContext(context, { simulationId }) : null;
+
   // Stage 5.7 audit — Exam Mode: "AI никогда не дает прямых ответов, только
   // оценивает" (см. спецификацию режимов). Панель с чатом — это как раз
   // канал прямых ответов, поэтому в Exam Mode она скрыта полностью;
   // оценка результата студент получает через экран завершения/тетрадь,
   // которые не зависят от этой панели.
-  if (!context || !modeConfig.showAIExplanations) return null;
+  const showAIChat = context && modeConfig.showAIExplanations;
+  if (!showAIChat && !helpSnapshot) return null;
   return (
-    <AITeacherDock>
-      <ChemistryTeacherChat
-        simulationId={simulationId}
-        context={context}
-        onMessageSent={recordHintUsed}
-        showFullHints={modeConfig.showFullHints}
-      />
-    </AITeacherDock>
+    <>
+      {helpSnapshot && (
+        <div className="pointer-events-none fixed bottom-4 left-4 z-40">
+          <div className="pointer-events-auto">
+            <AskTeacherWidget world="chemistry" snapshot={helpSnapshot} />
+          </div>
+        </div>
+      )}
+      {showAIChat && context && (
+        <AITeacherDock>
+          <ChemistryTeacherChat
+            simulationId={simulationId}
+            context={context}
+            onMessageSent={recordHintUsed}
+            showFullHints={modeConfig.showFullHints}
+          />
+        </AITeacherDock>
+      )}
+    </>
   );
 }
 

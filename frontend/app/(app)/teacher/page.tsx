@@ -10,6 +10,7 @@ import StudentDetailPanel from "@/components/teacher/StudentDetailPanel";
 import RecentClassResults from "@/components/teacher/RecentClassResults";
 import ModuleBreakdown from "@/components/teacher/ModuleBreakdown";
 import ClassFilter from "@/components/teacher/ClassFilter";
+import HelpRequestsPanel from "@/components/help/HelpRequestsPanel";
 
 export default function TeacherPage() {
   return (
@@ -48,6 +49,7 @@ function TeacherDashboard() {
       <ClassFilter value={classId} onChange={selectClass} />
       <KpiRow classId={classId} />
       <AttentionList classId={classId} onSelect={setSelectedStudentId} />
+      <HelpRequestsPanel />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[22rem_1fr]">
         <div className={selectedStudentId ? "hidden lg:block" : "block"}>

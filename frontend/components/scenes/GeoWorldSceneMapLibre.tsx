@@ -30,6 +30,8 @@ import ClimatePanel from "@/components/geo/maplibre/ClimatePanel";
 import EarthStructureMode from "@/components/geo/maplibre/EarthStructureMode";
 import { useGeoLessonState, type EarthLayerKey } from "@/lib/geo/education/useGeoLessonState";
 import { buildGeoAiContext } from "@/lib/geo/education/aiContext";
+import AskTeacherWidget from "@/components/help/AskTeacherWidget";
+import { buildGeoHelpContext } from "@/lib/help/contextAdapters";
 import type { GeoFeatureInfo } from "@/lib/geo/education/featureInfo";
 import { useEarthScienceLayers, type EarthScienceLabels } from "@/lib/geo/maplibre/useEarthScienceLayers";
 import { useClimateOverlay, CLIMATE_THRESHOLD_C } from "@/lib/geo/maplibre/useClimateOverlay";
@@ -324,6 +326,17 @@ export default function GeoWorldSceneMapLibre({ simulation }: GeoWorldSceneMapLi
           <summary className="cursor-pointer font-mono">AI context (dev-only preview, G6.11 §18 / G6.12 §38)</summary>
           <pre className="mt-2 overflow-x-auto font-mono text-[11px]">{JSON.stringify(aiContext, null, 2)}</pre>
         </details>
+      )}
+
+      {/* T10 — reuses the SAME compact `aiContext` this scene already
+          builds (G6.11 §18/G6.12 §38), just re-shaped for the human
+          "Ask Teacher" flow instead of the still-unwired G6.13 AI Guide. */}
+      {aiContext && (
+        <div className="pointer-events-none fixed bottom-4 left-4 z-40">
+          <div className="pointer-events-auto">
+            <AskTeacherWidget world="geo" snapshot={buildGeoHelpContext(aiContext, { simulationId: simulation.id, lessonTitle: simulation.title })} />
+          </div>
+        </div>
       )}
     </div>
   );

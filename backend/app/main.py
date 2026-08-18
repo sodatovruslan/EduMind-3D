@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import ai, auth, calls, chemistry_saves, classes, messaging, progress, results, simulations, teacher, users, ws_messaging
+from app.routers import ai, auth, calls, chemistry_saves, classes, help, messaging, progress, results, simulations, teacher, users, ws_messaging
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
@@ -26,6 +26,8 @@ app.include_router(classes.router)
 app.include_router(messaging.router)
 app.include_router(ws_messaging.router)
 app.include_router(calls.router)
+app.include_router(help.router)
+app.include_router(help.conversation_router)
 
 
 

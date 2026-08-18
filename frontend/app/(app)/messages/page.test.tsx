@@ -18,6 +18,7 @@ vi.mock("@/lib/auth-context", () => ({
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: replaceMock }),
   usePathname: () => "/messages",
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 let mockConversations: Conversation[] = [];

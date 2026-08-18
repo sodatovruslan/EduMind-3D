@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { getAccessToken } from "@/lib/token-storage";
 import type { Message } from "@/lib/messaging-client";
 import type { Call, CallStatus } from "@/lib/call-client";
+import type { HelpRequest, HelpRequestStatus } from "@/lib/help-client";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const WS_URL = API_URL.replace(/^http/, "ws");
@@ -40,8 +41,15 @@ export type SocketStatus = "connecting" | "connected" | "disconnected";
  * T9 — adds `screen-share:started` / `screen-share:stopped`, the same
  * ephemeral-signal pattern as `media:state` (never persisted, `user_id`
  * always backend-derived), carrying no extra fields.
+ *
+ * T10 — adds `help:<status>` events (see app/services/help_service.py's
+ * `_broadcast_help`), the exact same pattern as `call:<status>`: pushed
+ * to EVERY open socket the student/teacher has, filtered by
+ * conversation_id by the consuming hook (useStudentHelpSession.ts /
+ * ConversationView.tsx), never by this transport itself.
  */
 export type CallSocketEvent = { type: `call:${CallStatus}`; call: Call };
+export type HelpSocketEvent = { type: `help:${HelpRequestStatus}`; help_request: HelpRequest };
 
 export type WebRTCSignalEvent =
   | { type: "webrtc:offer"; call_id: string; user_id: string; sdp: string }
@@ -60,10 +68,15 @@ export type ConversationSocketEvent =
   | { type: "typing:stop"; user_id: string }
   | { type: "presence:update"; user_id: string; online: boolean; last_seen_at: string | null }
   | CallSocketEvent
-  | WebRTCSignalEvent;
+  | WebRTCSignalEvent
+  | HelpSocketEvent;
 
 export function isCallSocketEvent(event: ConversationSocketEvent): event is CallSocketEvent {
   return event.type.startsWith("call:");
+}
+
+export function isHelpSocketEvent(event: ConversationSocketEvent): event is HelpSocketEvent {
+  return event.type.startsWith("help:");
 }
 
 export function isWebRTCSignalEvent(event: ConversationSocketEvent): event is WebRTCSignalEvent {
