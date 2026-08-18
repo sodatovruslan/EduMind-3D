@@ -343,7 +343,7 @@ describe("useWebRTCSession", () => {
 
     expect(stopAllTracksMock).toHaveBeenCalled();
     expect(closeMock).toHaveBeenCalled();
-    expect(releaseMediaOwnershipMock).toHaveBeenCalledWith("call-1", "tab-1");
+    expect(releaseMediaOwnershipMock).toHaveBeenCalledWith("call-1", "student-1", "tab-1");
   });
 
   it("cleans up on unmount even if the call is still active (brief §31)", async () => {

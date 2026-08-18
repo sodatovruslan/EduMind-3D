@@ -67,6 +67,10 @@ export function useWebRTCSession(
   const ownershipRenewalIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMediaOwnerRef = useRef(false);
+  // The userId a media lease was actually claimed under — read back by
+  // cleanup() for release, independent of whatever `currentUserId` the
+  // hook happens to be called with by the time cleanup runs.
+  const ownedForUserIdRef = useRef<string | null>(null);
   // T9 — screen sharing (extends T8's PeerConnectionManager, never a
   // second RTCPeerConnection). `screenStreamRef` is the local capture;
   // `screenSenderRef` is only used for the audio-call add/removeTrack
@@ -108,9 +112,10 @@ export function useWebRTCSession(
       clearInterval(ownershipRenewalIntervalRef.current);
       ownershipRenewalIntervalRef.current = null;
     }
-    if (isMediaOwnerRef.current && activeCallIdRef.current) {
-      releaseMediaOwnership(activeCallIdRef.current, tabIdRef.current);
+    if (isMediaOwnerRef.current && activeCallIdRef.current && ownedForUserIdRef.current) {
+      releaseMediaOwnership(activeCallIdRef.current, ownedForUserIdRef.current, tabIdRef.current);
     }
+    ownedForUserIdRef.current = null;
     isMediaOwnerRef.current = false;
     setIsMediaOwner(false);
     setIsAudioMuted(false);
@@ -212,8 +217,9 @@ export function useWebRTCSession(
       callTypeRef.current = call.call_type;
       politeRef.current = !isCaller;
 
-      const owns = claimMediaOwnership(call.id, tabIdRef.current);
+      const owns = claimMediaOwnership(call.id, currentUserId, tabIdRef.current);
       isMediaOwnerRef.current = owns;
+      ownedForUserIdRef.current = owns ? currentUserId : null;
       setIsMediaOwner(owns);
       if (!owns) {
         // Another tab already owns media for this call — this tab just
@@ -222,7 +228,7 @@ export function useWebRTCSession(
         return;
       }
       ownershipRenewalIntervalRef.current = setInterval(
-        () => renewMediaOwnership(call.id, tabIdRef.current),
+        () => renewMediaOwnership(call.id, currentUserId, tabIdRef.current),
         LEASE_RENEWAL_INTERVAL_MS
       );
 

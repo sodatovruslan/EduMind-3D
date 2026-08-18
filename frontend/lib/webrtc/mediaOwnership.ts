@@ -9,6 +9,20 @@
  * periodically by the owner (pure client-side, no network cost) so a
  * lease naturally goes stale (and becomes claimable) if its owning tab
  * closed without cleanly releasing it.
+ *
+ * Bug fix (found live): the lease key was scoped by `callId` ALONE.
+ * `localStorage` is shared per-origin, not per-logged-in-user, so
+ * testing a real 1:1 call with both participants' accounts open in two
+ * tabs of the SAME browser on one machine — a normal way to solo-test
+ * this feature — made the SECOND participant's tab lose a lease race
+ * against the FIRST participant's own tab, even though they are two
+ * different real people, not two tabs of the same person. That tab then
+ * never called getUserMedia/created a PeerConnection at all, so the
+ * other side's offer went unanswered and timed out as "connection
+ * failed" — misdiagnosable as a media/hardware problem when it was
+ * actually this. Scoping the key by (callId, userId) fixes it: each
+ * participant's OWN multi-tab dedup stays independent of the other
+ * participant's, which is what brief §28 actually asked for.
  */
 const LEASE_PREFIX = "edumind:call-media-owner:";
 const LEASE_STALE_MS = 15_000;
@@ -19,12 +33,12 @@ interface Lease {
   ts: number;
 }
 
-function leaseKey(callId: string): string {
-  return `${LEASE_PREFIX}${callId}`;
+function leaseKey(callId: string, userId: string): string {
+  return `${LEASE_PREFIX}${callId}:${userId}`;
 }
 
-function readLease(callId: string): Lease | null {
-  const raw = localStorage.getItem(leaseKey(callId));
+function readLease(callId: string, userId: string): Lease | null {
+  const raw = localStorage.getItem(leaseKey(callId, userId));
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
@@ -36,26 +50,28 @@ function readLease(callId: string): Lease | null {
 }
 
 /** Returns true if `tabId` now owns (or already owned) the media lease
- * for this call — false if another tab's lease is still fresh. */
-export function claimMediaOwnership(callId: string, tabId: string): boolean {
-  const existing = readLease(callId);
+ * for this call — false if another tab's lease is still fresh. Scoped
+ * per (callId, userId): only dedupes multiple tabs of the SAME real
+ * participant, never blocks the other participant's own tab. */
+export function claimMediaOwnership(callId: string, userId: string, tabId: string): boolean {
+  const existing = readLease(callId, userId);
   if (existing && existing.tabId !== tabId && Date.now() - existing.ts < LEASE_STALE_MS) {
     return false;
   }
-  localStorage.setItem(leaseKey(callId), JSON.stringify({ tabId, ts: Date.now() } satisfies Lease));
+  localStorage.setItem(leaseKey(callId, userId), JSON.stringify({ tabId, ts: Date.now() } satisfies Lease));
   return true;
 }
 
-export function renewMediaOwnership(callId: string, tabId: string): void {
-  const existing = readLease(callId);
+export function renewMediaOwnership(callId: string, userId: string, tabId: string): void {
+  const existing = readLease(callId, userId);
   if (existing && existing.tabId !== tabId) return; // lost the lease somehow — don't steal it back silently
-  localStorage.setItem(leaseKey(callId), JSON.stringify({ tabId, ts: Date.now() } satisfies Lease));
+  localStorage.setItem(leaseKey(callId, userId), JSON.stringify({ tabId, ts: Date.now() } satisfies Lease));
 }
 
-export function releaseMediaOwnership(callId: string, tabId: string): void {
-  const existing = readLease(callId);
+export function releaseMediaOwnership(callId: string, userId: string, tabId: string): void {
+  const existing = readLease(callId, userId);
   if (existing && existing.tabId === tabId) {
-    localStorage.removeItem(leaseKey(callId));
+    localStorage.removeItem(leaseKey(callId, userId));
   }
 }
 
