@@ -151,6 +151,7 @@ export const tg: typeof ru = {
       loginLink: "Ворид шудан",
       genericError: "Бақайдгирӣ ноком шуд. Аз нав кӯшиш кунед.",
     },
+    verify: { title: "Email-ро тасдиқ кунед", emailLabel: "Рамз фиристода шуд ба", codeLabel: "Рамзи шашрақама", codePlaceholder: "000000", submit: "Тасдиқ кардан", submitting: "Санҷиш...", resend: "Рамзи нав фиристодан", resendIn: "Ирсоли такрорӣ пас аз {seconds} с", resent: "Рамзи нав фиристода шуд", backToLogin: "Бозгашт ба воридшавӣ", invalid: "Рамз нодуруст аст", expired: "Муҳлати рамз гузашт. Рамзи нав дархост кунед.", attempts: "Кӯшишҳо аз ҳад зиёданд. Рамзи нав дархост кунед.", sendFailed: "Фиристодани email муяссар нашуд. Аз нав кӯшиш кунед." },
   },
   dashboard: {
     greetingMorning: "Субҳ ба хайр",

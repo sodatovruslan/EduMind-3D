@@ -17,9 +17,11 @@ from app.core.deps import get_current_user
 from app.core.security import create_access_token, create_refresh_token, decode_token
 from app.database import get_db
 from app.models.user import User
-from app.schemas.auth import RefreshRequest, Token
+from app.schemas.auth import EmailPayload, RefreshRequest, Token, VerificationResponse, VerifyEmailRequest
 from app.schemas.user import UserCreate, UserRead
-from app.services.auth_service import authenticate_user, cleanup_test_students, register_user
+from app.services.auth_service import authenticate_user, cleanup_test_students, find_user_by_email, issue_verification_code, register_user, verify_email_code
+from app.services.email_service import EmailDeliveryError, send_verification_email
+from datetime import datetime
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -34,12 +36,48 @@ def _issue_tokens(user_id: str) -> Token:
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
     user = await register_user(db, user_in)
+    code = await issue_verification_code(db, user)
+    try:
+        await send_verification_email(user.email, code)
+    except EmailDeliveryError:
+        user.email_verification_sent_at = None
+        await db.commit()
+        raise HTTPException(status_code=503, detail={"code": "VERIFICATION_EMAIL_FAILED", "email": user.email})
     return user
+
+@router.post("/verify-email", response_model=VerificationResponse)
+async def verify_email(payload: VerifyEmailRequest, db: AsyncSession = Depends(get_db)):
+    user = await verify_email_code(db, payload.email, payload.code)
+    return VerificationResponse(verified=user.email_verified, message="EMAIL_VERIFIED")
+
+@router.post("/resend-verification", response_model=VerificationResponse)
+async def resend_verification(payload: EmailPayload, db: AsyncSession = Depends(get_db)):
+    user = await find_user_by_email(db, payload.email)
+    if not user or user.email_verified:
+        return VerificationResponse(verified=bool(user and user.email_verified), message="VERIFICATION_SENT", cooldown_seconds=settings.EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS)
+    if user.email_verification_sent_at:
+        elapsed = (datetime.utcnow() - user.email_verification_sent_at).total_seconds()
+        if elapsed < settings.EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS:
+            raise HTTPException(status_code=429, detail={"code": "RESEND_COOLDOWN", "retry_after": int(settings.EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS - elapsed) + 1})
+    code = await issue_verification_code(db, user)
+    try:
+        await send_verification_email(user.email, code)
+    except EmailDeliveryError:
+        user.email_verification_sent_at = None
+        await db.commit()
+        raise HTTPException(status_code=503, detail={"code": "VERIFICATION_EMAIL_FAILED"})
+    return VerificationResponse(verified=False, message="VERIFICATION_SENT", cooldown_seconds=settings.EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS)
 
 
 @router.post("/login", response_model=Token)
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
     user = await authenticate_user(db, email=form_data.username, password=form_data.password)
+    if not user.email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "EMAIL_NOT_VERIFIED", "email": user.email},
+        )
+
     return _issue_tokens(user.id)
 
 
@@ -57,6 +95,11 @@ async def refresh(payload: RefreshRequest, db: AsyncSession = Depends(get_db)):
     user = result.scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Пользователь не найден")
+    if not user.email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "EMAIL_NOT_VERIFIED", "email": user.email},
+        )
 
     return _issue_tokens(user.id)
 

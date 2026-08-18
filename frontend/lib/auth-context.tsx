@@ -52,7 +52,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       auth: false,
       body: JSON.stringify({ email, password, full_name: fullName }),
     });
-    await login(email, password);
   }
 
   function logout() {

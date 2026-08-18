@@ -10,7 +10,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, String, Enum, DateTime
+from sqlalchemy import Boolean, Column, String, Enum, DateTime, Integer
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -31,6 +31,11 @@ class User(Base):
     full_name = Column(String(255), nullable=False)
     role = Column(Enum(UserRole), nullable=False, default=UserRole.STUDENT)
     created_at = Column(DateTime, default=datetime.utcnow)
+    email_verified = Column(Boolean, nullable=False, default=False, server_default="false")
+    email_verification_code_hash = Column(String(64), nullable=True)
+    email_verification_expires_at = Column(DateTime, nullable=True)
+    email_verification_sent_at = Column(DateTime, nullable=True)
+    email_verification_attempts = Column(Integer, nullable=False, default=0, server_default="0")
     # T6 — persisted presence: written ONLY on the online->offline transition
     # (last WebSocket connection for this user closing), never on a timer
     # and never per-connection-open, so this survives a backend restart

@@ -87,7 +87,7 @@ describe("RegisterPage — D3 auth shell", () => {
     expect(pushMock).not.toHaveBeenCalled();
   });
 
-  it("submits real fields and redirects to /dashboard on success (contract unchanged)", async () => {
+  it("submits real fields and redirects to email verification", async () => {
     registerMock.mockResolvedValueOnce(undefined);
     renderRegister();
     await act(async () => {});
@@ -98,7 +98,7 @@ describe("RegisterPage — D3 auth shell", () => {
     await act(async () => {});
 
     expect(registerMock).toHaveBeenCalledWith("ivan@example.com", "hunter22", "Иван Иванов");
-    expect(pushMock).toHaveBeenCalledWith("/dashboard");
+    expect(pushMock).toHaveBeenCalledWith("/verify-email?email=ivan%40example.com");
   });
 
   it("shows the server error message on failure without redirecting", async () => {

@@ -36,8 +36,12 @@ export default function RegisterPage() {
     setIsSubmitting(true);
     try {
       await register(email, password, fullName);
-      router.push("/dashboard");
+      router.push(`/verify-email?email=${encodeURIComponent(email.trim().toLowerCase())}`);
     } catch (err) {
+      if (err instanceof ApiError && err.code === "VERIFICATION_EMAIL_FAILED") {
+        router.push(`/verify-email?email=${encodeURIComponent(email.trim().toLowerCase())}&delivery=failed`);
+        return;
+      }
       setError(err instanceof ApiError ? err.message : t.auth.register.genericError);
     } finally {
       setIsSubmitting(false);

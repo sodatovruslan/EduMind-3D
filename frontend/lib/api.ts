@@ -5,10 +5,14 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export class ApiError extends Error {
   status: number;
+  code?: string;
+  detail?: Record<string, unknown>;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code?: string, detail?: Record<string, unknown>) {
     super(message);
     this.status = status;
+    this.code = code;
+    this.detail = detail;
   }
 }
 
@@ -36,9 +40,11 @@ interface RequestOptions extends RequestInit {
   auth?: boolean; // по умолчанию true — большинство эндпоинтов защищены JWT
 }
 
-async function parseErrorDetail(response: Response): Promise<string> {
+async function parseErrorDetail(response: Response): Promise<{ message: string; code?: string; detail?: Record<string, unknown> }> {
   const body = await response.json().catch(() => null);
-  return body?.detail ?? response.statusText ?? "Ошибка запроса";
+  const detail = body?.detail;
+  if (detail && typeof detail === "object") return { message: String(detail.message ?? detail.code ?? response.statusText), code: detail.code, detail };
+  return { message: detail ?? response.statusText ?? "Ошибка запроса" };
 }
 
 /**
@@ -71,7 +77,8 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
   }
 
   if (!response.ok) {
-    throw new ApiError(response.status, await parseErrorDetail(response));
+    const parsed = await parseErrorDetail(response);
+    throw new ApiError(response.status, parsed.message, parsed.code, parsed.detail);
   }
 
   if (response.status === 204) return undefined as T;
@@ -95,7 +102,8 @@ export async function login(email: string, password: string): Promise<TokenPair>
   });
 
   if (!response.ok) {
-    throw new ApiError(response.status, await parseErrorDetail(response));
+    const parsed = await parseErrorDetail(response);
+    throw new ApiError(response.status, parsed.message, parsed.code, parsed.detail);
   }
 
   return response.json();

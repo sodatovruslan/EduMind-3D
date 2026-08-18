@@ -32,6 +32,10 @@ export default function LoginPage() {
       await login(email, password);
       router.push("/dashboard");
     } catch (err) {
+      if (err instanceof ApiError && err.code === "EMAIL_NOT_VERIFIED") {
+        router.push(`/verify-email?email=${encodeURIComponent(email.trim().toLowerCase())}`);
+        return;
+      }
       setError(err instanceof ApiError ? err.message : t.auth.login.genericError);
     } finally {
       setIsSubmitting(false);

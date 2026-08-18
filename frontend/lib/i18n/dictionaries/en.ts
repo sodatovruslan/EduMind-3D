@@ -151,6 +151,7 @@ export const en: typeof ru = {
       loginLink: "Sign in",
       genericError: "Couldn't create your account. Please try again.",
     },
+    verify: { title: "Verify your email", emailLabel: "Code sent to", codeLabel: "Six-digit code", codePlaceholder: "000000", submit: "Verify", submitting: "Verifying...", resend: "Send a new code", resendIn: "Resend in {seconds}s", resent: "A new code was sent", backToLogin: "Back to sign in", invalid: "Invalid code", expired: "The code has expired. Request a new one.", attempts: "Too many attempts. Request a new code.", sendFailed: "The email could not be sent. Please try again." },
   },
   dashboard: {
     greetingMorning: "Good morning",

@@ -21,6 +21,15 @@ class Settings(BaseSettings):
 
     OPENAI_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
+    EMAIL_HOST: str = "smtp.gmail.com"
+    EMAIL_PORT: int = 587
+    EMAIL_USE_TLS: bool = True
+    EMAIL_HOST_USER: str | None = None
+    EMAIL_HOST_PASSWORD: str | None = None
+    DEFAULT_FROM_EMAIL: str | None = None
+    EMAIL_VERIFICATION_EXPIRE_MINUTES: int = 10
+    EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS: int = 60
+    EMAIL_VERIFICATION_MAX_ATTEMPTS: int = 5
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

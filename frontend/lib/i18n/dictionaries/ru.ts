@@ -162,6 +162,7 @@ export const ru = {
       loginLink: "Войти",
       genericError: "Не удалось зарегистрироваться. Попробуйте еще раз.",
     },
+    verify: { title: "Подтвердите email", emailLabel: "Код отправлен на", codeLabel: "Шестизначный код", codePlaceholder: "000000", submit: "Подтвердить", submitting: "Проверяем...", resend: "Отправить новый код", resendIn: "Повторная отправка через {seconds} с", resent: "Новый код отправлен", backToLogin: "Вернуться ко входу", invalid: "Неверный код", expired: "Срок действия кода истёк. Запросите новый.", attempts: "Слишком много попыток. Запросите новый код.", sendFailed: "Не удалось отправить письмо. Попробуйте повторно." },
   },
   dashboard: {
     greetingMorning: "Доброе утро",

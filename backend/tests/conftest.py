@@ -6,12 +6,15 @@ StaticPool нужен, потому что ":memory:" по умолчанию ж
 разные пустые базы.
 """
 import pytest_asyncio
+import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db, get_session_factory
 from app.main import app
+from app.routers import auth as auth_router
+from app.services.auth_service import find_user_by_email
 
 engine = create_async_engine(
     "sqlite+aiosqlite://",
@@ -19,6 +22,30 @@ engine = create_async_engine(
     poolclass=StaticPool,
 )
 TestingSessionLocal = async_sessionmaker(engine, autocommit=False, autoflush=False, expire_on_commit=False)
+
+
+@pytest.fixture(autouse=True)
+def capture_verification_email(monkeypatch, db_session):
+    """Keep legacy API tests authenticated without sending real email.
+
+    Auth-specific tests shadow this fixture and exercise the unverified state.
+    """
+    sent = {}
+    authenticate = auth_router.authenticate_user
+
+    async def fake_send(email, code):
+        sent[email] = code
+
+    async def authenticate_legacy_test_user(db, email, password):
+        user = await find_user_by_email(db_session, email)
+        if user:
+            user.email_verified = True
+            await db_session.commit()
+        return await authenticate(db, email, password)
+
+    monkeypatch.setattr(auth_router, "send_verification_email", fake_send)
+    monkeypatch.setattr(auth_router, "authenticate_user", authenticate_legacy_test_user)
+    return sent
 
 
 @pytest_asyncio.fixture()
