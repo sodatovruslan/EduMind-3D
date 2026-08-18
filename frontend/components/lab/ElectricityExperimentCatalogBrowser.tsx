@@ -6,7 +6,6 @@ import { useElectricityLabExperience } from "@/components/core/ElectricityLabExp
 import { searchElectricityExperiments, type LabDifficulty } from "@/lib/electricity-lab-catalog";
 import { bestElectricityScoreForExperiment, electricityAttemptsForExperiment } from "@/lib/electricity-notebook";
 import { useLocale } from "@/lib/locale-context";
-import { localizeElectricityExperiment } from "@/lib/electricity-lab-localization";
 
 /**
  * Electricity Lab — Laboratory Experiment Catalog UI (Stage E-2, Task 8).
@@ -23,7 +22,7 @@ import { localizeElectricityExperiment } from "@/lib/electricity-lab-localizatio
 const DIFFICULTY_FILTERS: ("all" | LabDifficulty)[] = ["all", "beginner", "intermediate", "advanced"];
 
 export default function ElectricityExperimentCatalogBrowser() {
-  const { t, locale } = useLocale();
+  const { t } = useLocale();
   const c = t.electricity.catalog;
   const DIFFICULTY_LABEL: Record<LabDifficulty, string> = {
     beginner: c.difficultyBeginner,
@@ -40,9 +39,9 @@ export default function ElectricityExperimentCatalogBrowser() {
   const [difficultyFilter, setDifficultyFilter] = useState<"all" | LabDifficulty>("all");
 
   const results = useMemo(() => {
-    const bySearch = searchElectricityExperiments("").map((experiment) => localizeElectricityExperiment(experiment, locale)).filter((experiment) => !query.trim() || `${experiment.title} ${experiment.description}`.toLocaleLowerCase(locale).includes(query.trim().toLocaleLowerCase(locale)));
+    const bySearch = searchElectricityExperiments(query);
     return bySearch.filter((e) => difficultyFilter === "all" || e.difficulty === difficultyFilter);
-  }, [query, difficultyFilter, locale]);
+  }, [query, difficultyFilter]);
 
   return (
     <div className="rounded-ds-panel border border-border/[0.08] bg-surface p-4" data-testid="electricity-experiment-catalog-browser">

@@ -693,21 +693,6 @@ const shortCircuitInvestigation: ElectricityLabExperiment = {
   ],
 };
 
-function resistorNetworkExperiment(config: { id: string; title: string; description: string; difficulty: LabDifficulty; resistorIds: string[] }): ElectricityLabExperiment {
-  const complete = (ctx: ElectricityLabStepContext) => config.resistorIds.every((id) => Math.abs(ctx.solution.readings[id]?.currentA ?? 0) > 1e-6) && ctx.measurementsRecorded > 0 && isElectricallySafe(ctx);
-  return {
-    id: config.id, title: config.title, description: config.description,
-    goal: config.description, theory: "Закон Ома и узловой анализ определяют токи и падения напряжения во всей сети.",
-    difficulty: config.difficulty, estimatedMinutes: 12,
-    requiredComponents: config.resistorIds, successConditions: ["Все выбранные резисторы проводят ток", "Измерение записано"], requiredWiring: [], xpReward: config.difficulty === "advanced" ? 24 : 16,
-    steps: [introStep(config.description), theoryStep("Сравни токи и падения напряжения, рассчитанные Circuit Engine."), equipmentStep("Используй набор резисторов и регулируемый источник."), { id: "assembly", kind: "assembly", instruction: "Собери сеть и добейся тока через каждый выбранный резистор.", isUnlocked: (ctx) => config.resistorIds.every((id) => Math.abs(ctx.solution.readings[id]?.currentA ?? 0) > 1e-6) }, { id: "measurement", kind: "measurement", instruction: "Запиши показания приборов.", isUnlocked: (ctx) => ctx.measurementsRecorded > 0 }, conclusionStep("Объясни распределение тока и напряжения в собранной сети."), finishStep({ isComplete: complete })],
-    isComplete: complete, questions: [],
-  };
-}
-
-const seriesResistors = resistorNetworkExperiment({ id: "elec-intermediate-series-resistors", title: "Последовательное соединение резисторов", description: "Собери последовательную цепь с резисторами 47 Ω и 100 Ω и сравни падения напряжения.", difficulty: "intermediate", resistorIds: ["resistor_47", "resistor_100"] });
-const parallelResistors = resistorNetworkExperiment({ id: "elec-advanced-parallel-resistors", title: "Параллельное соединение резисторов", description: "Собери параллельные ветви с резисторами 220 Ω и 470 Ω и сравни токи ветвей.", difficulty: "advanced", resistorIds: ["resistor_220", "resistor_470"] });
-
 export const ELECTRICITY_LAB_CATALOG: ElectricityLabExperiment[] = [
   measureCurrent,
   measureVoltage,
@@ -717,8 +702,6 @@ export const ELECTRICITY_LAB_CATALOG: ElectricityLabExperiment[] = [
   voltageInfluence,
   fuseOverload,
   shortCircuitInvestigation,
-  seriesResistors,
-  parallelResistors,
 ];
 
 export function getElectricityLabExperiment(id: string): ElectricityLabExperiment | undefined {

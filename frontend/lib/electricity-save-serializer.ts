@@ -8,7 +8,6 @@
 import type { CircuitComponent, Connection } from "./circuit-engine";
 import type { ElectricityMeasurement } from "./electricity-notebook";
 import type { ElectricityEvidenceEvent } from "./electricity-evidence";
-import { mergeElectricityInventory } from "./electricity-inventory";
 import {
   type ElectricitySaveSnapshotV1,
   type ElectricitySaveValidationResult,
@@ -133,7 +132,7 @@ export function hydrateElectricitySave(snapshot: ElectricitySaveSnapshotV1): Hyd
   }
   const startedAtMs = Date.parse(snapshot.experiment.startedAt);
   return {
-    components: mergeElectricityInventory(snapshot.circuit.components),
+    components: snapshot.circuit.components,
     connections: snapshot.circuit.connections,
     experimentId: snapshot.experiment.experimentId,
     currentStepIndex: snapshot.experiment.currentStepIndex,

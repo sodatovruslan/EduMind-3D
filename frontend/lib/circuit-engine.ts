@@ -35,7 +35,6 @@ export interface CircuitComponent {
   // undefined — компонент использует свою дефолтную позицию по кругу (см.
   // DEFAULT_COMPONENT_POSITIONS в ElectricityLabScene.tsx).
   position?: [number, number, number];
-  meterMode?: "voltage" | "current" | "resistance";
 }
 
 export interface Connection {

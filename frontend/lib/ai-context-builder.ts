@@ -2,7 +2,6 @@ import type { CircuitComponent, CircuitSolution, Connection } from "@/lib/circui
 import type { TaskDefinition, TaskStatus, TaskValidationResult } from "@/lib/task-engine";
 import type { ElectricityLabExperiment, ElectricityLabStep } from "@/lib/electricity-lab-catalog";
 import type { ElectricityMeasurement, ElectricityNotebookEntry } from "@/lib/electricity-notebook";
-import { readMultimeter, type MultimeterMode, type MultimeterStatus } from "@/lib/multimeter";
 
 /**
  * AI Context Builder (Stage 3, расширено в Stage E-2/E-3) — единственное
@@ -50,7 +49,6 @@ export interface LabAIContext {
   };
   connections: { from: string; to: string }[];
   components: { id: string; kind: string }[];
-  multimeter: { mode: MultimeterMode; status: MultimeterStatus; value: number | null; unit: string } | null;
   labExperience: LabExperienceAIContext | null;
 }
 
@@ -157,8 +155,6 @@ export function buildAIContext(params: {
   const fuse = components.find((c) => c.kind === "fuse");
   const bulb = components.find((c) => c.kind === "bulb");
   const bulbReading = bulb ? solution.readings[bulb.id] : undefined;
-  const multimeter = components.find((c) => c.id === "multimeter");
-  const multimeterReading = multimeter ? readMultimeter(multimeter.meterMode ?? "voltage", components, connections) : null;
 
   return {
     currentTask: { id: task.id, title: task.title, difficulty: task.difficulty },
@@ -183,7 +179,6 @@ export function buildAIContext(params: {
     },
     connections: connections.map((c) => ({ from: c.terminals[0], to: c.terminals[1] })),
     components: components.map((c) => ({ id: c.id, kind: c.kind })),
-    multimeter: multimeterReading,
     labExperience: labExperiment
       ? buildLabExperienceAIContext(
           labExperiment,
