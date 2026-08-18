@@ -178,6 +178,25 @@ export default function GeoWorldSceneMapLibre({ simulation }: GeoWorldSceneMapLi
     setFeatureInfo(null);
   }, []);
 
+  // QA FIX — реальная жалоба владельца продукта: нажатие на кнопку слоя в
+  // GeoLessonPanel (плоская панель под картой, G6.11) логировало действие
+  // и меняло текстовую карточку, но НИКАК не отражалось "на самой Земле" —
+  // в отличие от старого рендерера, где клик по слою сразу показывал
+  // cutaway. Теперь показывает: сам разрез живёт в Earth Structure Mode
+  // (G6.12, единственное место, где MapLibre-сцена вообще может показать
+  // внутреннее строение Земли, §3 — карта физически не режется), поэтому
+  // клик по слою здесь сразу переключает в этот режим с уже выбранным
+  // слоем — тот же `explore_layer` contract, тот же прогресс/scoring, но
+  // теперь с реальным визуальным ответом.
+  const handleExploreLayerFromLessonPanel = useCallback(
+    (layer: EarthLayerKey) => {
+      void lesson.exploreLayer(layer);
+      setEarthStructureMode(true);
+      setFeatureInfo(null);
+    },
+    [lesson]
+  );
+
   // G6.11 §18 / G6.12 §38 — renderer-independent, компактный AI-контекст.
   // G6.12 расширяет его активными Earth Science слоями/выбранным объектом/
   // сценарием климата/режимом Earth Structure — НЕ сырым GeoJSON (§38).
@@ -315,7 +334,7 @@ export default function GeoWorldSceneMapLibre({ simulation }: GeoWorldSceneMapLi
           isSubmitting={lesson.isSubmitting}
           error={lesson.error}
           completionScore={lesson.completionScore}
-          onExploreLayer={lesson.exploreLayer}
+          onExploreLayer={handleExploreLayerFromLessonPanel}
           onComplete={() => void lesson.completeAttempt()}
           canComplete={lesson.actionsLog.length > 0}
         />
