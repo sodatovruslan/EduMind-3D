@@ -1,14 +1,21 @@
 import asyncio
+import logging
 import smtplib
 from email.message import EmailMessage
 
 from app.config import settings
+
+logger = logging.getLogger("uvicorn.error")
 
 class EmailDeliveryError(RuntimeError):
     pass
 
 def _send(email: str, code: str) -> None:
     if not settings.EMAIL_HOST_USER or not settings.EMAIL_HOST_PASSWORD:
+        # Local development without SMTP: print the code to the backend console instead.
+        if settings.ENVIRONMENT == "development":
+            logger.warning("[DEV] Verification code for %s: %s", email, code)
+            return
         raise EmailDeliveryError("SMTP is not configured")
     message = EmailMessage()
     message["Subject"] = "EduMind verification code"
