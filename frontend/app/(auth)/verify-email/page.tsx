@@ -2,14 +2,14 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { Button } from "@/components/design-system";
 import { ApiError, apiFetch } from "@/lib/api";
 import { useLocale } from "@/lib/locale-context";
 
 const COOLDOWN_SECONDS = 60;
 
-export default function VerifyEmailPage() {
+function VerifyEmailContent() {
   const router = useRouter();
   const params = useSearchParams();
   const { t } = useLocale();
@@ -75,4 +75,13 @@ export default function VerifyEmailPage() {
     <Button type="button" variant="ghost" disabled={busy || cooldown > 0 || !email} onClick={resend} className="mt-3 w-full">{cooldown > 0 ? copy.resendIn.replace("{seconds}", String(cooldown)) : copy.resend}</Button>
     <p className="mt-4 text-center"><Link href="/login" className="text-accent hover:underline">{copy.backToLogin}</Link></p>
   </>;
+}
+
+// useSearchParams() needs a Suspense boundary for the production build (static prerender).
+export default function VerifyEmailPage() {
+  return (
+    <Suspense fallback={null}>
+      <VerifyEmailContent />
+    </Suspense>
+  );
 }
