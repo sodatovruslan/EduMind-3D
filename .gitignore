@@ -12,3 +12,8 @@ test-results/
 playwright-report/
 frontend/test-results/
 frontend/playwright-report/
+# logs, build caches, local env, scratch artifacts
+*.log
+*.tsbuildinfo
+.env.local
+artifacts/
