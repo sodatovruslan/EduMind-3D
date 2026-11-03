@@ -8,7 +8,7 @@ export const en: typeof ru = {
     getStarted: "Get Started",
     signIn: "Sign In",
     openDashboard: "Open Dashboard",
-    exploreWorlds: "Explore Worlds",
+    exploreWorlds: "See the labs",
     close: "Close",
     language: "Language",
     theme: "Appearance",
@@ -18,10 +18,10 @@ export const en: typeof ru = {
     rotate: "Rotate",
   },
   nav: {
-    worlds: "Worlds",
-    howItWorks: "How It Works",
-    students: "For Students",
-    teachers: "For Teachers",
+    worlds: "Labs",
+    howItWorks: "About",
+    students: "Features",
+    teachers: "Analytics",
     signIn: "Sign In",
     getStarted: "Get Started",
     openDashboard: "Open Dashboard",
@@ -34,9 +34,9 @@ export const en: typeof ru = {
     headlineLine1: "Don't just read science —",
     headlineLine2: "step inside it.",
     subcopy:
-      "EduMind 3D turns physics, chemistry and geography into interactive worlds where students learn through experiment, interaction and direct exploration.",
+      "Virtual 3D labs for physics, chemistry and geography. Students run experiments right in the browser — no chemicals, no expensive equipment, no risk.",
     ctaPrimary: "Get Started",
-    ctaSecondary: "Explore Worlds",
+    ctaSecondary: "See the labs",
     subjectsLine: "Physics · Chemistry · Geography",
   },
   heroHud: {
@@ -45,10 +45,10 @@ export const en: typeof ru = {
     geo: { title: "GeoWorld", subtitle: "Explore the planet" },
   },
   worlds: {
-    eyebrow: "Three Worlds",
-    title: "Explore the EduMind worlds",
-    subtitle: "Each world is a full 3D laboratory, not a textbook illustration.",
-    cta: "Open world",
+    eyebrow: "Physics · Chemistry · Geography",
+    title: "Three virtual labs",
+    subtitle: "Real 3D experiments, not textbook pictures. Everything runs in the browser.",
+    cta: "Open",
     items: {
       electricity: {
         name: "Electricity Lab",
@@ -71,16 +71,16 @@ export const en: typeof ru = {
     },
   },
   howItWorks: {
-    eyebrow: "How It Works",
+    eyebrow: "Three steps",
     title: "Learn by doing",
     steps: [
-      { title: "Choose a world", description: "Electricity, chemistry or geography — start with what you're learning right now." },
+      { title: "Choose a subject", description: "Physics, chemistry or geography — start with what you're learning right now." },
       { title: "Interact", description: "Build circuits, mix substances, spin the globe — hands-on, in real 3D." },
       { title: "Understand", description: "Work through guided steps, get hints, and track your progress." },
     ],
   },
   students: {
-    eyebrow: "For Students",
+    eyebrow: "Features",
     title: "Learn by doing",
     subtitle: "Real 3D laboratories instead of static illustrations.",
     features: [
@@ -91,7 +91,7 @@ export const en: typeof ru = {
     ],
   },
   teachers: {
-    eyebrow: "For Teachers",
+    eyebrow: "Analytics",
     title: "See your class, clearly",
     subtitle: "EduMind doesn't replace the teacher — it surfaces what's easy to miss otherwise.",
     features: [
@@ -100,20 +100,8 @@ export const en: typeof ru = {
       { title: "Where students actually struggle", description: "See weak topics and recurring mistakes, not just a final grade." },
     ],
   },
-  aiTeacher: {
-    eyebrow: "AI Teacher",
-    title: "Guidance exactly when it's needed",
-    description:
-      "The AI Teacher sees the current state of the experiment and answers questions grounded in what's actually happening — a support for learning, not a replacement for it.",
-  },
-  finalCta: {
-    title: "Ready to enter the lesson?",
-    subtitle: "Open your first world and learn by interacting, not memorizing.",
-    ctaPrimary: "Get Started",
-    ctaSecondary: "Explore Worlds",
-  },
   footer: {
-    description: "An interactive learning platform — physics, chemistry and geography as 3D worlds you learn by experimenting in.",
+    description: "Virtual 3D labs for physics, chemistry and geography — for schools and students.",
     navTitle: "Navigation",
     accountTitle: "Account",
     rights: "© 2026 EduMind 3D",
@@ -125,8 +113,8 @@ export const en: typeof ru = {
       hidePassword: "Hide password",
     },
     visual: {
-      title: "Welcome to the EduMind universe",
-      subtitle: "Electricity, chemistry and geography — as interactive 3D worlds you explore with your own hands.",
+      title: "Welcome to EduMind 3D",
+      subtitle: "Physics, chemistry and geography — 3D experiments you run with your own hands.",
     },
     login: {
       title: "Sign in to EduMind 3D",
@@ -169,13 +157,13 @@ export const en: typeof ru = {
       recentLabel: "Recent work",
       recentCta: "Open again",
       emptyTitle: "No lessons yet",
-      emptyBody: "Choose a world below to start your first experiment.",
+      emptyBody: "Choose a lab below to start your first experiment.",
       lastSavedLabel: "Saved",
     },
     worlds: {
-      title: "Explore the worlds",
-      subtitle: "Each world is an interactive 3D laboratory.",
-      empty: "No simulations available in this world yet.",
+      title: "Labs",
+      subtitle: "Pick a subject and start an experiment.",
+      empty: "No experiments in this lab yet.",
       enterCta: "Enter",
       difficultyLabel: "Difficulty",
       availableLabel: "Available",
@@ -218,7 +206,7 @@ export const en: typeof ru = {
     nextStep: {
       title: "What's next?",
       weakTopicText: "Revisit \"{topic}\"",
-      exploreWorldText: "Try {world} — you haven't explored it yet",
+      exploreWorldText: "Try {world} — you haven't been here yet",
       openWorldCta: "Open",
       exploreCta: "Explore",
     },
@@ -229,7 +217,7 @@ export const en: typeof ru = {
     },
     teacherFallback: {
       title: "My simulations",
-      subtitle: "An overview of the available worlds. The student panel isn't shown to teachers — use the Students section instead.",
+      subtitle: "An overview of the available labs. The student panel isn't shown to teachers — use the Students section instead.",
     },
   },
   profile: {
@@ -903,8 +891,8 @@ export const en: typeof ru = {
       emptyTitle: "Select a student",
       emptyBody: "Click a student on the left to see their detailed analytics.",
       identityJoined: "Joined",
-      moduleBreakdownTitle: "By world",
-      moduleBreakdownEmpty: "No results in any world yet.",
+      moduleBreakdownTitle: "By subject",
+      moduleBreakdownEmpty: "No results in any subject yet.",
       recentMistakesTitle: "Recent mistakes",
       recentMistakesEmpty: "No mistakes recorded.",
       achievementsEmpty: "No achievements yet.",
@@ -917,7 +905,7 @@ export const en: typeof ru = {
       title: "Recent class activity",
       columnStudent: "Student",
       columnExperiment: "Experiment",
-      columnWorld: "World",
+      columnWorld: "Subject",
       columnScore: "Score",
       columnDate: "Date",
       empty: "No completed labs in the class yet.",

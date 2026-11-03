@@ -9,8 +9,8 @@ import { en } from "@/lib/i18n/dictionaries/en";
 import type { User } from "@/lib/types";
 
 // jsdom не реализует IntersectionObserver — framer-motion's `whileInView`
-// (WorldsShowcase/HowItWorks/ForStudents/ForTeachers/AITeacherHighlight/
-// FinalCta) синхронно бросает при mount без него. Минимальный стаб — тот
+// (WorldsShowcase/HowItWorks/ForStudents/ForTeachers)
+// синхронно бросает при mount без него. Минимальный стаб — тот
 // же прием, что и with matchMedia в theme-context.test.tsx.
 class IntersectionObserverStub {
   observe() {}
@@ -84,13 +84,15 @@ describe("HomePage ('/') — D2 public landing", () => {
     signInLinks.forEach((link) => expect(link.getAttribute("href")).toBe("/login"));
   });
 
-  it("adapts CTAs to 'Open Dashboard' → /dashboard when a user is authenticated", async () => {
+  it("navbar 'Sign in' goes straight to /dashboard when a user is authenticated", async () => {
     mockUser = { id: "u1", email: "a@b.com", full_name: "Test User", role: "student", created_at: "2026-01-01" };
     renderLanding();
     await act(async () => {});
 
     expect(screen.queryByRole("link", { name: ru.common.getStarted })).toBeNull();
-    expect(screen.queryByRole("link", { name: ru.nav.signIn })).toBeNull();
+    const signInLinks = screen.getAllByRole("link", { name: ru.nav.signIn });
+    expect(signInLinks.length).toBeGreaterThan(0);
+    signInLinks.forEach((link) => expect(link.getAttribute("href")).toBe("/dashboard"));
 
     const dashboardLinks = screen.getAllByRole("link", { name: ru.nav.openDashboard });
     expect(dashboardLinks.length).toBeGreaterThan(0);

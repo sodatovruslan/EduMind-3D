@@ -15,11 +15,11 @@ export const LOCALE_LABELS: Record<Locale, string> = {
   tg: "Тоҷикӣ",
 };
 
-// короткие коды для переключателя языка в navbar (RU / EN / TG)
+// короткие коды для переключателя языка в navbar (RU / EN / TJ)
 export const LOCALE_SHORT_LABELS: Record<Locale, string> = {
   ru: "RU",
   en: "EN",
-  tg: "TG",
+  tg: "TJ",
 };
 
 export function isLocale(value: string | null): value is Locale {

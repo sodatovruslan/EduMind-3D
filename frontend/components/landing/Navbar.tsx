@@ -44,20 +44,9 @@ export default function LandingNavbar() {
         <div className="hidden items-center gap-3 lg:flex">
           <LocaleSwitcher />
           <ThemeToggle />
-          {user ? (
-            <ButtonLink href="/dashboard" variant="primary" className="px-4">
-              {t.nav.openDashboard}
-            </ButtonLink>
-          ) : (
-            <>
-              <Link href="/login" className="ds-focus-ring rounded-ds-control px-3 py-2 text-ds-body text-text-secondary transition-colors hover:text-text-primary">
-                {t.nav.signIn}
-              </Link>
-              <ButtonLink href="/register" variant="primary" className="px-4">
-                {t.nav.getStarted}
-              </ButtonLink>
-            </>
-          )}
+          <ButtonLink href={user ? "/dashboard" : "/login"} variant="primary" className="px-4">
+            {t.nav.signIn}
+          </ButtonLink>
         </div>
 
         <button
@@ -97,20 +86,14 @@ export default function LandingNavbar() {
                 <ThemeToggle />
               </div>
 
-              {user ? (
-                <ButtonLink href="/dashboard" variant="primary" onClick={() => setMobileOpen(false)} className="text-center">
-                  {t.nav.openDashboard}
-                </ButtonLink>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  <ButtonLink href="/login" variant="secondary" onClick={() => setMobileOpen(false)} className="text-center">
-                    {t.nav.signIn}
-                  </ButtonLink>
-                  <ButtonLink href="/register" variant="primary" onClick={() => setMobileOpen(false)} className="text-center">
-                    {t.nav.getStarted}
-                  </ButtonLink>
-                </div>
-              )}
+              <ButtonLink
+                href={user ? "/dashboard" : "/login"}
+                variant="primary"
+                onClick={() => setMobileOpen(false)}
+                className="text-center"
+              >
+                {t.nav.signIn}
+              </ButtonLink>
             </GlassPanel>
           </motion.div>
         )}

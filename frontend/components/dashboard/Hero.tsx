@@ -16,7 +16,7 @@ function useGreeting(): "greetingMorning" | "greetingAfternoon" | "greetingEveni
 
 /**
  * D5.1 — Student Home hero. Reworked with an atmospheric background band
- * (same 3-accent radial-gradient recipe as the Landing's FinalCta/AuthShell
+ * (same 3-accent radial-gradient recipe as the AuthShell
  * visual side, kept faint) so the page reads as the same product from the
  * first pixel, and the real level/XP/streak pulse moved into a compact
  * glass badge (§6 of the D5.1 brief explicitly calls a "compact progress

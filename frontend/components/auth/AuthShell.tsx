@@ -4,7 +4,7 @@ import Link from "next/link";
 import { MotionConfig, motion } from "framer-motion";
 import { Box } from "lucide-react";
 import { useLocale } from "@/lib/locale-context";
-import { LocaleSwitcher, Surface, ThemeToggle } from "@/components/design-system";
+import { Surface } from "@/components/design-system";
 import HeroVisual from "@/components/landing/HeroVisual";
 
 /**
@@ -16,8 +16,9 @@ import HeroVisual from "@/components/landing/HeroVisual";
  * Desktop: split layout — atmospheric visual side (reused HeroVisual, own
  * brand mark) + focused Surface (solid, not glass — dense form content
  * follows the same glass-vs-solid rule as the rest of Design V2, §26).
- * Mobile: visual side hidden entirely, form becomes the sole surface with
- * its own top bar (back-to-Landing + Locale/Theme).
+ * Mobile: visual side hidden entirely; the form is the only surface, with
+ * the logo above it as the way back to Landing. No top bar: language and
+ * theme are chosen on Landing and persist here.
  */
 export default function AuthShell({ children }: { children: React.ReactNode }) {
   const { t } = useLocale();
@@ -60,27 +61,20 @@ export default function AuthShell({ children }: { children: React.ReactNode }) {
 
         {/* form side */}
         <div className="flex flex-1 flex-col">
-          <div className="flex items-center justify-between p-4 sm:p-6 lg:justify-end">
-            <Link
-              href="/"
-              className="ds-focus-ring flex items-center gap-2 rounded-ds-control font-headline text-sm font-bold text-text-primary lg:hidden"
-            >
-              <Box className="text-accent" size={20} />
-              {t.auth.common.backToHome}
-            </Link>
-            <div className="flex items-center gap-2">
-              <LocaleSwitcher />
-              <ThemeToggle />
-            </div>
-          </div>
-
-          <div className="flex flex-1 items-center justify-center px-4 pb-16 sm:px-6">
+          <div className="flex flex-1 items-center justify-center px-4 py-10 sm:px-6">
             <motion.div
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.35 }}
               className="w-full max-w-sm"
             >
+              <Link
+                href="/"
+                className="ds-focus-ring mb-6 flex items-center justify-center gap-2 rounded-ds-control font-headline text-sm font-bold text-text-primary lg:hidden"
+              >
+                <Box className="text-accent" size={20} />
+                {t.auth.common.backToHome}
+              </Link>
               <Surface elevated className="p-8">
                 {children}
               </Surface>

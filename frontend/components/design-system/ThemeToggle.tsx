@@ -1,22 +1,21 @@
 "use client";
 
-import { Monitor, Moon, Sun } from "lucide-react";
+import { Moon, Sun } from "lucide-react";
 import { useTheme, type ThemePreference } from "@/lib/theme-context";
 import { useLocale } from "@/lib/locale-context";
 
 /**
- * Design System V2 §25/§27 — Light/Dark/System switcher. Reads/writes
- * ThemeProvider (lib/theme-context.tsx); selection persists across
- * sessions and "System" stays live-subscribed to the OS preference.
+ * Light/Dark switcher. Until the user picks one, the theme follows the OS
+ * (ThemeProvider defaults to "system"); the button for the theme currently
+ * shown is highlighted.
  */
-const OPTIONS: Array<{ value: ThemePreference; labelKey: "themeLight" | "themeDark" | "themeSystem"; icon: typeof Sun }> = [
+const OPTIONS: Array<{ value: ThemePreference; labelKey: "themeLight" | "themeDark"; icon: typeof Sun }> = [
   { value: "light", labelKey: "themeLight", icon: Sun },
   { value: "dark", labelKey: "themeDark", icon: Moon },
-  { value: "system", labelKey: "themeSystem", icon: Monitor },
 ];
 
 export default function ThemeToggle() {
-  const { theme, setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
   const { t } = useLocale();
 
   return (
@@ -26,7 +25,7 @@ export default function ThemeToggle() {
       className="ds-glass inline-flex items-center gap-1 rounded-ds-control p-1"
     >
       {OPTIONS.map(({ value, labelKey, icon: Icon }) => {
-        const isActive = theme === value;
+        const isActive = resolvedTheme === value;
         const label = t.common[labelKey];
         return (
           <button

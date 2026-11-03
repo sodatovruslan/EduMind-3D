@@ -8,8 +8,6 @@ import {
   HowItWorks,
   ForStudents,
   ForTeachers,
-  AITeacherHighlight,
-  FinalCta,
   Footer,
 } from "@/components/landing";
 
@@ -17,8 +15,8 @@ import {
  * Public Landing (D2 — EDUMIND_DESIGN_SYSTEM_V2.md D2 notes). `/` now
  * renders the real product landing instead of redirect-only logic — an
  * authenticated user visiting `/` still sees it (CTAs adapt to "Open
- * Dashboard" instead of "Get Started"/"Sign In", see LandingNavbar/Hero/
- * FinalCta). No authenticated sidebar/navbar here: this route lives
+ * Dashboard" instead of "Get Started"/"Sign In", see LandingNavbar/Hero).
+ * No authenticated sidebar/navbar here: this route lives
  * outside app/(app)/layout.tsx, so components/ui/Sidebar+Navbar (the
  * legacy shell) never mount on it.
  *
@@ -36,8 +34,6 @@ export default function HomePage() {
           <HowItWorks />
           <ForStudents />
           <ForTeachers />
-          <AITeacherHighlight />
-          <FinalCta />
         </main>
         <Footer />
       </div>

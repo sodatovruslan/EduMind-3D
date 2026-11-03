@@ -4,6 +4,4 @@ export { default as WorldsShowcase } from "./WorldsShowcase";
 export { default as HowItWorks } from "./HowItWorks";
 export { default as ForStudents } from "./ForStudents";
 export { default as ForTeachers } from "./ForTeachers";
-export { default as AITeacherHighlight } from "./AITeacherHighlight";
-export { default as FinalCta } from "./FinalCta";
 export { default as Footer } from "./Footer";

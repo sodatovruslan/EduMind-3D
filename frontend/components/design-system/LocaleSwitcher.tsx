@@ -4,7 +4,7 @@ import { LOCALES, LOCALE_SHORT_LABELS, LOCALE_LABELS } from "@/lib/i18n/locales"
 import { useLocale } from "@/lib/locale-context";
 
 /**
- * Design System V2 (D2) — RU/EN/TG language switcher. Reads/writes
+ * Design System V2 (D2) — RU/EN/TJ language switcher. Reads/writes
  * LocaleProvider (lib/locale-context.tsx); selection persists across
  * sessions. Same visual pattern as ThemeToggle for consistency.
  */

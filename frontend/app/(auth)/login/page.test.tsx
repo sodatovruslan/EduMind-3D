@@ -64,13 +64,13 @@ describe("LoginPage — D3 auth shell", () => {
     cleanup();
   });
 
-  it("renders inside the auth shell (back-to-Landing link, ThemeToggle, LocaleSwitcher present)", async () => {
+  it("renders inside the auth shell (back-to-Landing link, no top bar with theme/language switchers)", async () => {
     renderLogin();
     await act(async () => {});
 
     expect(screen.getAllByRole("link", { name: /EduMind 3D/i }).length).toBeGreaterThan(0);
-    expect(screen.getByRole("radiogroup", { name: "Тема оформления" })).toBeDefined();
-    expect(screen.getByRole("radiogroup", { name: "Язык" })).toBeDefined();
+    expect(screen.queryByRole("radiogroup", { name: "Тема оформления" })).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: "Язык" })).toBeNull();
   });
 
   it("has no forgot-password link or flow (not supported by the backend contract)", async () => {
@@ -81,16 +81,16 @@ describe("LoginPage — D3 auth shell", () => {
     expect(screen.queryByText(/forgot password/i)).toBeNull();
   });
 
-  it("switching language updates the visible auth copy", async () => {
+  it("uses the language chosen earlier on Landing (persisted locale)", async () => {
     renderLogin();
     await act(async () => {});
-
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(ru.auth.login.title);
+    cleanup();
 
-    fireEvent.click(screen.getAllByRole("radio", { name: "English" })[0]);
-
-    const heading = await screen.findByRole("heading", { level: 1 });
-    expect(heading.textContent).toBe(en.auth.login.title);
+    window.localStorage.setItem("edumind:locale", "en");
+    renderLogin();
+    await act(async () => {});
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(en.auth.login.title);
   });
 
   it("submits email/password and redirects to /dashboard on success (contract unchanged)", async () => {
