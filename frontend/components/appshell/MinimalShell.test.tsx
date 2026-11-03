@@ -42,6 +42,8 @@ describe("MinimalShell — D4 immersive route shell", () => {
   });
 
   it("provides QualityProvider to its children (required by Chemistry/Electricity useQuality())", async () => {
+    // Default quality depends on CPU cores; pin to 4 so the result doesn't depend on the test machine.
+    vi.spyOn(navigator, "hardwareConcurrency", "get").mockReturnValue(4);
     render(
       <MinimalShell>
         <QualityConsumer />

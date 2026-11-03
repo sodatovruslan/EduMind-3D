@@ -10,6 +10,13 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
+from passlib.context import CryptContext
+
+from app.core import security
+
+# Production bcrypt costs ~0.7s per hash; tests register many users, so use the
+# minimum cost here. Only affects the test process.
+security.pwd_context = CryptContext(schemes=["bcrypt"], bcrypt__rounds=4)
 
 from app.database import Base, get_db, get_session_factory
 from app.main import app
