@@ -17,3 +17,6 @@ frontend/playwright-report/
 *.tsbuildinfo
 .env.local
 artifacts/
+
+# Markdown docs stay local, not in git
+*.md

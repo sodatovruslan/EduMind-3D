@@ -28,35 +28,6 @@ async def _seed_simlab_simulation(db_session) -> Simulation:
     return simulation
 
 
-async def test_mix_reagents_action_returns_reaction_result(client, db_session):
-    headers = await _register_and_login(client)
-    simulation = await _seed_simlab_simulation(db_session)
-
-    response = await client.post(
-        f"/api/simulations/{simulation.id}/action",
-        json={"action_type": "mix_reagents", "payload": {"reagent_a": "hcl", "reagent_b": "naoh"}},
-        headers=headers,
-    )
-
-    assert response.status_code == 200
-    result = response.json()["result"]
-    assert result["is_exothermic"] is True
-    assert result["gas_released"] is False
-
-
-async def test_mix_unknown_reagents_returns_400(client, db_session):
-    headers = await _register_and_login(client)
-    simulation = await _seed_simlab_simulation(db_session)
-
-    response = await client.post(
-        f"/api/simulations/{simulation.id}/action",
-        json={"action_type": "mix_reagents", "payload": {"reagent_a": "water", "reagent_b": "sand"}},
-        headers=headers,
-    )
-
-    assert response.status_code == 400
-
-
 async def test_complete_simulation_creates_lab_result_with_score(client, db_session):
     headers = await _register_and_login(client)
     simulation = await _seed_simlab_simulation(db_session)

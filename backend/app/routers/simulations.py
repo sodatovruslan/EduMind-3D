@@ -21,7 +21,6 @@ from app.services.geography_engine import (
     get_layer_info,
 )
 from app.services.grader_service import compute_score
-from app.services.simulation_engine import compute_reaction
 
 router = APIRouter(prefix="/api/simulations", tags=["simulations"])
 
@@ -78,25 +77,6 @@ async def run_action(
     simulation = result.scalar_one_or_none()
     if simulation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Симуляция не найдена")
-
-    if simulation.module == SimulationModule.SIMLAB and action.action_type == "mix_reagents":
-        reagent_a = action.payload.get("reagent_a")
-        reagent_b = action.payload.get("reagent_b")
-        reaction = compute_reaction(reagent_a, reagent_b)
-        if reaction is None:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Неизвестная пара реагентов")
-        return SimulationActionResponse(
-            action_type=action.action_type,
-            result={
-                "product_name": reaction.product_name,
-                "result_color": reaction.result_color,
-                "gas_released": reaction.gas_released,
-                "is_exothermic": reaction.is_exothermic,
-                "delta_temperature_c": reaction.delta_temperature_c,
-                "precipitate_formed": reaction.precipitate_formed,
-                "precipitate_color": reaction.precipitate_color,
-            },
-        )
 
     if simulation.module == SimulationModule.GEO3D and action.action_type == "explore_continent":
         lat = action.payload.get("lat")

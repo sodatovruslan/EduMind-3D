@@ -43,7 +43,7 @@ test("Dashboard shows exactly the 3 real simulations, no test/archived cards", a
 
     await page.goto("http://localhost:3000/dashboard", { waitUntil: "domcontentloaded", timeout: 20_000 });
 
-    const cards = page.locator('[href^="/simlab/"], [href^="/geo3d/"], [href^="/electricity_lab/"], [href^="/chemistry_world/"]');
+    const cards = page.locator('[href^="/geo3d/"], [href^="/electricity_lab/"], [href^="/chemistry_world/"]');
     await expect(cards).toHaveCount(3, { timeout: 15_000 });
 
     const titles = await cards.locator("h3").allTextContents();
