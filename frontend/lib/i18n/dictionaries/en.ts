@@ -384,7 +384,20 @@ export const en: typeof ru = {
 
   electricity: {
     hud: {
-      terminalLegend: "The gold dots are terminals you can connect wires to. Hover over a component to see its name.",
+      qualityLow: "Low",
+      qualityMedium: "Medium",
+      qualityHigh: "High",
+      tabTraining: "Training",
+      tabLabs: "Lab works",
+      tabsAria: "Lab mode",
+      settings: "Settings",
+      componentNames: { battery: "Battery", resistor: "Resistor", bulb: "Lamp", switch: "Switch", ammeter: "Ammeter", voltmeter: "Voltmeter", fuse: "Fuse" },
+      wrongConnection: "Wrong connection",
+      unitV: "V",
+      unitOhm: "Ω",
+      unitA: "A",
+      releaseOnTerminal: "Release on a terminal · Esc to cancel",
+      terminalLegend: "The dots on the devices are terminals. Press on a terminal and drag a wire to another one. Click a wire to remove it.",
       voltageLabel: "Source voltage",
       resistanceLabel: "Resistor resistance",
       clockHint: "Only controls the spark animation and session timer. Current and voltage are always computed instantly via Ohm's law, regardless of this button.",
@@ -556,7 +569,7 @@ export const en: typeof ru = {
   sandboxHud: {
     modeLabel: "Mode:",
     modeSandbox: "Free roam (Sandbox)",
-    modeOrbit: "Table view (Orbit)",
+    modeOrbit: "Table view",
     fullscreenEnter: "Fullscreen",
     fullscreenExit: "Exit fullscreen",
     fullscreenEnterAria: "Enter fullscreen",

@@ -4,6 +4,38 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import type { CircuitComponent, CircuitSolution, Connection } from "@/lib/circuit-engine";
 import { TASKS, TaskStatus, deriveTaskStatus, validateTask, type TaskDefinition, type TaskValidationResult } from "@/lib/task-engine";
 import { getMyProgress, submitTaskEvent, type LearningProfile } from "@/lib/progress-client";
+import { useOptionalAuth } from "@/lib/auth-context";
+
+// Прогресс по заданиям (номер текущего, выполненные, XP) хранится в браузере
+// отдельно для каждого ученика и лаборатории, чтобы обновление страницы не
+// возвращало к заданию 1.
+interface StoredTaskProgress {
+  taskIndex: number;
+  completedIds: string[];
+  totalXp: number;
+}
+
+function progressKey(userId: string | undefined, simulationId: string): string {
+  return `edumind:task-progress:${userId ?? "anon"}:${simulationId}`;
+}
+
+function loadProgress(key: string): StoredTaskProgress | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StoredTaskProgress;
+    const taskIndex = Math.min(Math.max(0, Math.floor(parsed.taskIndex ?? 0)), TASKS.length - 1);
+    const known = new Set(TASKS.map((t) => t.id));
+    return {
+      taskIndex,
+      completedIds: (parsed.completedIds ?? []).filter((id) => known.has(id)),
+      totalXp: Math.max(0, Number(parsed.totalXp) || 0),
+    };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Владение состоянием прогресса заданий (текущее задание/XP), вынесенное
@@ -52,17 +84,33 @@ export function TaskProgressProvider({
   components,
   connections,
   solution,
+  onAdvance,
   children,
 }: {
   simulationId: string;
   components: CircuitComponent[];
   connections: Connection[];
   solution: CircuitSolution;
+  // вызывается при переходе к следующему заданию, до того как оно станет
+  // текущим — сцена может подготовить стол (например, "сломать" цепь)
+  onAdvance?: (nextTask: TaskDefinition) => void;
   children: React.ReactNode;
 }) {
-  const [taskIndex, setTaskIndex] = useState(0);
-  const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
-  const [totalXp, setTotalXp] = useState(0);
+  const auth = useOptionalAuth();
+  const storageKey = progressKey(auth?.user?.id, simulationId);
+  const [stored] = useState(() => loadProgress(storageKey));
+  const [taskIndex, setTaskIndex] = useState(stored?.taskIndex ?? 0);
+  const [completedIds, setCompletedIds] = useState<Set<string>>(() => new Set(stored?.completedIds ?? []));
+  const [totalXp, setTotalXp] = useState(stored?.totalXp ?? 0);
+
+  useEffect(() => {
+    try {
+      const data: StoredTaskProgress = { taskIndex, completedIds: Array.from(completedIds), totalXp };
+      window.localStorage.setItem(storageKey, JSON.stringify(data));
+    } catch {
+      // приватный режим / переполненное хранилище — прогресс просто не переживёт перезагрузку
+    }
+  }, [storageKey, taskIndex, completedIds, totalXp]);
   const [learningProfile, setLearningProfile] = useState<LearningProfile | null>(null);
   const [newAchievements, setNewAchievements] = useState<string[]>([]);
   const [repeatedMistakeCode, setRepeatedMistakeCode] = useState<string | null>(null);
@@ -164,7 +212,11 @@ export function TaskProgressProvider({
     status,
     result,
     isLastTask: taskIndex === TASKS.length - 1,
-    advance: () => setTaskIndex((i) => Math.min(i + 1, TASKS.length - 1)),
+    advance: () => {
+      const next = Math.min(taskIndex + 1, TASKS.length - 1);
+      if (next !== taskIndex) onAdvance?.(TASKS[next]);
+      setTaskIndex(next);
+    },
     learningProfile,
     newAchievements,
     clearNewAchievements: () => setNewAchievements([]),

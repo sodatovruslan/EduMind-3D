@@ -239,6 +239,7 @@ export default function CanvasShell({
         />
 
         <OrbitControls
+          makeDefault
           enabled={cameraMode === "sandbox" ? false : orbitEnabled}
           enableDamping
           dampingFactor={0.08}

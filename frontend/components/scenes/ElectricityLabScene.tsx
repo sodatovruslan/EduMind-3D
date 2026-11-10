@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { Html, QuadraticBezierLine, MeshTransmissionMaterial, useGLTF } from "@react-three/drei";
-import { Play, Pause, RotateCcw, AlertTriangle } from "lucide-react";
+import { Play, Pause, RotateCcw, AlertTriangle, Settings } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import CanvasShell from "@/components/scenes/CanvasShell";
 import AITeacherChat from "@/components/ai/AITeacherChat";
@@ -28,7 +28,8 @@ import ElectricityResumeModal from "@/components/lab/ElectricityResumeModal";
 import AITeacherDock from "@/components/simulation/AITeacherDock";
 import AskTeacherWidget from "@/components/help/AskTeacherWidget";
 import { buildElectricityHelpContext } from "@/lib/help/contextAdapters";
-import { COMPONENT_INFO } from "@/lib/component-info";
+import AnalogMeter, { METER_TERMINALS } from "@/components/electricity/AnalogMeter";
+import { LabBench, NameTag } from "@/components/electricity/LabBench";
 import { useSimulationClock } from "@/lib/use-simulation-clock";
 import { useQuality, type QualityLevel } from "@/lib/quality-context";
 import { useFullscreen } from "@/lib/useFullscreen";
@@ -52,6 +53,8 @@ import { explainError } from "@/lib/error-explanations";
 import { submitLabCompleted } from "@/lib/progress-client";
 import type { Simulation } from "@/lib/types";
 import { useLocale } from "@/lib/locale-context";
+import { TaskStatus, type TaskDefinition } from "@/lib/task-engine";
+import { planBreak, planShort } from "@/lib/electricity-faults";
 
 // Guided Onboarding: наведение курсора в любую точку компонента (не только
 // на клемму) показывает всплывающую подпись с названием — общий хук вместо
@@ -76,17 +79,21 @@ function useHoverTooltip(cursor?: "pointer" | "grab") {
   };
 }
 
-function TooltipLabel({ label, position = [0, 0.55, 0] as [number, number, number] }: { label: string; position?: [number, number, number] }) {
-  return (
-    <Html position={position} center distanceFactor={8} style={{ pointerEvents: "none" }}>
-      <div className="pointer-events-none whitespace-nowrap rounded-lg border border-white/10 bg-slate-900/90 px-2 py-1 text-xs text-slate-100 shadow-lg">
-        {label}
-      </div>
-    </Html>
-  );
+// локализованное имя компонента для табличек на столе и подсказки "E — взять"
+function useComponentName(id: string): string {
+  const { t } = useLocale();
+  return (t.electricity.hud.componentNames as Record<string, string>)[id] ?? id;
+}
+
+// табличка лежит на столе прямо перед компонентом: смещение задаётся
+// относительно группы компонента, поэтому вычитаем её высоту
+function tagOffset(position: [number, number, number], forward = 0.5): [number, number, number] {
+  return [0, 0.02 - position[1], forward];
 }
 
 const BULB_RATED_POWER_W = 18;
+// лампа крупнее остальных деталей — это главный «индикатор» опыта
+const BULB_SCALE = 1.4;
 
 // фиксированная раскладка стенда: компоненты не перетаскиваются по столу
 // (это отдельная фича на будущее) — интерактивность сосредоточена на
@@ -103,7 +110,6 @@ const INITIAL_COMPONENTS: CircuitComponent[] = [
 
 // латунь/медь для контактов и наконечников проводов — единая палитра
 // "металла" по всей сцене вместо нейтрального серого
-const BRASS_COLOR = "#c9a227";
 const COPPER_COLOR = "#b87333";
 
 // Visual Realism Upgrade: готовые CC0 GLB-модели (battery/bulb/switch/
@@ -115,13 +121,11 @@ const MODEL_PATHS = {
   battery: "/models/electricity/battery.glb",
   bulb: "/models/electricity/bulb.glb",
   switch: "/models/electricity/switch.glb",
-  multimeter: "/models/electricity/multimeter.glb",
 } as const;
 
 useGLTF.preload(MODEL_PATHS.battery);
 useGLTF.preload(MODEL_PATHS.bulb);
 useGLTF.preload(MODEL_PATHS.switch);
-useGLTF.preload(MODEL_PATHS.multimeter);
 
 // клонируем сцену модели (useGLTF кэширует и делит один и тот же граф между
 // вызовами), один раз включаем тени и клонируем материалы явно — Object3D.
@@ -202,56 +206,6 @@ function useSwitchModel(targetSize: number) {
   }, [scene, targetSize]);
 }
 
-// процедурная текстура столешницы (шум + пара царапин) — тот же прием,
-// что и градиентный фон в CanvasShell (CanvasTexture), без внешних файлов
-function useLabBenchTexture() {
-  const texture = useMemo(() => {
-    const canvas = document.createElement("canvas");
-    canvas.width = 512;
-    canvas.height = 512;
-    const ctx = canvas.getContext("2d");
-    if (ctx) {
-      ctx.fillStyle = "#20262f";
-      ctx.fillRect(0, 0, 512, 512);
-      for (let i = 0; i < 3000; i++) {
-        const x = Math.random() * 512;
-        const y = Math.random() * 512;
-        const shade = 15 + Math.random() * 20;
-        ctx.fillStyle = `rgba(${shade + 25},${shade + 30},${shade + 38},0.35)`;
-        ctx.fillRect(x, y, 1, 1);
-      }
-      ctx.strokeStyle = "rgba(148,163,184,0.12)";
-      ctx.lineWidth = 1;
-      for (let i = 0; i < 16; i++) {
-        const x1 = Math.random() * 512;
-        const y1 = Math.random() * 512;
-        ctx.beginPath();
-        ctx.moveTo(x1, y1);
-        ctx.lineTo(x1 + (Math.random() - 0.5) * 140, y1 + (Math.random() - 0.5) * 50);
-        ctx.stroke();
-      }
-    }
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(3, 1.3);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    return tex;
-  }, []);
-
-  useEffect(() => () => texture.dispose(), [texture]);
-  return texture;
-}
-
-function Workbench() {
-  const benchTexture = useLabBenchTexture();
-  return (
-    <mesh position={[0, -0.05, 0]} receiveShadow>
-      <boxGeometry args={[9, 0.1, 4]} />
-      <meshStandardMaterial map={benchTexture} roughness={0.55} metalness={0.1} bumpMap={benchTexture} bumpScale={0.002} />
-    </mesh>
-  );
-}
-
 // Stage E-2 (Task 4 — Interactive Guidance): подсветка нужной клеммы
 // теперь может приходить из двух источников — одноразового Guided
 // Onboarding (useTutorial) и текущего шага "Сборка" выбранной
@@ -271,13 +225,15 @@ function useSuggestedTerminals(): [string, string] | null {
 // сохранённой позиции (component.position === undefined) — уже существующие
 // сохранения/тесты, не знающие о position, продолжают работать один в один.
 const DEFAULT_COMPONENT_POSITIONS: Record<string, [number, number, number]> = {
-  battery: [-3.2, 0.28, 0],
-  resistor: [-1.5, 0.28, 0],
-  bulb: [0.2, 0.6, 0],
-  switch: [1.9, 0.1, 0],
-  ammeter: [3.2, 0.28, -0.45],
-  voltmeter: [-1.5, 1.05, 0.9],
-  fuse: [1.4, 0.28, -1.6],
+  // задний ряд — приборы и лампа, лицом к ученику
+  voltmeter: [-2.3, 0.45, -1.0],
+  bulb: [0, 0.84, -1.0],
+  ammeter: [2.3, 0.45, -1.0],
+  // передний ряд — источник, ключ, резистор, предохранитель
+  battery: [-2.8, 0.14, 0.9],
+  switch: [-0.95, 0.1, 0.9],
+  resistor: [0.95, 0.15, 0.9],
+  fuse: [2.8, 0.11, 0.9],
 };
 
 // Immersive interaction acceptance fix — комната для WASD-перемещения
@@ -305,9 +261,12 @@ function useComponentPlacement(componentId: string) {
   const committedPosition = state.components.find((c) => c.id === componentId)?.position ?? defaultPosition;
   const isDragging = draggingComponentId === componentId;
   const position = isDragging && previewPosition ? previewPosition : committedPosition;
+  const controls = useThree((st) => st.controls) as { enabled: boolean } | null;
 
   function onPointerDown(e: ThreeEvent<PointerEvent>) {
     e.stopPropagation();
+    // как и у клемм: камера не должна крутиться, пока тащим деталь
+    if (controls) controls.enabled = false;
     startDrag(componentId, committedPosition);
   }
 
@@ -318,7 +277,10 @@ function Battery() {
   const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("grab");
   const { position, isDragging, onPointerDown } = useComponentPlacement("battery");
   const suggestedTerminals = useSuggestedTerminals();
-  const info = COMPONENT_INFO.battery;
+  const { state } = useExperimentState();
+  const { t } = useLocale();
+  const name = useComponentName("battery");
+  const voltage = state.components.find((c) => c.id === "battery")?.voltageV ?? 12;
   // targetSize=0.9 — та же длина, что была у процедурного cylinderGeometry
   // (args={[0.22, 0.22, 0.9, 24]}), поэтому клеммы ниже остаются на месте.
   // Модель уже авторски смоделирована лежащей на боку (её собственный
@@ -359,7 +321,7 @@ function Battery() {
       <Html position={[0.4, 0.32, 0]} center distanceFactor={8} style={{ pointerEvents: "none" }}>
         <div className="pointer-events-none text-lg font-bold leading-none text-slate-300">−</div>
       </Html>
-      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} />}
+      {(hovered || isDragging) && <NameTag text={`${name} · ${voltage} ${t.electricity.hud.unitV}`} position={tagOffset(position)} />}
     </group>
   );
 }
@@ -369,16 +331,20 @@ function Resistor() {
   const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("grab");
   const { position, isDragging, onPointerDown } = useComponentPlacement("resistor");
   const suggestedTerminals = useSuggestedTerminals();
-  const info = COMPONENT_INFO.resistor;
+  const { state } = useExperimentState();
+  const { t } = useLocale();
+  const name = useComponentName("resistor");
+  const resistance = state.components.find((c) => c.id === "resistor")?.resistanceOhm ?? 4;
   return (
     <group
       position={position}
-      rotation={[0, 0, Math.PI / 2]}
       scale={isDragging ? 1.06 : 1}
       onPointerOver={onPointerOver}
       onPointerOut={onPointerOut}
       onPointerDown={onPointerDown}
     >
+      {(hovered || isDragging) && <NameTag text={`${name} · ${resistance} ${t.electricity.hud.unitOhm}`} position={tagOffset(position)} />}
+      <group rotation={[0, 0, Math.PI / 2]}>
       {/* керамическое тело */}
       <mesh castShadow>
         <cylinderGeometry args={[0.13, 0.13, 0.7, 20]} />
@@ -401,7 +367,7 @@ function Resistor() {
       </mesh>
       <ConnectionPoint id="resistor_a" position={[0, 0.4, 0]} suggested={suggestedTerminals?.includes("resistor_a") ?? false} />
       <ConnectionPoint id="resistor_b" position={[0, -0.4, 0]} suggested={suggestedTerminals?.includes("resistor_b") ?? false} />
-      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0, 0.2]} />}
+      </group>
     </group>
   );
 }
@@ -412,7 +378,7 @@ function Bulb({ brightness }: { brightness: number }) {
   const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("grab");
   const { position, isDragging, onPointerDown } = useComponentPlacement("bulb");
   const suggestedTerminals = useSuggestedTerminals();
-  const info = COMPONENT_INFO.bulb;
+  const name = useComponentName("bulb");
   // targetSize=0.68 — высота старой сборки (цоколь -0.4 .. верх стекла
   // +0.28); yOffset=-0.06 ставит низ модели туда же, где был низ цоколя,
   // чтобы клеммы ниже (провода-выводы) остались на прежнем месте
@@ -452,7 +418,7 @@ function Bulb({ brightness }: { brightness: number }) {
   return (
     <group
       position={position}
-      scale={isDragging ? 1.06 : 1}
+      scale={(isDragging ? 1.06 : 1) * BULB_SCALE}
       onPointerOver={onPointerOver}
       onPointerOut={onPointerOut}
       onPointerDown={onPointerDown}
@@ -461,9 +427,18 @@ function Bulb({ brightness }: { brightness: number }) {
           смоделированы отдельными мешами) вместо процедурного шара+тора */}
       <primitive object={model} />
       <pointLight ref={lightRef} color="#fde047" intensity={0} distance={4} decay={2} />
-      <ConnectionPoint id="bulb_a" position={[-0.42, -0.6, 0]} suggested={suggestedTerminals?.includes("bulb_a") ?? false} />
-      <ConnectionPoint id="bulb_b" position={[0.42, -0.6, 0]} suggested={suggestedTerminals?.includes("bulb_b") ?? false} />
-      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.4, 0]} />}
+      {/* подставка-патрон: на её концах стоят клеммы лампы */}
+      <mesh position={[0, -0.54, 0]} castShadow receiveShadow>
+        <boxGeometry args={[1.0, 0.1, 0.32]} />
+        <meshStandardMaterial color="#2b3440" roughness={0.55} metalness={0.15} />
+      </mesh>
+      <mesh position={[0, -0.44, 0]} castShadow>
+        <cylinderGeometry args={[0.12, 0.14, 0.12, 24]} />
+        <meshStandardMaterial color="#111827" roughness={0.5} />
+      </mesh>
+      <ConnectionPoint id="bulb_a" position={[-0.42, -0.47, 0]} suggested={suggestedTerminals?.includes("bulb_a") ?? false} />
+      <ConnectionPoint id="bulb_b" position={[0.42, -0.47, 0]} suggested={suggestedTerminals?.includes("bulb_b") ?? false} />
+      {(hovered || isDragging) && <NameTag text={name} position={tagOffset(position).map((v) => v / BULB_SCALE) as [number, number, number]} />}
     </group>
   );
 }
@@ -473,7 +448,7 @@ function Switch({ isClosed, onToggle }: { isClosed: boolean; onToggle: () => voi
   const { position, isDragging, onPointerDown } = useComponentPlacement("switch");
   const { consumeJustDragged } = useComponentDrag();
   const suggestedTerminals = useSuggestedTerminals();
-  const info = COMPONENT_INFO.switch;
+  const name = useComponentName("switch");
   // targetSize=0.8 — модель это компактный тумблер (мировой bbox после
   // авторской Z-up→Y-up коррекции: X≈0.13, Y≈0.23, Z≈0.13 — самая длинная
   // ось "вверх", а не "вширь", как у старого плоского рычага box[0.9,...]),
@@ -509,151 +484,96 @@ function Switch({ isClosed, onToggle }: { isClosed: boolean; onToggle: () => voi
       />
       <ConnectionPoint id="switch_a" position={[-0.4, 0.13, 0]} suggested={suggestedTerminals?.includes("switch_a") ?? false} />
       <ConnectionPoint id="switch_b" position={[0.4, 0.13, 0]} suggested={suggestedTerminals?.includes("switch_b") ?? false} />
-      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.35, 0]} />}
+      {(hovered || isDragging) && <NameTag text={name} position={tagOffset(position)} />}
     </group>
   );
 }
 
-function MeterHousing({
-  position,
-  label,
+function Meter({
+  id,
+  symbol,
+  max,
+  majorStep,
   value,
   unit,
   testId,
-  placementStatus = "valid",
-  warningMessage = null,
+  placementStatus,
+  warningMessage,
 }: {
-  position: [number, number, number];
-  label: string;
+  id: "ammeter" | "voltmeter";
+  symbol: string;
+  max: number;
+  majorStep: number;
   value: number;
   unit: string;
   testId: string;
-  // Stage S9.3: неправильное подключение (амперметр параллельно/вольтметр
-  // последовательно) — data-value ниже ВСЕГДА остаётся реальным числом от
-  // production-солвера (ничего не скрываем от тестов/расчётов), но видимый
-  // текст на табло заменяется понятным предупреждением вместо
-  // вводящего в заблуждение числа.
-  placementStatus?: string;
-  warningMessage?: string | null;
+  placementStatus: string;
+  warningMessage: string | null;
 }) {
-  const displayRef = useRef<HTMLDivElement>(null);
-  const displayedValueRef = useRef(value);
-
-  useFrame((_, delta) => {
-    // плавная смена цифр на экране прибора вместо мгновенного скачка —
-    // сам displayedValueRef и содержимое div обновляются напрямую через
-    // ref, а не через React state, чтобы не плодить лишние ре-рендеры
-    // каждый кадр (data-value ниже остается точным для тестов/расчетов)
-    displayedValueRef.current = THREE.MathUtils.lerp(displayedValueRef.current, value, Math.min(1, delta * 5));
-    if (displayRef.current) {
-      displayRef.current.textContent = warningMessage
-        ? "⚠ Неверно"
-        : `${displayedValueRef.current.toFixed(2)} ${unit}`;
-    }
-  });
-
-  // targetSize=0.5 — примерно та же длина, что у старого box[0.55,0.4,0.3]
-  const model = usePreparedGLTF(MODEL_PATHS.multimeter, 0.5);
-
+  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("grab");
+  const { position, isDragging, onPointerDown } = useComponentPlacement(id);
+  const suggestedTerminals = useSuggestedTerminals();
+  const { t } = useLocale();
+  const name = useComponentName(id);
+  const termA = `${id}_a`;
+  const termB = `${id}_b`;
   return (
-    <group position={position}>
-      {/* реалистичная GLB-модель мультиметра как корпус для амперметра и
-          вольтметра — цифровое табло поверх (Html) остаётся как есть */}
-      <group rotation={[0, Math.PI / 2, 0]}>
-        <primitive object={model} />
-      </group>
-      <mesh position={[0, 0.06, 0.151]}>
-        <planeGeometry args={[0.34, 0.22]} />
-        <meshStandardMaterial color="#052e1b" roughness={0.4} metalness={0.1} />
-      </mesh>
-      <Html position={[0, 0.06, 0.16]} center distanceFactor={6} occlude>
-        <div
-          data-testid={testId}
-          data-value={value}
-          data-placement-status={placementStatus}
-          className={`pointer-events-none rounded px-2 py-1 font-mono text-[10px] shadow-[0_0_8px_rgba(16,185,129,0.45)] ${
-            warningMessage ? "bg-red-950/90 text-red-400" : "bg-black/80 text-emerald-400"
-          }`}
-          title={warningMessage ?? undefined}
-        >
-          <div className={`text-[8px] uppercase tracking-widest ${warningMessage ? "text-red-500" : "text-emerald-600"}`}>
-            {label}
-          </div>
-          <div ref={displayRef} className="tabular-nums">
-            {warningMessage ? "⚠ Неверно" : `${value.toFixed(2)} ${unit}`}
-          </div>
-        </div>
-      </Html>
-      {warningMessage && (
-        <Html position={[0, 0.32, 0.16]} center distanceFactor={7} style={{ pointerEvents: "none" }}>
-          <div
-            data-testid={`${testId}-warning`}
-            className="pointer-events-none w-40 whitespace-normal rounded-lg border border-red-400/40 bg-red-950/90 px-2 py-1 text-center text-[10px] leading-tight text-red-200 shadow-lg"
-          >
-            {warningMessage}
-          </div>
-        </Html>
-      )}
+    <group
+      position={position}
+      scale={isDragging ? 1.06 : 1}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+      onPointerDown={onPointerDown}
+    >
+      <AnalogMeter
+        symbol={symbol}
+        max={max}
+        majorStep={majorStep}
+        value={value}
+        unit={unit}
+        testId={testId}
+        placementStatus={placementStatus}
+        warningMessage={warningMessage}
+        wrongLabel={t.electricity.hud.wrongConnection}
+      />
+      <ConnectionPoint id={termA} position={METER_TERMINALS[0]} color="#ef4444" suggested={suggestedTerminals?.includes(termA) ?? false} />
+      <ConnectionPoint id={termB} position={METER_TERMINALS[1]} color="#475569" suggested={suggestedTerminals?.includes(termB) ?? false} />
+      {(hovered || isDragging) && <NameTag text={name} position={tagOffset(position, 0.62)} />}
     </group>
   );
 }
 
 function Ammeter({ currentA, placementStatus, warningMessage }: { currentA: number; placementStatus: string; warningMessage: string | null }) {
-  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("grab");
-  const { position, isDragging, onPointerDown } = useComponentPlacement("ammeter");
-  const suggestedTerminals = useSuggestedTerminals();
-  const info = COMPONENT_INFO.ammeter;
+  const { t } = useLocale();
   return (
-    <group
-      position={position}
-      rotation={[0, Math.PI / 2, 0]}
-      scale={isDragging ? 1.06 : 1}
-      onPointerOver={onPointerOver}
-      onPointerOut={onPointerOut}
-      onPointerDown={onPointerDown}
-    >
-      <MeterHousing
-        position={[0, 0, 0]}
-        label="A"
-        value={currentA}
-        unit="A"
-        testId="ammeter-reading"
-        placementStatus={placementStatus}
-        warningMessage={warningMessage}
-      />
-      <ConnectionPoint id="ammeter_a" position={[0, 0, 0.45]} suggested={suggestedTerminals?.includes("ammeter_a") ?? false} />
-      <ConnectionPoint id="ammeter_b" position={[0, 0, -0.45]} suggested={suggestedTerminals?.includes("ammeter_b") ?? false} />
-      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.3, 0]} />}
-    </group>
+    <Meter
+      id="ammeter"
+      symbol="A"
+      max={5}
+      majorStep={1}
+      value={currentA}
+      unit={t.electricity.hud.unitA}
+      testId="ammeter-reading"
+      placementStatus={placementStatus}
+      warningMessage={warningMessage}
+    />
   );
 }
 
 function Voltmeter({ voltageV, placementStatus, warningMessage }: { voltageV: number; placementStatus: string; warningMessage: string | null }) {
-  const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("grab");
-  const { position, isDragging, onPointerDown } = useComponentPlacement("voltmeter");
-  const suggestedTerminals = useSuggestedTerminals();
-  const info = COMPONENT_INFO.voltmeter;
+  const { t } = useLocale();
   return (
-    <group
-      position={position}
-      scale={isDragging ? 1.06 : 1}
-      onPointerOver={onPointerOver}
-      onPointerOut={onPointerOut}
-      onPointerDown={onPointerDown}
-    >
-      <MeterHousing
-        position={[0, 0, 0]}
-        label="V"
-        value={voltageV}
-        unit="V"
-        testId="voltmeter-reading"
-        placementStatus={placementStatus}
-        warningMessage={warningMessage}
-      />
-      <ConnectionPoint id="voltmeter_a" position={[-0.4, 0, 0]} color={BRASS_COLOR} suggested={suggestedTerminals?.includes("voltmeter_a") ?? false} />
-      <ConnectionPoint id="voltmeter_b" position={[0.4, 0, 0]} color={BRASS_COLOR} suggested={suggestedTerminals?.includes("voltmeter_b") ?? false} />
-      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0.3, 0]} />}
-    </group>
+    <Meter
+      id="voltmeter"
+      symbol="V"
+      max={25}
+      majorStep={5}
+      value={voltageV}
+      unit={t.electricity.hud.unitV}
+      testId="voltmeter-reading"
+      placementStatus={placementStatus}
+      warningMessage={warningMessage}
+    />
   );
 }
 
@@ -702,16 +622,20 @@ function Fuse({ isBlown, justBlown, timeScale }: { isBlown: boolean; justBlown: 
   const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("grab");
   const { position, isDragging, onPointerDown } = useComponentPlacement("fuse");
   const suggestedTerminals = useSuggestedTerminals();
-  const info = COMPONENT_INFO.fuse;
+  const { state } = useExperimentState();
+  const { t } = useLocale();
+  const name = useComponentName("fuse");
+  const rated = state.components.find((c) => c.id === "fuse")?.ratedCurrentA ?? 5;
   return (
     <group
       position={position}
-      rotation={[0, 0, Math.PI / 2]}
       scale={isDragging ? 1.06 : 1}
       onPointerOver={onPointerOver}
       onPointerOut={onPointerOut}
       onPointerDown={onPointerDown}
     >
+      {(hovered || isDragging) && <NameTag text={`${name} · ${rated} ${t.electricity.hud.unitA}`} position={tagOffset(position)} />}
+      <group rotation={[0, 0, Math.PI / 2]}>
       <mesh castShadow>
         <cylinderGeometry args={[0.09, 0.09, 0.5, 16]} />
         <MeshTransmissionMaterial thickness={0.03} roughness={0.1} transmission={0.85} ior={1.4} color={isBlown ? "#1c1917" : "#e0f2fe"} resolution={64} samples={1} />
@@ -723,8 +647,27 @@ function Fuse({ isBlown, justBlown, timeScale }: { isBlown: boolean; justBlown: 
       <FuseParticles active={justBlown} timeScale={timeScale} count={particleCount} />
       <ConnectionPoint id="fuse_a" position={[0, 0.3, 0]} suggested={suggestedTerminals?.includes("fuse_a") ?? false} />
       <ConnectionPoint id="fuse_b" position={[0, -0.3, 0]} suggested={suggestedTerminals?.includes("fuse_b") ?? false} />
-      {(hovered || isDragging) && <TooltipLabel label={`${info.emoji} ${info.name}`} position={[0, 0, 0.2]} />}
+      </group>
     </group>
+  );
+}
+
+// цвета проводов по очереди подключения — как набор лабораторных проводов;
+// красного нет, им подсвечивается провод под курсором ("кликни — удалишь")
+const WIRE_COLORS = ["#2563eb", "#eab308", "#16a34a", "#f97316", "#7c3aed", "#0f172a", "#0891b2", "#db2777"];
+
+// радиус вокруг концов провода, где клик не удаляет провод (зона клеммы)
+const WIRE_END_GUARD = 0.22;
+
+// дуга провода: выходит из клеммы вверх и ложится аркой над столом, чтобы
+// не уходить под столешницу и не протыкать соседние детали
+function wireArc(a: THREE.Vector3, b: THREE.Vector3): THREE.CubicBezierCurve3 {
+  const lift = 0.3 + a.distanceTo(b) * 0.12;
+  return new THREE.CubicBezierCurve3(
+    a,
+    a.clone().add(new THREE.Vector3(0, lift, 0)),
+    b.clone().add(new THREE.Vector3(0, lift, 0)),
+    b
   );
 }
 
@@ -733,7 +676,17 @@ function Fuse({ isBlown, justBlown, timeScale }: { isBlown: boolean; justBlown: 
 // подключении — ощущение физической фиксации. Геометрия строится через
 // useMemo (пересчитывается только когда меняются концы, не каждый кадр)
 // и явно освобождается при размонтировании/пересборке.
-function WireTube({ a, b, onClick }: { a: THREE.Vector3; b: THREE.Vector3; onClick: (e: { stopPropagation: () => void }) => void }) {
+function WireTube({
+  a,
+  b,
+  color,
+  onClick,
+}: {
+  a: THREE.Vector3;
+  b: THREE.Vector3;
+  color: string;
+  onClick: (e: { stopPropagation: () => void }) => void;
+}) {
   const capRef = useRef<THREE.Group>(null);
   const mountedAtRef = useRef(performance.now());
   // Stage S9.8 — Sandbox UX: провод УЖЕ кликабелен (клик — разрыв
@@ -744,10 +697,7 @@ function WireTube({ a, b, onClick }: { a: THREE.Vector3; b: THREE.Vector3; onCli
   const [hovered, setHovered] = useState(false);
 
   const geometry = useMemo(() => {
-    const mid = a.clone().add(b).multiplyScalar(0.5);
-    mid.y -= 0.18; // легкий провис, как у настоящего провода
-    const curve = new THREE.CatmullRomCurve3([a, mid, b]);
-    return new THREE.TubeGeometry(curve, 20, 0.022, 8, false);
+    return new THREE.TubeGeometry(wireArc(a, b), 40, 0.028, 10, false);
   }, [a, b]);
 
   useEffect(() => () => geometry.dispose(), [geometry]);
@@ -766,6 +716,10 @@ function WireTube({ a, b, onClick }: { a: THREE.Vector3; b: THREE.Vector3; onCli
       <mesh
         geometry={geometry}
         onClick={(e: ThreeEvent<MouseEvent>) => {
+          // у самых концов провод проходит через клемму: нажатие там — это
+          // начало/конец протягивания нового провода, а не удаление этого
+          // (иначе повторное соединение тех же клемм стирало старый провод)
+          if (e.point.distanceTo(a) < WIRE_END_GUARD || e.point.distanceTo(b) < WIRE_END_GUARD) return;
           // клик удаляет именно ЭТОТ провод -> сразу после этого мешу
           // нечего будет наводить, и onPointerOut ниже никогда не
           // сработает (R3F не эмулирует pointerleave при размонтировании
@@ -787,10 +741,10 @@ function WireTube({ a, b, onClick }: { a: THREE.Vector3; b: THREE.Vector3; onCli
         castShadow
       >
         <meshStandardMaterial
-          color={hovered ? "#ef4444" : "#18181b"}
+          color={hovered ? "#ef4444" : color}
           emissive={hovered ? "#ef4444" : "#000000"}
           emissiveIntensity={hovered ? 0.6 : 0}
-          roughness={0.7}
+          roughness={0.45}
           metalness={0.05}
         />
       </mesh>
@@ -825,7 +779,7 @@ function Wires() {
 
   return (
     <>
-      {state.connections.map((connection) => {
+      {state.connections.map((connection, index) => {
         const a = getTerminalPosition(connection.terminals[0]);
         const b = getTerminalPosition(connection.terminals[1]);
         if (!a || !b) return null;
@@ -834,6 +788,7 @@ function Wires() {
             key={connection.id}
             a={a}
             b={b}
+            color={WIRE_COLORS[index % WIRE_COLORS.length]}
             onClick={(e) => {
               e.stopPropagation();
               playDisconnect();
@@ -848,6 +803,8 @@ function Wires() {
 
 function PendingWirePreview() {
   const { draggingFrom, pendingPoint, getTerminalPosition } = useWireDrag();
+  const { t } = useLocale();
+  const releaseText = t.electricity.hud.releaseOnTerminal;
   if (!draggingFrom || !pendingPoint) return null;
   const from = getTerminalPosition(draggingFrom);
   if (!from) return null;
@@ -855,7 +812,7 @@ function PendingWirePreview() {
   // а не полноценная trubка — этот превью пересчитывается на каждое
   // движение мыши, тут важна дешевизна, а не детальный объем)
   const mid = from.clone().add(pendingPoint).multiplyScalar(0.5);
-  mid.y -= 0.12;
+  mid.y += 0.3 + from.distanceTo(pendingPoint) * 0.1;
   return (
     <>
       <QuadraticBezierLine
@@ -879,7 +836,7 @@ function PendingWirePreview() {
           className="pointer-events-none whitespace-nowrap rounded-lg border border-amber-400/30 bg-slate-900/90 px-2 py-1 text-[11px] text-amber-200 shadow-lg"
           style={{ transform: "translateY(-20px)" }}
         >
-          Отпустите на клемме для соединения · Esc — отмена
+          {releaseText}
         </div>
       </Html>
     </>
@@ -906,6 +863,8 @@ function ElectricityProximityInteraction({ cameraMode }: { cameraMode: CameraMod
   const [nearestId, setNearestId] = useState<string | null>(null);
   const nearestIdRef = useRef<string | null>(null);
   const carryDistance = 1.1;
+  const { t } = useLocale();
+  const names = t.electricity.hud.componentNames as Record<string, string>;
 
   function resolvePosition(id: string): [number, number, number] {
     return state.components.find((c) => c.id === id)?.position ?? DEFAULT_COMPONENT_POSITIONS[id] ?? [0, 0.28, 0];
@@ -993,7 +952,7 @@ function ElectricityProximityInteraction({ cameraMode }: { cameraMode: CameraMod
   const promptText = isCarrying
     ? "E — отпустить · Esc — отменить"
     : nearestId
-      ? `E — взять: ${COMPONENT_INFO[nearestId]?.name ?? nearestId}`
+      ? `E — взять: ${names[nearestId] ?? nearestId}`
       : null;
 
   if (!promptText) return null;
@@ -1007,10 +966,66 @@ function ElectricityProximityInteraction({ cameraMode }: { cameraMode: CameraMod
   );
 }
 
+// Какие детали нужны в каждом из 6 заданий "Быстрой проверки". Остальных
+// на столе нет, чтобы ученик видел только то, с чем работает. В
+// лабораторных работах (каталог) схема подсказок идёт через все 7 деталей,
+// поэтому там стол показывается целиком.
+const TASK_BENCH_COMPONENTS: Record<string, string[]> = {
+  "task-1-close-loop": ["battery", "switch", "bulb", "resistor"],
+  "task-2-ammeter-series": ["battery", "switch", "bulb", "resistor", "ammeter"],
+  "task-3-voltmeter-parallel": ["battery", "switch", "bulb", "resistor", "voltmeter"],
+  "task-4-target-current": ["battery", "switch", "bulb", "resistor", "ammeter"],
+  "task-5-find-break": ["battery", "switch", "bulb", "resistor"],
+  "task-6-fix-short": ["battery", "switch", "bulb", "resistor"],
+};
+
+// Нижняя панель лаборатории: "Тренировка" (6 коротких заданий) или
+// "Лабораторные работы" (каталог из 8 работ). Одновременно видна только одна.
+export type LabMode = "training" | "labs";
+const LabModeContext = createContext<LabMode>("training");
+const LAB_MODE_KEY = "edumind:electricity-lab-mode";
+
+interface BenchFocus {
+  isHidden: (id: string) => boolean;
+}
+
+function useBenchFocus(): BenchFocus {
+  const { state } = useExperimentState();
+  const { selectedExperiment } = useElectricityLabExperience();
+  const { task } = useTaskProgress();
+  const mode = useContext(LabModeContext);
+  return useMemo(() => {
+    if (mode === "labs" || selectedExperiment) return { isHidden: () => false };
+    const needed = new Set(TASK_BENCH_COMPONENTS[task.id] ?? []);
+    // деталь, к которой уже подключён провод, всегда остаётся на столе
+    const wired = new Set<string>();
+    for (const c of state.components) {
+      if (state.connections.some((conn) => conn.terminals.some((term) => c.terminals.includes(term)))) wired.add(c.id);
+    }
+    const active = (id: string) => needed.size === 0 || needed.has(id) || wired.has(id);
+    return { isHidden: (id: string) => !active(id) };
+  }, [mode, selectedExperiment, task.id, state.components, state.connections]);
+}
+
+/** Warnings the student should actually see: no "fuse bypassed" when the fuse is not on the bench. */
+function useVisibleSafetyWarnings(warnings: SafetyWarning[]): SafetyWarning[] {
+  const focus = useBenchFocus();
+  return useMemo(
+    () => (focus.isHidden("fuse") ? warnings.filter((w) => w.code !== "unsafe_connection") : warnings),
+    [focus, warnings]
+  );
+}
+
+// деталь показывается на столе, только если она нужна в текущем задании
+function BenchSlot({ id, children }: { id: string; children: React.ReactNode }) {
+  const focus = useBenchFocus();
+  return focus.isHidden(id) ? null : <>{children}</>;
+}
+
 function CircuitScene({
   solution,
   timeScale,
-  safetyWarnings,
+  safetyWarnings: allSafetyWarnings,
   cameraMode,
 }: {
   solution: CircuitSolution;
@@ -1019,6 +1034,7 @@ function CircuitScene({
   cameraMode: CameraMode;
 }) {
   const { state, updateComponent, logEvent } = useExperimentState();
+  const safetyWarnings = useVisibleSafetyWarnings(allSafetyWarnings);
   const shortLoggedRef = useRef(false);
   const overloadLoggedRef = useRef(false);
   const unsafeMeasurementLoggedRef = useRef(false);
@@ -1101,10 +1117,17 @@ function CircuitScene({
       <directionalLight position={[1, 4, 6]} intensity={0.35} color="#e0f2fe" />
       <pointLight position={[-2, 2.5, 3]} intensity={0.25} color="#fef3c7" distance={8} decay={2} />
 
-      <Workbench />
-      <Battery />
-      <Resistor />
-      <Bulb brightness={brightness} />
+      <LabBench />
+      <BenchSlot id="battery">
+        <Battery />
+      </BenchSlot>
+      <BenchSlot id="resistor">
+        <Resistor />
+      </BenchSlot>
+      <BenchSlot id="bulb">
+        <Bulb brightness={brightness} />
+      </BenchSlot>
+      <BenchSlot id="switch">
       <Switch
         isClosed={switchComponent?.isClosed ?? true}
         onToggle={() => {
@@ -1114,14 +1137,39 @@ function CircuitScene({
           playSwitchClick();
         }}
       />
-      <Ammeter currentA={ammeterReading} placementStatus={ammeterCheck.status} warningMessage={ammeterWarning} />
-      <Voltmeter voltageV={voltmeterReading} placementStatus={voltmeterCheck.status} warningMessage={voltmeterWarning} />
-      <Fuse isBlown={fuse?.isBlown ?? false} justBlown={Boolean(solution.fuseToBlowId)} timeScale={timeScale} />
+      </BenchSlot>
+      <BenchSlot id="ammeter">
+        <Ammeter currentA={ammeterReading} placementStatus={ammeterCheck.status} warningMessage={ammeterWarning} />
+      </BenchSlot>
+      <BenchSlot id="voltmeter">
+        <Voltmeter voltageV={voltmeterReading} placementStatus={voltmeterCheck.status} warningMessage={voltmeterWarning} />
+      </BenchSlot>
+      <BenchSlot id="fuse">
+        <Fuse isBlown={fuse?.isBlown ?? false} justBlown={Boolean(solution.fuseToBlowId)} timeScale={timeScale} />
+      </BenchSlot>
       <Wires />
       <PendingWirePreview />
       <WireDragSurface y={0.01} size={12} />
       <ComponentDragSurface y={0.011} size={12} />
       <ElectricityProximityInteraction cameraMode={cameraMode} />
+      {/* неверное подключение прибора — компактная плашка в правом верхнем углу сцены (под кнопками),
+          а не окно поверх приборов; сам прибор при этом подсвечен красным */}
+      {(ammeterWarning || voltmeterWarning) && (
+        <Html fullscreen style={{ pointerEvents: "none" }}>
+          <div className="pointer-events-none absolute right-4 top-20 flex max-w-xs flex-col gap-2">
+            {ammeterWarning && (
+              <div data-testid="ammeter-reading-warning" className="rounded-lg border border-red-400/40 bg-red-950/85 px-3 py-2 text-xs leading-snug text-red-100 shadow-lg">
+                ⚠ {ammeterWarning}
+              </div>
+            )}
+            {voltmeterWarning && (
+              <div data-testid="voltmeter-reading-warning" className="rounded-lg border border-red-400/40 bg-red-950/85 px-3 py-2 text-xs leading-snug text-red-100 shadow-lg">
+                ⚠ {voltmeterWarning}
+              </div>
+            )}
+          </div>
+        </Html>
+      )}
     </group>
   );
 }
@@ -1154,14 +1202,19 @@ function ElectricityCanvas({
   const mouseDragActive = !!draggingFrom || (!!draggingComponentId && dragSource === "mouse");
   return (
     <CanvasShell
-      cameraPosition={[3.4, 2.6, 7.4]}
-      target={[0.2, 0.35, -0.6]}
-      floorY={-0.06}
+      cameraPosition={[0, 4.5, 5.3]}
+      target={[0, 0.2, -0.1]}
+      floorY={-0.12}
+      showFloor={false}
       bloomIntensity={0.4}
       quality={quality}
       orbitEnabled={!draggingFrom && !draggingComponentId}
-      minPolarAngle={Math.PI / 6}
-      maxPolarAngle={Math.PI / 2.1}
+      minPolarAngle={0.35}
+      maxPolarAngle={1.15}
+      minDistance={4.5}
+      maxDistance={11}
+      minAzimuthAngle={-0.75}
+      maxAzimuthAngle={0.75}
       cameraMode={cameraMode}
       roomBounds={ELECTRICITY_ROOM_BOUNDS}
       colliders={[]}
@@ -1173,8 +1226,64 @@ function ElectricityCanvas({
   );
 }
 
+// Обучение и задание 1 учат одному и тому же, но обучение ждёт провода в
+// строго определённые клеммы. Если ученик собрал цепь по-своему и задание 1
+// уже засчитано, обучение больше не нужно — закрываем его, чтобы оно не
+// висело "Шаг 4 / 5" во время следующих заданий.
+function TutorialAutoClose() {
+  const { active, skipTutorial } = useTutorial();
+  const { taskIndex, status } = useTaskProgress();
+  const done = taskIndex > 0 || status === TaskStatus.COMPLETED;
+  useEffect(() => {
+    if (active && done) skipTutorial();
+  }, [active, done, skipTutorial]);
+  return null;
+}
+
+// показывает содержимое только в указанном задании тренировки
+function OnlyForTask({ taskId, children }: { taskId: string; children: React.ReactNode }) {
+  const { task } = useTaskProgress();
+  return task.id === taskId ? <>{children}</> : null;
+}
+
+function LabModeTabs({ mode, onChange }: { mode: LabMode; onChange: (mode: LabMode) => void }) {
+  const { t } = useLocale();
+  const tabs: Array<{ id: LabMode; label: string }> = [
+    { id: "training", label: t.electricity.hud.tabTraining },
+    { id: "labs", label: t.electricity.hud.tabLabs },
+  ];
+  return (
+    <div role="tablist" aria-label={t.electricity.hud.tabsAria} className="inline-flex self-start rounded-ds-control bg-text-primary/5 p-1">
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          role="tab"
+          aria-selected={mode === tab.id}
+          data-testid={`lab-mode-${tab.id}`}
+          onClick={() => onChange(tab.id)}
+          className={`ds-focus-ring rounded-ds-control px-4 py-2 text-ds-body font-medium transition-colors ${
+            mode === tab.id ? "bg-surface text-text-primary shadow-ds-sm" : "text-text-secondary hover:text-text-primary"
+          }`}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function VisibleWarnings({
+  warnings,
+  children,
+}: {
+  warnings: SafetyWarning[];
+  children: (visible: SafetyWarning[]) => React.ReactNode;
+}) {
+  return <>{children(useVisibleSafetyWarnings(warnings))}</>;
+}
+
 const QUALITY_OPTIONS: QualityLevel[] = ["low", "medium", "high"];
-const QUALITY_LABEL: Record<QualityLevel, string> = { low: "Низкое", medium: "Среднее", high: "Высокое" };
 
 interface ElectricityLabSceneProps {
   simulation: Simulation;
@@ -1509,7 +1618,7 @@ function ElectricitySandboxOverlay({
 }
 
 function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
-  const { state, addConnection, updateComponent, resetExperiment, actionsLog, logEvent } = useExperimentState();
+  const { state, addConnection, removeConnection, updateComponent, resetExperiment, actionsLog, logEvent } = useExperimentState();
   const { quality, setQuality } = useQuality();
   const { t } = useLocale();
   const clock = useSimulationClock();
@@ -1532,6 +1641,33 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
     () => checkElectricalSafety({ components: state.components, connections: state.connections, solution }),
     [state.components, state.connections, solution]
   );
+
+  const [labMode, setLabModeState] = useState<LabMode>(() => {
+    if (typeof window === "undefined") return "training";
+    return window.localStorage.getItem(LAB_MODE_KEY) === "labs" ? "labs" : "training";
+  });
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  function setLabMode(mode: LabMode) {
+    setLabModeState(mode);
+    try {
+      window.localStorage.setItem(LAB_MODE_KEY, mode);
+    } catch {
+      // без localStorage вкладка просто не запомнится
+    }
+  }
+
+  // задания 5 и 6: лаборатория сама создаёт неисправность в собранной цепи,
+  // чтобы ученику было что искать (иначе задание засчитывалось сразу)
+  function plantFaultFor(task: TaskDefinition) {
+    if (!solution.isCircuitActive || solution.isShortCircuit) return;
+    if (task.id === "task-5-find-break") {
+      const fault = planBreak(state.connections);
+      if (fault?.kind === "remove") removeConnection(fault.connectionId);
+    } else if (task.id === "task-6-fix-short") {
+      const fault = planShort(state.connections);
+      if (fault.kind === "add") addConnection(fault.connection);
+    }
+  }
 
   function handleConnect(fromId: string, toId: string) {
     addConnection({ id: `${fromId}-${toId}-${Date.now()}`, terminals: [fromId, toId] });
@@ -1576,11 +1712,13 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
       components={state.components}
       connections={state.connections}
       solution={solution}
+      onAdvance={plantFaultFor}
     >
     <ElectricityLabExperienceProvider
       simulationId={simulation.id}
       stepContext={{ components: state.components, connections: state.connections, solution }}
     >
+    <LabModeContext.Provider value={labMode}>
     <ComponentDragProvider onMove={handleComponentMove}>
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
     <div className="min-w-0 flex-1 rounded-ds-panel border border-border/[0.08] bg-surface p-3 sm:p-5">
@@ -1610,88 +1748,62 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
         </WireDragProvider>
       </div>
 
-      <div className="ds-glass mt-4 grid grid-cols-1 gap-4 rounded-ds-panel p-4 sm:grid-cols-2">
-        <div className="flex items-center gap-2 text-ds-caption text-text-muted sm:col-span-2" data-testid="terminal-legend">
-          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: BRASS_COLOR }} />
-          {t.electricity.hud.terminalLegend}
+      <div className="ds-glass mt-4 flex flex-col gap-4 rounded-ds-panel p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <LabModeTabs mode={labMode} onChange={setLabMode} />
+          <div className="flex items-center gap-2">
+            <ElectricityResetButton onReset={handleReset} />
+            <button
+              type="button"
+              onClick={() => setSettingsOpen((v) => !v)}
+              aria-expanded={settingsOpen}
+              aria-label={t.electricity.hud.settings}
+              title={t.electricity.hud.settings}
+              data-testid="lab-settings-toggle"
+              className="ds-focus-ring flex h-9 w-9 items-center justify-center rounded-full border border-border/[0.12] text-text-secondary transition-colors hover:text-text-primary"
+            >
+              <Settings size={16} />
+            </button>
+          </div>
         </div>
 
-        <TutorialPanel />
-        <div>
-          <label htmlFor="voltage-slider" className="mb-1 block font-mono text-ds-caption uppercase tracking-widest text-text-muted">
-            {t.electricity.hud.voltageLabel}: {(battery?.voltageV ?? 0).toFixed(1)} В
-          </label>
-          <input
-            id="voltage-slider"
-            type="range"
-            min={1}
-            max={24}
-            step={0.5}
-            value={battery?.voltageV ?? 12}
-            onChange={(e) => handleVoltageChange(Number(e.target.value))}
-            data-testid="voltage-slider"
-            className="w-full accent-accent"
-          />
-        </div>
-
-        <div>
-          <label htmlFor="resistance-slider" className="mb-1 block font-mono text-ds-caption uppercase tracking-widest text-text-muted">
-            {t.electricity.hud.resistanceLabel}: {(resistor?.resistanceOhm ?? 0).toFixed(1)} Ом
-          </label>
-          <input
-            id="resistance-slider"
-            type="range"
-            min={1}
-            max={40}
-            step={0.5}
-            value={resistor?.resistanceOhm ?? 4}
-            onChange={(e) => handleResistanceChange(Number(e.target.value))}
-            data-testid="resistance-slider"
-            className="w-full accent-accent"
-          />
-        </div>
-
-        <div className="flex items-end justify-between gap-2">
-          <div className="flex gap-2">
+        {settingsOpen && (
+          <div className="flex flex-wrap items-center gap-4 rounded-ds-control border border-border/[0.1] p-3 text-ds-caption text-text-secondary">
             <button
               onClick={handleClockToggle}
               data-testid="clock-toggle"
               title={t.electricity.hud.clockHint}
-              className="ds-focus-ring flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-ds-body font-medium text-white transition-all hover:brightness-110"
+              className="ds-focus-ring flex items-center gap-2 rounded-full border border-border/[0.12] px-3 py-1.5 text-ds-caption font-medium text-text-primary hover:bg-text-primary/5"
             >
-              {clock.isRunning ? <Pause size={16} /> : <Play size={16} />}
+              {clock.isRunning ? <Pause size={14} /> : <Play size={14} />}
               {clock.isRunning ? t.electricity.hud.clockPause : t.electricity.hud.clockStart}
             </button>
-            <ElectricityResetButton onReset={handleReset} />
+            <div role="radiogroup" aria-label={t.electricity.hud.qualityAria} className="flex items-center gap-1">
+              <span className="mr-1">{t.electricity.hud.qualityAria}:</span>
+              {QUALITY_OPTIONS.map((level) => (
+                <button
+                  key={level}
+                  onClick={() => setQuality(level)}
+                  role="radio"
+                  aria-checked={quality === level}
+                  data-testid={`quality-${level}`}
+                  className={`ds-focus-ring rounded-full border px-2.5 py-1 transition-colors ${
+                    quality === level ? "border-accent text-accent" : "border-border/[0.12] text-text-muted hover:text-text-primary"
+                  }`}
+                >
+                  {level === "low" ? t.electricity.hud.qualityLow : level === "medium" ? t.electricity.hud.qualityMedium : t.electricity.hud.qualityHigh}
+                </button>
+              ))}
+            </div>
           </div>
-
-          <div role="radiogroup" aria-label={t.electricity.hud.qualityAria} className="flex items-center gap-1 font-mono text-ds-caption text-text-muted">
-            {QUALITY_OPTIONS.map((level) => (
-              <button
-                key={level}
-                onClick={() => setQuality(level)}
-                role="radio"
-                aria-checked={quality === level}
-                data-testid={`quality-${level}`}
-                title={QUALITY_LABEL[level]}
-                className={`ds-focus-ring rounded-full border px-2 py-1 uppercase transition-colors ${
-                  quality === level
-                    ? "border-accent text-accent"
-                    : "border-border/[0.12] text-text-muted hover:text-text-primary"
-                }`}
-              >
-                {level[0]}
-              </button>
-            ))}
-          </div>
-        </div>
+        )}
 
         <div
           data-testid="circuit-status"
           data-active={solution.isCircuitActive}
           data-short={solution.isShortCircuit}
           data-fuse-blown={state.components.find((c) => c.id === "fuse")?.isBlown ?? false}
-          className="rounded-ds-control border border-border/[0.1] bg-surface p-3 text-ds-body text-text-secondary sm:col-span-2"
+          className="text-ds-body text-text-secondary"
         >
           {!solution.isClosedLoop && <p className="text-text-muted">{t.electricity.hud.statusConnect}</p>}
           {solution.isClosedLoop && solution.isShortCircuit && (
@@ -1709,64 +1821,124 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
           )}
         </div>
 
-        {/* Stage S9.4 — Safety System: тот же визуальный язык, что и
-            Chemistry World's safety-warnings баннер (ChemistryWorldScene.tsx) —
-            цвет по severity, data-testid по коду, образовательный текст.
-            Не заменяет circuit-status выше (тот остаётся как есть), а
-            дополняет его структурированными предупреждениями.
-            Stage S9.8 — та же fade/slide-анимация появления/исчезновения,
-            что и у Chemistry World (AnimatePresence), вместо резкого
-            появления/исчезновения — единственная косметическая правка
-            здесь, сам баннер и его данные не тронуты. */}
-        <AnimatePresence>
-          {safetyWarnings.length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: -6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              transition={{ duration: 0.18 }}
-              className="flex flex-col gap-2 sm:col-span-2"
-              data-testid="safety-warnings"
-            >
-              {safetyWarnings.map((w, i) => (
+        <VisibleWarnings warnings={safetyWarnings}>
+          {(safetyWarnings) => (
+            <AnimatePresence>
+              {safetyWarnings.length > 0 && (
                 <motion.div
-                  key={`${w.code}-${i}`}
-                  initial={{ opacity: 0, x: -8 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  data-testid={`safety-warning-${w.code}`}
-                  className={`flex items-center gap-2 rounded-ds-control border p-3 text-ds-body ${
-                    w.severity === "danger" ? "border-danger/40 bg-danger/10 text-danger" : "border-warning/40 bg-warning/10 text-warning"
-                  }`}
+                  initial={{ opacity: 0, y: -6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.18 }}
+                  className="flex flex-col gap-2"
+                  data-testid="safety-warnings"
                 >
-                  <AlertTriangle size={14} className="shrink-0" />
-                  {w.message}
+                  {safetyWarnings.map((w, i) => (
+                    <motion.div
+                      key={`${w.code}-${i}`}
+                      initial={{ opacity: 0, x: -8 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      data-testid={`safety-warning-${w.code}`}
+                      className={`flex items-center gap-2 rounded-ds-control border p-3 text-ds-body ${
+                        w.severity === "danger" ? "border-danger/40 bg-danger/10 text-danger" : "border-warning/40 bg-warning/10 text-warning"
+                      }`}
+                    >
+                      <AlertTriangle size={14} className="shrink-0" />
+                      {w.message}
+                    </motion.div>
+                  ))}
                 </motion.div>
-              ))}
-            </motion.div>
+              )}
+            </AnimatePresence>
           )}
-        </AnimatePresence>
+        </VisibleWarnings>
 
-        <div className="sm:col-span-2">
-          <h3 className="mb-2 font-mono text-ds-caption uppercase tracking-widest text-text-muted">{t.electricity.hud.quickCheckHeading}</h3>
-          <TaskPanel />
-        </div>
-
-        {/* Stage E-2 — Advanced Laboratory Experience: отдельная, более
-            богатая учебная надстройка поверх существующей лаборатории.
-            Не заменяет TaskPanel выше (тот продолжает работать как
-            раньше) — это дополнительный слой: каталог из 8 лабораторных
-            работ с полным циклом (введение/теория/оборудование/сборка/
-            измерение/анализ/вывод), автоматический отчёт и Лабораторный
-            журнал измерений. */}
-        <div className="space-y-4 sm:col-span-2">
-          <h3 className="text-ds-title text-text-primary">{t.electricity.hud.labHeading}</h3>
-          <ElectricityLabExperienceSection />
-          <ElectricityLabNotebookPanel />
-        </div>
+        {labMode === "training" ? (
+          <>
+            <TutorialAutoClose />
+            <TutorialPanel />
+            <TaskPanel />
+            {/* ползунки нужны только в задании "Настрой ток 0.5 А" */}
+            <OnlyForTask taskId="task-4-target-current">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="voltage-slider" className="mb-1 block text-ds-caption font-medium text-text-secondary">
+                {t.electricity.hud.voltageLabel}: {(battery?.voltageV ?? 0).toFixed(1)} {t.electricity.hud.unitV}
+              </label>
+              <input
+                id="voltage-slider"
+                type="range"
+                min={1}
+                max={24}
+                step={0.5}
+                value={battery?.voltageV ?? 12}
+                onChange={(e) => handleVoltageChange(Number(e.target.value))}
+                data-testid="voltage-slider"
+                className="w-full accent-accent"
+              />
+            </div>
+            <div>
+              <label htmlFor="resistance-slider" className="mb-1 block text-ds-caption font-medium text-text-secondary">
+                {t.electricity.hud.resistanceLabel}: {(resistor?.resistanceOhm ?? 0).toFixed(1)} {t.electricity.hud.unitOhm}
+              </label>
+              <input
+                id="resistance-slider"
+                type="range"
+                min={1}
+                max={40}
+                step={0.5}
+                value={resistor?.resistanceOhm ?? 4}
+                onChange={(e) => handleResistanceChange(Number(e.target.value))}
+                data-testid="resistance-slider"
+                className="w-full accent-accent"
+              />
+            </div>
+          </div>
+            </OnlyForTask>
+          </>
+        ) : (
+          <>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="voltage-slider" className="mb-1 block text-ds-caption font-medium text-text-secondary">
+                {t.electricity.hud.voltageLabel}: {(battery?.voltageV ?? 0).toFixed(1)} {t.electricity.hud.unitV}
+              </label>
+              <input
+                id="voltage-slider"
+                type="range"
+                min={1}
+                max={24}
+                step={0.5}
+                value={battery?.voltageV ?? 12}
+                onChange={(e) => handleVoltageChange(Number(e.target.value))}
+                data-testid="voltage-slider"
+                className="w-full accent-accent"
+              />
+            </div>
+            <div>
+              <label htmlFor="resistance-slider" className="mb-1 block text-ds-caption font-medium text-text-secondary">
+                {t.electricity.hud.resistanceLabel}: {(resistor?.resistanceOhm ?? 0).toFixed(1)} {t.electricity.hud.unitOhm}
+              </label>
+              <input
+                id="resistance-slider"
+                type="range"
+                min={1}
+                max={40}
+                step={0.5}
+                value={resistor?.resistanceOhm ?? 4}
+                onChange={(e) => handleResistanceChange(Number(e.target.value))}
+                data-testid="resistance-slider"
+                className="w-full accent-accent"
+              />
+            </div>
+          </div>
+            <ElectricityLabExperienceSection />
+            <ElectricityLabNotebookPanel />
+            <CompleteLabSection simulationId={simulation.id} actionsLog={actionsLog} mountedAtRef={mountedAtRef} />
+          </>
+        )}
 
         <ProgressBanners />
-
-        <CompleteLabSection simulationId={simulation.id} actionsLog={actionsLog} mountedAtRef={mountedAtRef} />
       </div>
     </div>
 
@@ -1779,6 +1951,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
     />
     </div>
     </ComponentDragProvider>
+    </LabModeContext.Provider>
     </ElectricityLabExperienceProvider>
     </TaskProgressProvider>
     </TutorialProvider>

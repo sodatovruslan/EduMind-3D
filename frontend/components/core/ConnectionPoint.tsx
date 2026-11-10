@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import { useFrame, type ThreeEvent } from "@react-three/fiber";
+import { useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import { useWireDrag } from "@/components/core/WireDragProvider";
 import { useComponentDrag } from "@/components/core/ComponentDragProvider";
@@ -34,6 +34,10 @@ export default function ConnectionPoint({ id, position, color = "#c9a227", sugge
   // драга компонента — в состоянии покоя (99% времени) остаётся прежний
   // разовый useEffect ниже, никаких дополнительных затрат в простое.
   const { draggingComponentId } = useComponentDrag();
+  // камера (OrbitControls) ловит нажатие раньше, чем React успеет её
+  // выключить через проп — гасим её сразу, иначе стол проворачивается
+  // в начале каждого протягивания провода
+  const controls = useThree((s) => s.controls) as { enabled: boolean } | null;
   const meshRef = useRef<THREE.Mesh>(null);
   const visibleRef = useRef<THREE.Mesh>(null);
   const glowRef = useRef<THREE.Mesh>(null);
@@ -91,6 +95,7 @@ export default function ConnectionPoint({ id, position, color = "#c9a227", sugge
         ref={meshRef}
         onPointerDown={(e: ThreeEvent<PointerEvent>) => {
           e.stopPropagation();
+          if (controls) controls.enabled = false;
           startDrag(id);
         }}
         onPointerOver={(e: ThreeEvent<PointerEvent>) => {

@@ -395,7 +395,20 @@ export const ru = {
 
   electricity: {
     hud: {
-      terminalLegend: "Золотые точки — это клеммы, к которым можно подключать провода. Наведи курсор на компонент, чтобы увидеть его название.",
+      qualityLow: "Низкое",
+      qualityMedium: "Среднее",
+      qualityHigh: "Высокое",
+      tabTraining: "Тренировка",
+      tabLabs: "Лабораторные работы",
+      tabsAria: "Режим лаборатории",
+      settings: "Настройки",
+      componentNames: { battery: "Батарея", resistor: "Резистор", bulb: "Лампа", switch: "Переключатель", ammeter: "Амперметр", voltmeter: "Вольтметр", fuse: "Предохранитель" },
+      wrongConnection: "Неверное подключение",
+      unitV: "В",
+      unitOhm: "Ом",
+      unitA: "А",
+      releaseOnTerminal: "Отпусти на клемме · Esc — отмена",
+      terminalLegend: "Точки на приборах — это клеммы. Зажми мышь на клемме и протяни провод к другой клемме. Клик по проводу удаляет его.",
       voltageLabel: "Напряжение источника",
       resistanceLabel: "Сопротивление резистора",
       clockHint: "Управляет только анимацией искр и таймером сессии. Ток и напряжение считаются по закону Ома мгновенно и всегда, независимо от этой кнопки.",
@@ -567,7 +580,7 @@ export const ru = {
   sandboxHud: {
     modeLabel: "Режим:",
     modeSandbox: "Свободный (Sandbox)",
-    modeOrbit: "Обзор стола (Orbit)",
+    modeOrbit: "Обзор стола",
     fullscreenEnter: "На весь экран",
     fullscreenExit: "Свернуть",
     fullscreenEnterAria: "Полноэкранный режим",

@@ -384,7 +384,20 @@ export const tg: typeof ru = {
 
   electricity: {
     hud: {
-      terminalLegend: "Нуқтаҳои тиллоӣ клеммаҳое ҳастанд, ки симҳоро ба онҳо пайваст кардан мумкин аст. Курсорро болои компонент нигоҳ дор, то номи онро бинӣ.",
+      qualityLow: "Паст",
+      qualityMedium: "Миёна",
+      qualityHigh: "Баланд",
+      tabTraining: "Машқ",
+      tabLabs: "Корҳои лабораторӣ",
+      tabsAria: "Реҷаи лаборатория",
+      settings: "Танзимот",
+      componentNames: { battery: "Батарея", resistor: "Резистор", bulb: "Лампа", switch: "Калид", ammeter: "Амперметр", voltmeter: "Волтметр", fuse: "Муҳофизкунанда" },
+      wrongConnection: "Пайвасти нодуруст",
+      unitV: "В",
+      unitOhm: "Ом",
+      unitA: "А",
+      releaseOnTerminal: "Дар клемма раҳо кун · Esc — бекор",
+      terminalLegend: "Нуқтаҳо дар асбобҳо клеммаҳо мебошанд. Клеммаро пахш карда, симро то клеммаи дигар каш. Клик ба сим онро нест мекунад.",
       voltageLabel: "Шиддати манбаъ",
       resistanceLabel: "Муқовимати резистор",
       clockHint: "Танҳо анимацияи барқ ва вақтсанҷи сессияро идора мекунад. Ҷараён ва шиддат ҳамеша тибқи қонуни Ом фавран ҳисоб мешаванд, новобаста аз ин тугма.",
@@ -556,7 +569,7 @@ export const tg: typeof ru = {
   sandboxHud: {
     modeLabel: "Реҷа:",
     modeSandbox: "Озод (Sandbox)",
-    modeOrbit: "Назари миз (Orbit)",
+    modeOrbit: "Назари миз",
     fullscreenEnter: "Экрани пурра",
     fullscreenExit: "Баромадан аз экрани пурра",
     fullscreenEnterAria: "Кушодани экрани пурра",

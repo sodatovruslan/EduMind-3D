@@ -54,12 +54,12 @@ describe("SimulationShell — D6 immersive route chrome", () => {
     expect(screen.queryByRole("navigation")).toBeNull();
   });
 
-  it("renders Locale and Theme controls", async () => {
+  it("has no Locale/Theme controls (they overlapped the scene's own top-right buttons)", async () => {
     renderShell(makeSimulation());
     await act(async () => {});
 
-    expect(screen.getByRole("radiogroup", { name: "Язык" })).toBeDefined();
-    expect(screen.getByRole("radiogroup", { name: "Тема оформления" })).toBeDefined();
+    expect(screen.queryByRole("radiogroup", { name: "Язык" })).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: "Тема оформления" })).toBeNull();
   });
 
   it("resolves world accent/icon for each real module without crashing", async () => {
@@ -78,17 +78,15 @@ describe("SimulationShell — D6 immersive route chrome", () => {
     expect(screen.getByText("Legacy SimLab")).toBeDefined();
   });
 
-  it("D6.1 — clicking the Locale switcher updates the shell's own chrome immediately, no reload", async () => {
+  it("uses the persisted locale for its own chrome", async () => {
+    window.localStorage.setItem("edumind:locale", "en");
     renderShell(makeSimulation());
-    await act(async () => {});
-    expect(screen.getByRole("link", { name: "Назад" })).toBeDefined();
-
-    fireEvent.click(screen.getAllByRole("radio", { name: "English" })[0]);
     await act(async () => {});
 
     expect(screen.getByRole("link", { name: "Back" })).toBeDefined();
     expect(screen.queryByRole("link", { name: "Назад" })).toBeNull();
     // real simulation title (data, not chrome) never gets "translated"
     expect(screen.getByText("Нейтрализация")).toBeDefined();
+    window.localStorage.removeItem("edumind:locale");
   });
 });

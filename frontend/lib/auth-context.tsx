@@ -80,3 +80,8 @@ export function useAuth(): AuthContextValue {
   }
   return context;
 }
+
+/** Same as useAuth, but returns null outside <AuthProvider> (e.g. in isolated component tests). */
+export function useOptionalAuth(): AuthContextValue | null {
+  return useContext(AuthContext) ?? null;
+}

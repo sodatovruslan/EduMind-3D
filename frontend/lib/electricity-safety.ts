@@ -75,7 +75,7 @@ function checkFuseAndOverload(components: CircuitComponent[], solution: CircuitS
     if (component.isBlown) {
       warnings.push({
         code: "fuse_blown",
-        message: `🔥 Предохранитель «${component.id}» перегорел — цепь разорвана. Это защита от перегрузки: ток превысил допустимые ${
+        message: `🔥 Предохранитель перегорел — цепь разорвана. Это защита от перегрузки: ток превысил допустимые ${
           component.ratedCurrentA ?? "?"
         } А. Нажми «Сбросить», чтобы заменить предохранитель.`,
         severity: "danger",
@@ -90,7 +90,7 @@ function checkFuseAndOverload(components: CircuitComponent[], solution: CircuitS
     if (currentA >= component.ratedCurrentA * FUSE_OVERLOAD_WARNING_RATIO && currentA < component.ratedCurrentA) {
       warnings.push({
         code: "overload",
-        message: `⚠ Ток ${currentA.toFixed(1)} А приближается к пределу предохранителя «${component.id}» (${component.ratedCurrentA} А). Ещё немного — и он перегорит. Снизь напряжение или увеличь сопротивление.`,
+        message: `⚠ Ток ${currentA.toFixed(1)} А приближается к пределу предохранителя (${component.ratedCurrentA} А). Ещё немного — и он перегорит. Снизь напряжение или увеличь сопротивление.`,
         severity: "warning",
       });
     }
@@ -166,7 +166,7 @@ function checkUnsafeConnection(components: CircuitComponent[], connections: Conn
   return [
     {
       code: "unsafe_connection",
-      message: `⚠ Ток течёт в обход предохранителя «${fuse.id}» — цепь работает без защиты от перегрузки. В реальности при коротком замыкании или перегрузке это может привести к пожару.`,
+      message: `⚠ Ток течёт в обход предохранителя — цепь работает без защиты от перегрузки. В реальности при коротком замыкании или перегрузке это может привести к пожару.`,
       severity: "danger",
     },
   ];
