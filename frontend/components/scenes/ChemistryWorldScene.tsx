@@ -45,6 +45,11 @@ import { ChemistryTutorialProvider } from "@/components/tutorial/ChemistryTutori
 import ChemistryTutorialPanel from "@/components/tutorial/ChemistryTutorialPanel";
 import { ExperimentProgressProvider, useExperimentProgress } from "@/components/experiments/ExperimentProgressProvider";
 import ExperimentPanel from "@/components/experiments/ExperimentPanel";
+import TaskCompleteBanner from "@/components/lab/TaskCompleteBanner";
+import { isOnBench, nextBenchHint } from "@/lib/chemistry-bench-focus";
+import { drawMat, drawWood, useCanvasTexture } from "@/components/electricity/LabBench";
+import { REAGENT_BY_ID } from "@/lib/chemistry-inventory";
+import { ExperimentStatus } from "@/lib/experiment-validator";
 import ChemistryTeacherChat from "@/components/ai/ChemistryTeacherChat";
 import { SUBSTANCES, aggregateStateOf, computeColorHex, totalMassG, totalVolumeMl, type AggregateState } from "@/lib/chemistry-engine";
 import { getRegisteredReactions } from "@/lib/reaction-engine";
@@ -123,6 +128,10 @@ const HEAT_RATE_C_PER_SEC = 12;
 const DROP_PROXIMITY_RADIUS = 0.5;
 const STOCK_POUR_GRAMS_BY_SUBSTANCE: Record<string, number> = { water: 100 };
 const DEFAULT_STOCK_POUR_GRAMS = 20;
+// насколько близко к горелке нужно отпустить сосуд, чтобы он встал на неё
+const BURNER_DROP_RADIUS = 0.6;
+// высота, на которой сосуд стоит над пламенем (кольцо штатива)
+const BURNER_SOCKET_ELEVATION = 0.65;
 const GRAB_LIFT_HEIGHT = 0.14;
 const GRAB_LIFT_SPEED = 10; // 1/сек, скорость lerp подъема при захвате/отпускании
 
@@ -337,13 +346,15 @@ function useLabBenchTexture() {
     canvas.height = 512;
     const ctx = canvas.getContext("2d");
     if (ctx) {
-      ctx.fillStyle = "#e8e4da";
+      // тёмная эпоксидная столешница, как в настоящей химической лаборатории:
+      // на ней читаются и прозрачное стекло, и белые этикетки
+      ctx.fillStyle = "#2f363d";
       ctx.fillRect(0, 0, 512, 512);
-      for (let i = 0; i < 2500; i++) {
+      for (let i = 0; i < 3500; i++) {
         const x = Math.random() * 512;
         const y = Math.random() * 512;
-        const shade = 190 + Math.random() * 40;
-        ctx.fillStyle = `rgba(${shade},${shade - 6},${shade - 20},0.3)`;
+        const shade = 70 + Math.random() * 60;
+        ctx.fillStyle = `rgba(${shade},${shade + 4},${shade + 10},0.35)`;
         ctx.fillRect(x, y, 1, 1);
       }
     }
@@ -369,7 +380,10 @@ function Workbench({
   onRegisterCollider?: (collider: RegisteredCollider) => void;
   onRegisterSurface?: (surface: DynamicPlacementSurface) => void;
 }) {
-  const texture = useLabBenchTexture();
+  // тот же вид, что у стола в лаборатории физики: деревянная столешница и
+  // тёмный рабочий коврик с сеткой (текстуры общие, из LabBench)
+  const wood = useCanvasTexture(1024, 512, drawWood);
+  const mat = useCanvasTexture(1024, 528, drawMat);
   const meshRef = useRef<THREE.Mesh>(null);
 
   useLayoutEffect(() => {
@@ -406,10 +420,17 @@ function Workbench({
   }, [onRegisterCollider, onRegisterSurface]);
 
   return (
-    <mesh ref={meshRef} position={[0, -0.05, 0]} receiveShadow>
-      <boxGeometry args={[9, 0.1, 4.2]} />
-      <meshStandardMaterial map={texture} roughness={0.65} metalness={0.05} />
-    </mesh>
+    <group>
+      {/* сама столешница — по ней же считаются коллизии и поверхность для предметов */}
+      <mesh ref={meshRef} position={[0, -0.05, 0]} receiveShadow>
+        <boxGeometry args={[9, 0.1, 4.2]} />
+        <meshStandardMaterial map={wood} roughness={0.65} metalness={0} />
+      </mesh>
+      <mesh position={[0, 0.002, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[8.3, 3.6]} />
+        <meshStandardMaterial map={mat} roughness={0.9} metalness={0} />
+      </mesh>
+    </group>
   );
 }
 
@@ -998,12 +1019,16 @@ function useDragHandlers(
   const { startDrag, draggingId } = useChemistryDrag();
   const { select } = useChemistryWorkspace();
   const { cameraMode, playerXZ, obstacles, heldId } = useContext(SandboxReachContext);
+  const controls = useThree((three) => three.controls) as { enabled: boolean } | null;
 
   return {
     isDragging: draggingId === id,
     onPointerDown: (e: ThreeEvent<PointerEvent>) => {
       e.stopPropagation();
       e.nativeEvent.stopImmediatePropagation();
+      // камера выключается сразу, а не после перерисовки: иначе первое
+      // движение мыши успевает и потащить предмет, и повернуть стол
+      if (controls && cameraMode === "orbit") controls.enabled = false;
 
       if (cameraMode === "sandbox" && targetPos) {
         const evalRes = evaluateUnifiedInteraction({
@@ -1827,20 +1852,30 @@ function GlassObject({
   hasPrecipitate: boolean;
   precipitateColorHex: string;
 }) {
+  // верхняя кромка сосуда — последняя точка профиля вращения
+  const profilePoints = profile.geometry.parameters.points;
+  const rim = profilePoints[profilePoints.length - 1];
+
   return (
     <>
       {/* прозрачное "стекло" — при наведении чуть светлее, чтобы предмет
           читался как интерактивный еще до того, как его возьмут */}
       <mesh castShadow geometry={profile.geometry}>
         <meshPhysicalMaterial
-          color={hovered ? "#eff6ff" : "#dbeafe"}
+          color={hovered ? "#f0f9ff" : "#d6ecff"}
           transparent
-          opacity={hovered ? 0.4 : 0.28}
-          roughness={0.1}
-          transmission={0.6}
-          thickness={0.05}
+          opacity={hovered ? 0.46 : 0.36}
+          roughness={0.05}
+          metalness={0.1}
+          clearcoat={1}
+          clearcoatRoughness={0.05}
           side={THREE.DoubleSide}
         />
+      </mesh>
+      {/* светлая кромка: по ней глаз считывает контур прозрачного сосуда */}
+      <mesh position={[0, rim.y, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[rim.x, 0.007, 8, 40]} />
+        <meshStandardMaterial color="#ffffff" transparent opacity={0.75} roughness={0.1} />
       </mesh>
 
       {/* жидкость внутри — цвет и уровень посчитаны Chemistry Engine, но и
@@ -2023,11 +2058,21 @@ function ContainerMesh({
           <SealHandle id={item.id} isSealed={item.isSealed} disabled={state.emergencyStop !== null} />
         )}
 
-        <Html position={[0, halfHeight + 0.25, 0]} center distanceFactor={9} style={{ pointerEvents: "none" }}>
-          <div className="pointer-events-none whitespace-nowrap rounded-md border border-white/10 bg-slate-900/85 px-2 py-0.5 text-[10px] text-slate-100">
-            {item.data.temperatureC.toFixed(0)}°C
-          </div>
-        </Html>
+        {/* температура — только у активного сосуда, под курсором или когда сосуд
+            реально нагрет; иначе над каждым сосудом висело бы одинаковое "20°C" */}
+        {(isActive || hovered || item.data.temperatureC > 25) && (
+          <Html position={[0, halfHeight + 0.25, 0]} center distanceFactor={9} style={{ pointerEvents: "none" }}>
+            <div
+              className={`pointer-events-none whitespace-nowrap rounded-full border px-2.5 py-0.5 font-mono text-[11px] font-semibold ${
+                item.data.temperatureC >= 60
+                  ? "border-orange-300/50 bg-orange-950/85 text-orange-200"
+                  : "border-white/10 bg-slate-900/85 text-slate-100"
+              }`}
+            >
+              {item.data.temperatureC.toFixed(0)}°C
+            </div>
+          </Html>
+        )}
 
         {hovered && !isDragging && !isHeld && (
           <Html position={[0, halfHeight + 0.45, 0]} center distanceFactor={9} style={{ pointerEvents: "none" }}>
@@ -2063,6 +2108,123 @@ function BottleCapMesh({ capState }: { capState: "closed" | "open" }) {
         <meshStandardMaterial color="#475569" roughness={0.3} metalness={0.5} />
       </mesh>
     </group>
+  );
+}
+
+// Склянка для реактива: стеклянный корпус с плечиками и горлышком (профиль
+// вращения), вещество внутри по уровню остатка и бумажная этикетка на боку.
+const REAGENT_BOTTLE_GEOMETRY = latheGeometry([
+  [0, -0.16],
+  [0.086, -0.16],
+  [0.09, -0.15],
+  [0.09, 0.07],
+  [0.078, 0.115],
+  [0.05, 0.15],
+  [0.042, 0.165],
+  [0.042, 0.205],
+  [0.048, 0.215],
+]);
+// склянка на экране крупнее "физического" размера (хитбокс и место на столе
+// прежние) — иначе этикетку не прочитать с рабочего расстояния камеры
+const REAGENT_BOTTLE_VISUAL_SCALE = 1.35;
+// нитрат серебра хранят в тёмном стекле — он разлагается на свету
+const AMBER_GLASS_SUBSTANCES = new Set(["agno3", "kmno4", "h2o2"]);
+// цвет полосы на этикетке по классу опасности реактива
+const HAZARD_BAND_COLOR: Record<string, string> = {
+  low: "#0ea5e9",
+  irritant: "#f59e0b",
+  corrosive: "#dc2626",
+  oxidizer: "#ea580c",
+  environmental: "#16a34a",
+};
+
+/** Бумажная этикетка: цветная полоса опасности, название и формула. Рисуется на canvas один раз. */
+function useReagentLabelTexture(name: string, formula: string, bandColor: string) {
+  const texture = useMemo(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 384;
+    canvas.height = 248;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.fillStyle = "#fbfaf5";
+      ctx.fillRect(0, 0, 384, 248);
+      ctx.fillStyle = bandColor;
+      ctx.fillRect(0, 0, 384, 46);
+      ctx.strokeStyle = "rgba(15,23,42,0.35)";
+      ctx.lineWidth = 4;
+      ctx.strokeRect(2, 2, 380, 244);
+      ctx.fillStyle = "#0f172a";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      // название ужимается, пока не влезет по ширине (в две строки по пробелу, если слов два и более)
+      const words = name.split(" ");
+      const lines = words.length > 1 ? [words.slice(0, Math.ceil(words.length / 2)).join(" "), words.slice(Math.ceil(words.length / 2)).join(" ")] : [name];
+      let size = lines.length > 1 ? 44 : 58;
+      const fits = () => lines.every((line) => ctx.measureText(line).width <= 350);
+      ctx.font = `700 ${size}px system-ui, "Segoe UI", sans-serif`;
+      while (!fits() && size > 22) {
+        size -= 2;
+        ctx.font = `700 ${size}px system-ui, "Segoe UI", sans-serif`;
+      }
+      const nameCenterY = 112;
+      lines.forEach((line, i) => ctx.fillText(line, 192, nameCenterY + (i - (lines.length - 1) / 2) * (size + 4)));
+      ctx.fillStyle = "#475569";
+      ctx.font = `600 40px system-ui, "Segoe UI", sans-serif`;
+      ctx.fillText(formula, 192, 204);
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    return tex;
+  }, [name, formula, bandColor]);
+  useEffect(() => () => texture.dispose(), [texture]);
+  return texture;
+}
+
+function ReagentBottleVisual({ bottle, hovered }: { bottle: StockBottle; hovered: boolean }) {
+  const { locale } = useLocale();
+  const substance = SUBSTANCES[bottle.substanceId];
+  const reagent = REAGENT_BY_ID[bottle.substanceId];
+  const name = (locale === "ru" ? substance?.name : reagent?.names[locale]) ?? substance?.name ?? bottle.substanceId;
+  const formula = substance?.formula ?? reagent?.formula ?? "";
+  const labelTexture = useReagentLabelTexture(name, formula, HAZARD_BAND_COLOR[reagent?.hazard ?? "low"] ?? HAZARD_BAND_COLOR.low);
+  const amber = AMBER_GLASS_SUBSTANCES.has(bottle.substanceId);
+  // уровень вещества в склянке — по реальному остатку
+  const fill = bottle.capacityGrams > 0 ? THREE.MathUtils.clamp(bottle.remainingGrams / bottle.capacityGrams, 0, 1) : 0;
+  const contentHeight = 0.02 + fill * 0.2;
+
+  return (
+    <>
+      <mesh castShadow geometry={REAGENT_BOTTLE_GEOMETRY}>
+        <meshPhysicalMaterial
+          color={amber ? "#92400e" : hovered ? "#f0f9ff" : "#d6ecff"}
+          transparent
+          opacity={amber ? 0.72 : 0.4}
+          roughness={0.06}
+          metalness={0.1}
+          clearcoat={1}
+          clearcoatRoughness={0.05}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      {fill > 0 && (
+        <mesh position={[0, -0.155 + contentHeight / 2, 0]}>
+          <cylinderGeometry args={[0.08, 0.08, contentHeight, 20]} />
+          <meshStandardMaterial color={substance?.colorHex ?? "#94a3b8"} transparent opacity={0.9} roughness={0.35} />
+        </mesh>
+      )}
+      {/* этикетка — полоса цилиндра поверх стекла, обращена к ученику (+Z) */}
+      <mesh position={[0, -0.035, 0]}>
+        <cylinderGeometry args={[0.0915, 0.0915, 0.135, 24, 1, true, -1.1, 2.2]} />
+        <meshStandardMaterial
+          map={labelTexture}
+          roughness={0.85}
+          emissive="#ffffff"
+          emissiveMap={labelTexture}
+          emissiveIntensity={hovered ? 0.3 : 0.12}
+        />
+      </mesh>
+    </>
   );
 }
 
@@ -2109,39 +2271,16 @@ function StockBottleMesh({ bottle, isPouring }: { bottle: StockBottle; isPouring
 
         <GrabLift isDragging={isDragging}>
           <PourTilt active={isPouring} tiltRad={interaction.heldTiltRad}>
-            <mesh castShadow>
-              <cylinderGeometry args={[0.09, 0.09, 0.32, 16]} />
-              <meshStandardMaterial
-                color={hovered ? "#f8fafc" : "#e2e8f0"}
-                roughness={0.3}
-                metalness={0.1}
-                transparent
-                opacity={0.85}
-              />
-            </mesh>
-            <mesh position={[0, 0.19, 0]}>
-              <cylinderGeometry args={[0.05, 0.05, 0.06, 12]} />
-              <meshStandardMaterial
-                color={substance?.colorHex ?? "#94a3b8"}
-                emissive={substance?.colorHex ?? "#94a3b8"}
-                emissiveIntensity={hovered ? 0.35 : 0}
-                metalness={0.4}
-                roughness={0.4}
-              />
-            </mesh>
-            <BottleCapMesh capState={bottle.capState} />
-            {isAccessible && (
-              <Html position={[0, 0, 0.095]} center distanceFactor={12} style={{ pointerEvents: "none" }}>
-                <div className="max-w-20 rounded-sm bg-white/95 px-1 py-0.5 text-center text-[7px] font-semibold leading-none text-slate-900">
-                  {substance?.formula}
-                </div>
-              </Html>
-            )}
+            {/* увеличение идёт от дна склянки, чтобы она не проваливалась в стол */}
+            <group scale={REAGENT_BOTTLE_VISUAL_SCALE} position={[0, 0.16 * (REAGENT_BOTTLE_VISUAL_SCALE - 1), 0]}>
+              <ReagentBottleVisual bottle={bottle} hovered={hovered} />
+              <BottleCapMesh capState={bottle.capState} />
+            </group>
           </PourTilt>
         </GrabLift>
 
         {hovered && !isDragging && !isHeld && (
-          <Html position={[0, 0.35, 0]} center distanceFactor={9} style={{ pointerEvents: "none" }}>
+          <Html position={[0, 0.55, 0]} center distanceFactor={9} style={{ pointerEvents: "none" }}>
             <div className="pointer-events-none whitespace-nowrap rounded-md border border-white/10 bg-slate-900/90 px-2 py-1 text-xs text-slate-100">
               {substance?.name} ({substance?.formula}) · {bottle.remainingGrams.toFixed(0)} г
             </div>
@@ -2242,6 +2381,19 @@ function BurnerMesh({ tool }: { tool: ToolItem }) {
             emissive={tool.isOn ? "#f97316" : "#000000"}
             emissiveIntensity={tool.isOn ? 0.8 : 0}
           />
+        </mesh>
+        {/* невидимая зона клика на весь корпус горелки: попасть в маленький
+            диск у основания трудно, особенно когда сверху стоит сосуд */}
+        <mesh
+          position={[0, 0.19, 0]}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!tool.isOn) playBurnerIgnite();
+            toggleBurner(tool.id);
+          }}
+        >
+          <cylinderGeometry args={[0.17, 0.17, 0.36, 16]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
         </mesh>
         {/* data-testid нельзя ставить прямо на <mesh> — R3F интерпретирует
             дефис в имени пропса как вложенный путь (data.testid) и падает на
@@ -2653,6 +2805,80 @@ function InteractableVisualRig({
   );
 }
 
+/**
+ * Указатель "возьми это": пульсирующее кольцо на столе и покачивающаяся
+ * стрелка над предметом, который нужен в текущем задании прямо сейчас.
+ */
+function BenchHintMarker({ position, height, label }: { position: [number, number]; height: number; label: string }) {
+  const ringRef = useRef<THREE.Mesh>(null);
+  const arrowRef = useRef<THREE.Mesh>(null);
+  useFrame(({ clock }) => {
+    const pulse = 0.5 + Math.sin(clock.elapsedTime * 4) * 0.5;
+    if (ringRef.current) {
+      ringRef.current.scale.setScalar(1 + pulse * 0.25);
+      (ringRef.current.material as THREE.MeshBasicMaterial).opacity = 0.35 + pulse * 0.5;
+    }
+    if (arrowRef.current) arrowRef.current.position.y = height + 0.16 + pulse * 0.07;
+  });
+  return (
+    <group position={[position[0], 0, position[1]]}>
+      <mesh ref={ringRef} position={[0, 0.012, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.2, 0.25, 40]} />
+        <meshBasicMaterial color="#34d399" transparent opacity={0.6} depthWrite={false} toneMapped={false} />
+      </mesh>
+      <mesh ref={arrowRef} position={[0, height + 0.16, 0]} rotation={[Math.PI, 0, 0]}>
+        <coneGeometry args={[0.07, 0.15, 20]} />
+        <meshBasicMaterial color="#34d399" toneMapped={false} />
+      </mesh>
+      <Html position={[0, height + 0.42, 0]} center distanceFactor={9} style={{ pointerEvents: "none" }}>
+        <div className="pointer-events-none whitespace-nowrap rounded-full border border-emerald-300/50 bg-emerald-950/90 px-3 py-1 text-xs font-semibold text-emerald-100 shadow-lg">
+          {label}
+        </div>
+      </Html>
+    </group>
+  );
+}
+
+/** Что ученику взять следующим в текущем задании — по реальному содержимому активного сосуда. */
+function BenchHint() {
+  const { state } = useChemistryWorkspace();
+  const { experiment, status } = useExperimentProgress();
+  const { heldId } = useChemistryInteraction();
+  const { draggingId } = useChemistryDrag();
+  const { t } = useLocale();
+  if (status === ExperimentStatus.COMPLETED || state.emergencyStop) return null;
+
+  const active = state.containers.find((c) => c.id === state.activeContainerId);
+  const burner = state.tools.find((t) => t.kind === "burner");
+  if (!active) return null;
+  const isOnBurner = burner !== undefined && active.heatingSourceId === burner.id;
+  const hintId = nextBenchHint({
+    experimentId: experiment.id,
+    container: active.data,
+    burnerOn: burner?.isOn ?? false,
+    isOnBurner,
+  });
+  // пока предмет в руках или его тащат, стрелка над ним только мешает
+  if (!hintId || hintId === heldId || hintId === draggingId) return null;
+
+  const bottle = state.stockBottles.find((b) => b.id === hintId);
+  if (bottle) {
+    return bottle.storageSlotId === null ? (
+      <BenchHintMarker position={bottle.position} height={0.62} label={t.chemistry.hud.hintDragToVessel} />
+    ) : null;
+  }
+  const tool = state.tools.find((item) => item.id === hintId);
+  if (!tool) return null;
+  // сосуд уже на горелке — осталось её включить; над сосудом стрелка выше, чтобы не утонуть в нём
+  return (
+    <BenchHintMarker
+      position={tool.position}
+      height={isOnBurner ? 1.15 : 0.95}
+      label={isOnBurner ? t.chemistry.hud.hintTurnOnBurner : t.chemistry.hud.hintPlaceOnBurner}
+    />
+  );
+}
+
 function ChemistryScene({
   onDrop,
   pourAnimation,
@@ -2711,7 +2937,7 @@ function ChemistryScene({
     let nearestId: string | null = null;
     let nearestDist = DROP_PROXIMITY_RADIUS;
     for (const c of state.containers) {
-      if (c.id === draggingId) continue;
+      if (c.id === draggingId || !isOnBench(c)) continue;
       const d = distance(c.position, draggedPos);
       if (d < nearestDist) {
         nearestDist = d;
@@ -2816,13 +3042,13 @@ function ChemistryScene({
 
     const occupants: PlacementOccupant[] = [
       ...state.containers
-        .filter((c) => c.id !== heldId && c.storageSlotId === null)
+        .filter((c) => c.id !== heldId && c.storageSlotId === null && isOnBench(c))
         .map((c) => ({ position: c.position, radius: radiusFor(c.id, getFootprintRadius(c.kind)) })),
       ...state.tools
-        .filter((t) => t.id !== heldId && t.storageSlotId === null)
+        .filter((t) => t.id !== heldId && t.storageSlotId === null && isOnBench(t))
         .map((t) => ({ position: t.position, radius: radiusFor(t.id, getFootprintRadius(t.kind)) })),
       ...state.stockBottles
-        .filter((b) => b.id !== heldId && b.storageSlotId === null)
+        .filter((b) => b.id !== heldId && b.storageSlotId === null && isOnBench(b))
         .map((b) => ({ position: b.position, radius: radiusFor(b.id, STOCK_BOTTLE_FOOTPRINT_RADIUS) })),
     ];
 
@@ -2870,7 +3096,8 @@ function ChemistryScene({
         <Workbench onRegisterCollider={onRegisterCollider} />
         <PlacementDiagnosticMarkers />
 
-        {state.containers.map((c) => (
+        {/* на столе — только то, что нужно для заданий (см. chemistry-bench-focus.ts) */}
+        {state.containers.filter(isOnBench).map((c) => (
           <ContainerMesh
             key={c.id}
             item={c}
@@ -2879,10 +3106,11 @@ function ChemistryScene({
             isPouring={pourAnimation?.sourceId === c.id}
           />
         ))}
-        {state.stockBottles.map((b) => (
+        {state.stockBottles.filter(isOnBench).map((b) => (
           <StockBottleMesh key={b.id} bottle={b} isPouring={addAnimation?.bottleId === b.id} />
         ))}
-        {state.tools.map((t) => {
+        <BenchHint />
+        {state.tools.filter(isOnBench).map((t) => {
           if (t.kind === "burner") return <BurnerMesh key={t.id} tool={t} />;
           if (t.kind === "stand") return <StandMesh key={t.id} tool={t} />;
           if (t.kind === "pipette") return <PipetteMesh key={t.id} tool={t} />;
@@ -2919,6 +3147,34 @@ function ChemistryScene({
 // пока ученик тащит оборудование, OrbitControls должен быть выключен —
 // иначе тот же pointer-жест еще и крутит камеру (тот же прием, что
 // ElectricityCanvas/orbitEnabled={!draggingFrom} в Electricity Lab)
+// Каталог учебных лабораторных работ (16 работ, режимы обучения, журнал)
+// пока скрыт: ученик видит только три задания. Весь его код остаётся
+// рабочим — чтобы вернуть раздел, достаточно поставить здесь true.
+const GUIDED_LABS_ENABLED: boolean = false;
+
+/** Баннер "задание выполнено" поверх сцены — данные из ExperimentProgressProvider. */
+function ChemistryTaskCompleteOverlay() {
+  const { t } = useLocale();
+  const p = t.chemistry.panel;
+  const { experiment, status, isLastExperiment, advance, goToExperiment } = useExperimentProgress();
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-16 z-30 flex justify-center">
+      <TaskCompleteBanner
+        visible={status === ExperimentStatus.COMPLETED}
+        taskId={experiment.id}
+        isLast={isLastExperiment}
+        title={isLastExperiment ? p.allDoneTitle : p.completeTitle}
+        subtitle={isLastExperiment ? p.allDoneText : experiment.title}
+        xpReward={experiment.xpReward}
+        nextLabel={p.nextButton}
+        restartLabel={p.restartButton}
+        onNext={advance}
+        onRestart={() => goToExperiment(0)}
+      />
+    </div>
+  );
+}
+
 function ChemistryCanvas({
   quality,
   onDrop,
@@ -3053,6 +3309,7 @@ function ChemistryCanvas({
             : "relative w-full"
         }
       >
+        <ChemistryTaskCompleteOverlay />
         <SandboxModeOverlay
           cameraMode={cameraMode}
           onToggleMode={() => setCameraMode((m) => (m === "orbit" ? "sandbox" : "orbit"))}
@@ -3079,8 +3336,10 @@ function ChemistryCanvas({
           roomBounds={dynamicRoomBounds}
           colliders={colliders}
           onPosUpdate={handlePosUpdate}
-          cameraPosition={[0.4, 3.6, 6.4]}
-          target={[0, 0.1, 0]}
+          // тот же обзор, что в лаборатории физики: взгляд сверху-спереди на
+          // рабочую зону стола, с небольшим запасом поворота в стороны
+          cameraPosition={[0.65, 3.4, 4.6]}
+          target={[0.65, 0.2, 0.1]}
           floorY={-0.1}
           bloomIntensity={0.3}
           quality={quality}
@@ -3090,12 +3349,12 @@ function ChemistryCanvas({
           // и углы подобраны так, чтобы при ЛЮБОЙ комбинации (max дистанция +
           // крайние polar/azimuth) камера оставалась строго внутри стен
           // (см. расчет допусков в комментарии у ROOM_HALF_WIDTH/DEPTH выше)
-          minPolarAngle={Math.PI / 7}
-          maxPolarAngle={1.42}
-          minDistance={2.2}
+          minPolarAngle={0.35}
+          maxPolarAngle={1.15}
+          minDistance={3.2}
           maxDistance={7}
-          minAzimuthAngle={-Math.PI / 2.8}
-          maxAzimuthAngle={Math.PI / 2.8}
+          minAzimuthAngle={-0.75}
+          maxAzimuthAngle={0.75}
           showFloor={false}
           isFullscreen={isFullscreen}
         >
@@ -3259,6 +3518,7 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
     storeItemInCabinet,
     attachToHeatingSlot,
     detachFromHeatingSlot,
+    resetExperiment,
   } = useChemistryWorkspace();
   const { quality, setQuality } = useQuality();
   const { t } = useLocale();
@@ -3478,10 +3738,33 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
 
     const draggedContainer = state.containers.find((c) => c.id === id);
     if (draggedContainer) {
-      const target = state.containers.find((c) => c.id !== id && distance(c.position, point) < DROP_PROXIMITY_RADIUS);
+      const target = state.containers.find(
+        (c) => c.id !== id && isOnBench(c) && distance(c.position, point) < DROP_PROXIMITY_RADIUS
+      );
       if (target) {
         playPour();
         setPourAnimation({ sourceId: id, targetId: target.id });
+        return;
+      }
+
+      // сосуд отпустили у горелки — он встаёт на неё (на кольцо штатива), а не
+      // остаётся на столе рядом. Радиус щедрый: попадать "точно в центр" не нужно.
+      const burner = state.tools.find((tool) => tool.kind === "burner" && isOnBench(tool));
+      if (burner && distance(burner.position, point) < BURNER_DROP_RADIUS) {
+        const occupied = state.containers.some((c) => c.id !== id && c.heatingSourceId === burner.id);
+        if (!occupied) {
+          attachToHeatingSlot(id, burner.id, burner.position, BURNER_SOCKET_ELEVATION);
+          setActiveContainer(id);
+          return;
+        }
+      }
+      // сосуд сняли с горелки — возвращаем его на высоту стола
+      if (draggedContainer.heatingSourceId) {
+        detachFromHeatingSlot(id);
+        setItemTransform(id, point, draggedContainer.rotationY, {
+          elevation: getInteractable(id)?.tableElevation,
+          storageSlotId: null,
+        });
         return;
       }
       moveItem(id, point);
@@ -3490,9 +3773,15 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
 
     const draggedBottle = state.stockBottles.find((b) => b.id === id);
     if (draggedBottle) {
-      const target = state.containers.find((c) => distance(c.position, point) < DROP_PROXIMITY_RADIUS);
+      const target = state.containers.find((c) => isOnBench(c) && distance(c.position, point) < DROP_PROXIMITY_RADIUS);
       if (target) {
         playPour();
+        // сосуд, в который льют, становится активным: задание проверяет именно
+        // его, и ученику не нужно отдельно переключать "активный сосуд"
+        setActiveContainer(target.id);
+        // закрытая склянка ничего не наливает — при перетаскивании на сосуд
+        // крышка открывается сама, иначе жест молча ничего бы не делал
+        if (draggedBottle.capState === "closed") setBottleCapState(id, "open");
         setAddAnimation({ bottleId: id, targetId: target.id, substanceId: draggedBottle.substanceId });
         return;
       }
@@ -3506,7 +3795,12 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
   return (
     <ChemistryLabExperienceProvider simulationId={simulation.id} stepContext={labStepContext}>
     <ChemistryTutorialProvider container={activeContainer.data}>
-      <ExperimentProgressProvider labState={{ container: activeContainer.data, occurredReactionIds }}>
+      <ExperimentProgressProvider
+        labState={{ container: activeContainer.data, occurredReactionIds }}
+        simulationId={simulation.id}
+        // задание открыли из списка (или "пройти заново") — начинаем с чистого стола
+        onSelectExperiment={resetExperiment}
+      >
         <ChemistryDragProvider>
         <ChemistryInteractionProvider
           onConfirmPlacement={(id, position, rotationY) => {
@@ -3659,7 +3953,7 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
                     {t.chemistry.hud.activeContainerLabel}
                   </label>
                   <div className="flex gap-2">
-                    {state.containers.map((c) => (
+                    {state.containers.filter(isOnBench).map((c) => (
                       <motion.button
                         key={c.id}
                         whileHover={{ scale: 1.06 }}
@@ -3742,14 +4036,16 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
                     как раньше) — это дополнительный слой: каталог из 12
                     экспериментов, режимы обучения, пошаговое руководство,
                     оценка и Лабораторный журнал. */}
-                <div className="space-y-4 sm:col-span-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-ds-title text-text-primary">{t.chemistry.hud.labHeading}</h3>
-                    <LabModeSelector />
+                {GUIDED_LABS_ENABLED && (
+                  <div className="space-y-4 sm:col-span-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="text-ds-title text-text-primary">{t.chemistry.hud.labHeading}</h3>
+                      <LabModeSelector />
+                    </div>
+                    <GuidedLabExperienceSection />
+                    <LabNotebookPanel />
                   </div>
-                  <GuidedLabExperienceSection />
-                  <LabNotebookPanel />
-                </div>
+                )}
               </div>
             </div>
 

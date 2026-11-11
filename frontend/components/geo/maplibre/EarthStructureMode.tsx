@@ -202,7 +202,8 @@ export interface EarthStructureModeProps {
   selectedLayer: LayerResult | null;
   isSubmitting: boolean;
   onExploreLayer: (layer: EarthLayerKey) => void;
-  onReturnToSurface: () => void;
+  /** "Back to the surface" button; left out when this mode is a mission of its own with nowhere to go back to. */
+  onReturnToSurface?: () => void;
 }
 
 export default function EarthStructureMode({
@@ -257,14 +258,16 @@ export default function EarthStructureMode({
       <div className="ds-glass mt-4 rounded-ds-panel p-4">
         <div className="flex items-center justify-between gap-3">
           <p className="text-ds-body text-text-secondary">{es.objective}</p>
-          <button
-            type="button"
-            onClick={onReturnToSurface}
-            className="ds-focus-ring shrink-0 rounded-full border border-border/[0.12] px-3 py-1.5 text-ds-caption font-medium text-text-primary transition-colors hover:bg-text-primary/5"
-            data-testid="geo-earth-structure-return"
-          >
-            {es.returnToSurface}
-          </button>
+          {onReturnToSurface && (
+            <button
+              type="button"
+              onClick={onReturnToSurface}
+              className="ds-focus-ring shrink-0 rounded-full border border-border/[0.12] px-3 py-1.5 text-ds-caption font-medium text-text-primary transition-colors hover:bg-text-primary/5"
+              data-testid="geo-earth-structure-return"
+            >
+              {es.returnToSurface}
+            </button>
+          )}
         </div>
 
         <p className="mt-2 text-ds-caption text-warning/90">{es.scaleDisclosure}</p>

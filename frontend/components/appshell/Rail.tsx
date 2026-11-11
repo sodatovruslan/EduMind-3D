@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useLocale } from "@/lib/locale-context";
 import { getNavItems, isNavItemActive } from "@/lib/appshell-nav";
 import { useUnreadMessagesCount } from "@/lib/useUnreadMessagesCount";
+import { useCanSeeMessages } from "@/lib/useCanSeeMessages";
 import UnreadBadge from "@/components/messaging/UnreadBadge";
 
 export const RAIL_WIDTH_EXPANDED = "15rem";
@@ -22,7 +23,8 @@ export default function Rail({ collapsed, onToggleCollapsed }: { collapsed: bool
   const { user } = useAuth();
   const { t } = useLocale();
   const pathname = usePathname();
-  const items = getNavItems(user?.role);
+  const canSeeMessages = useCanSeeMessages();
+  const items = getNavItems(user?.role, canSeeMessages);
   const unreadCount = useUnreadMessagesCount();
 
   return (

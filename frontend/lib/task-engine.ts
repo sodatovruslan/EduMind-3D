@@ -221,6 +221,62 @@ function validateTask4(state: CircuitState): TaskValidationResult {
   };
 }
 
+// ---- Яркость лампы: довести мощность на лампе до рабочей зоны
+//
+// Рабочая зона — 75–100% номинальной мощности лампы: ярко, но без перегрева.
+// Мощность берётся из уже посчитанного Circuit Engine (readings.bulb.powerW),
+// ученик меняет только напряжение источника и сопротивление резистора.
+
+export const BRIGHTNESS_TARGET_MIN = 0.75;
+export const BRIGHTNESS_TARGET_MAX = 1;
+// запас на погрешность вычислений с плавающей точкой: ровно 100% — это успех
+const BRIGHTNESS_EPSILON = 0.005;
+
+/** Мощность на лампе в долях от номинальной (1 = 100%); 0, если ток не течёт. */
+export function bulbPowerRatio(state: CircuitState): number {
+  const bulb = state.components.find((c) => c.kind === "bulb");
+  const reading = bulb ? state.solution.readings[bulb.id] : undefined;
+  if (!bulb?.ratedPowerW || !reading || !state.solution.isCircuitActive) return 0;
+  return reading.powerW / bulb.ratedPowerW;
+}
+
+function validateBrightness(state: CircuitState): TaskValidationResult {
+  const errors = diagnoseCommonIssues(state);
+  const warnings: string[] = [];
+  const ratio = bulbPowerRatio(state);
+  const percent = Math.round(ratio * 100);
+
+  const bulbInLoop = state.solution.readings.bulb !== undefined;
+  if (state.solution.isClosedLoop && !bulbInLoop) {
+    errors.push({ code: "bulb_not_in_loop", message: "лампа не входит в главный контур" });
+  }
+
+  const inZone = ratio >= BRIGHTNESS_TARGET_MIN - BRIGHTNESS_EPSILON && ratio <= BRIGHTNESS_TARGET_MAX + BRIGHTNESS_EPSILON;
+
+  if (errors.length === 0 && state.solution.isCircuitActive && !inZone) {
+    if (ratio < BRIGHTNESS_TARGET_MIN) {
+      errors.push({
+        code: "bulb_too_dim",
+        message: `лампа горит слабо (${percent}%) — увеличь напряжение или уменьши сопротивление`,
+      });
+    } else {
+      errors.push({
+        code: "bulb_overpowered",
+        message: `лампа перегревается (${percent}%) — уменьши напряжение или увеличь сопротивление`,
+      });
+    }
+    const distance = ratio < BRIGHTNESS_TARGET_MIN ? BRIGHTNESS_TARGET_MIN - ratio : ratio - BRIGHTNESS_TARGET_MAX;
+    if (distance <= 0.15) warnings.push("уже близко — сдвинь ползунок ещё чуть-чуть");
+  }
+
+  return {
+    completed: errors.length === 0 && state.solution.isCircuitActive && inZone,
+    errors,
+    warnings,
+    measurements: { brightnessRatio: ratio, currentA: state.solution.isCircuitActive ? state.solution.currentA : 0 },
+  };
+}
+
 // ---- Task 5: найти и устранить обрыв цепи
 
 function validateTask5(state: CircuitState): TaskValidationResult {
@@ -279,22 +335,56 @@ function validateTask6(state: CircuitState): TaskValidationResult {
   };
 }
 
-export const TASKS: TaskDefinition[] = [
-  {
-    id: "task-1-close-loop",
-    title: "Собери замкнутую цепь",
-    description: "Соедини батарею, переключатель и лампу так, чтобы образовался единый замкнутый контур.",
-    goal: "Ток должен течь через лампу, переключатель замкнут, короткого замыкания нет.",
-    successConditions: [
-      "Батарея, переключатель и лампа соединены в один контур",
-      "Переключатель замкнут",
-      "Нет короткого замыкания",
-    ],
-    failureConditions: ["Цепь разомкнута", "Переключатель разомкнут", "Короткое замыкание", "Лампа не входит в контур"],
-    difficulty: "easy",
-    xpReward: 10,
-    validate: validateTask1,
-  },
+const closeLoopTask: TaskDefinition = {
+  id: "task-1-close-loop",
+  title: "Зажги лампу",
+  description: "Соедини проводами батарею, переключатель и лампу в одно кольцо. Ток пойдёт по кругу — и лампа загорится.",
+  goal: "Лампа горит: ток течёт по замкнутой цепи.",
+  successConditions: [
+    "Батарея, переключатель и лампа соединены в один контур",
+    "Переключатель замкнут",
+    "Нет короткого замыкания",
+  ],
+  failureConditions: ["Цепь разомкнута", "Переключатель разомкнут", "Короткое замыкание", "Лампа не входит в контур"],
+  difficulty: "easy",
+  xpReward: 10,
+  validate: validateTask1,
+};
+
+const brightnessTask: TaskDefinition = {
+  id: "task-2-lamp-brightness",
+  title: "Управляй яркостью",
+  description:
+    "Лампа любит свою мощность: мало тока — горит тускло, слишком много — перегревается. Двигай ползунки напряжения и сопротивления и следи за лампой.",
+  goal: "Яркость лампы в зелёной зоне: 75–100% от номинальной.",
+  successConditions: ["Лампа входит в контур и ток течёт", "Мощность на лампе 75–100% от номинальной"],
+  failureConditions: ["Лампа горит слабо", "Лампа перегревается", "Цепь разомкнута"],
+  difficulty: "medium",
+  xpReward: 15,
+  validate: validateBrightness,
+};
+
+const findBreakTask: TaskDefinition = {
+  id: "task-5-find-break",
+  title: "Найди поломку",
+  description:
+    "Лампа погасла: из цепи пропал один провод. Пройди по цепи от «+» батареи до «−», найди разрыв и протяни недостающий провод.",
+  goal: "Лампа снова горит: цепь замкнута, ток течёт.",
+  successConditions: ["Цепь замкнута и активна"],
+  failureConditions: ["Цепь разомкнута", "Переключатель разомкнут", "Предохранитель перегорел"],
+  difficulty: "hard",
+  xpReward: 20,
+  validate: validateTask5,
+};
+
+/**
+ * Задания, которые видит ученик: три, от простого к сложному. Остальные
+ * (ARCHIVED_TASKS) пока скрыты — их проверки и тесты остаются рабочими,
+ * чтобы вернуть задание, достаточно перенести его в TASKS.
+ */
+export const TASKS: TaskDefinition[] = [closeLoopTask, brightnessTask, findBreakTask];
+
+export const ARCHIVED_TASKS: TaskDefinition[] = [
   {
     id: "task-2-ammeter-series",
     title: "Подключи амперметр правильно",
@@ -327,17 +417,6 @@ export const TASKS: TaskDefinition[] = [
     difficulty: "hard",
     xpReward: 20,
     validate: validateTask4,
-  },
-  {
-    id: "task-5-find-break",
-    title: "Найди обрыв цепи",
-    description: "Лаборатория убрала из цепи один провод — лампа погасла. Найди, где цепь разорвана, и протяни недостающий провод.",
-    goal: "Цепь снова замкнута и активна, ток течёт.",
-    successConditions: ["Цепь замкнута и активна"],
-    failureConditions: ["Цепь разомкнута", "Переключатель разомкнут", "Предохранитель перегорел"],
-    difficulty: "medium",
-    xpReward: 15,
-    validate: validateTask5,
   },
   {
     id: "task-6-fix-short",

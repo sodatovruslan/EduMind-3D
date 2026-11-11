@@ -30,6 +30,8 @@ import AskTeacherWidget from "@/components/help/AskTeacherWidget";
 import { buildElectricityHelpContext } from "@/lib/help/contextAdapters";
 import AnalogMeter, { METER_TERMINALS } from "@/components/electricity/AnalogMeter";
 import { LabBench, NameTag } from "@/components/electricity/LabBench";
+import BrightnessHud from "@/components/electricity/BrightnessHud";
+import TaskCompleteOverlay from "@/components/electricity/TaskCompleteOverlay";
 import { useSimulationClock } from "@/lib/use-simulation-clock";
 import { useQuality, type QualityLevel } from "@/lib/quality-context";
 import { useFullscreen } from "@/lib/useFullscreen";
@@ -53,8 +55,9 @@ import { explainError } from "@/lib/error-explanations";
 import { submitLabCompleted } from "@/lib/progress-client";
 import type { Simulation } from "@/lib/types";
 import { useLocale } from "@/lib/locale-context";
-import { TaskStatus, type TaskDefinition } from "@/lib/task-engine";
+import { TaskStatus, bulbPowerRatio, type TaskDefinition } from "@/lib/task-engine";
 import { planBreak, planShort } from "@/lib/electricity-faults";
+import { computeWireFlows, type WireFlow } from "@/lib/electricity-current-flow";
 
 // Guided Onboarding: наведение курсора в любую точку компонента (не только
 // на клемму) показывает всплывающую подпись с названием — общий хук вместо
@@ -372,8 +375,18 @@ function Resistor() {
   );
 }
 
-function Bulb({ brightness }: { brightness: number }) {
+// цвет света лампы: тёплый жёлтый в рабочем режиме, раскалённый
+// оранжево-красный, когда мощность выше номинальной
+const BULB_WARM_COLOR = new THREE.Color("#fde047");
+const BULB_HOT_COLOR = new THREE.Color("#ff6a3d");
+
+/**
+ * `brightness` — яркость 0..1 (обрезана на номинале), `powerRatio` — мощность
+ * в долях номинала без обрезки: выше 1 лампа раскаляется и мерцает.
+ */
+function Bulb({ brightness, powerRatio }: { brightness: number; powerRatio: number }) {
   const lightRef = useRef<THREE.PointLight>(null);
+  const glowRef = useRef(0);
   const filamentMaterialRef = useRef<THREE.MeshStandardMaterial | null>(null);
   const { hovered, onPointerOver, onPointerOut } = useHoverTooltip("grab");
   const { position, isDragging, onPointerDown } = useComponentPlacement("bulb");
@@ -397,21 +410,24 @@ function Bulb({ brightness }: { brightness: number }) {
     }
   }, [model]);
 
-  useFrame((_, delta) => {
-    // плавный разогрев/остывание — тот же easing-принцип для света и
-    // свечения нити, скорость подобрана так, чтобы лампа "оживала"
-    // ощутимо, но не мгновенно
-    const targetIntensity = brightness * 3.5;
+  useFrame((frame, delta) => {
+    // перегрев: 0 на номинале, 1 при мощности в 2.5 раза выше номинала
+    const heat = THREE.MathUtils.clamp((powerRatio - 1) / 1.5, 0, 1);
+    // плавный разогрев/остывание — скорость подобрана так, чтобы лампа
+    // "оживала" ощутимо, но не мгновенно; без базовой засветки — при
+    // нулевом токе нить полностью тёмная
+    glowRef.current = THREE.MathUtils.lerp(glowRef.current, brightness * 3.5 * (1 + heat * 1.5), Math.min(1, delta * 2.5));
+    // мерцание накладывается поверх сглаженного значения, иначе сглаживание его бы съело
+    const time = frame.clock.elapsedTime;
+    const flicker = 1 + (Math.sin(time * 37) + Math.sin(time * 91)) * 0.15 * heat;
+    const intensity = glowRef.current * flicker;
     if (lightRef.current) {
-      lightRef.current.intensity = THREE.MathUtils.lerp(lightRef.current.intensity, targetIntensity, Math.min(1, delta * 2.5));
+      lightRef.current.intensity = intensity;
+      lightRef.current.color.lerpColors(BULB_WARM_COLOR, BULB_HOT_COLOR, heat);
     }
     if (filamentMaterialRef.current) {
-      // без базовой засветки — при нулевом токе нить должна быть полностью темной
-      filamentMaterialRef.current.emissiveIntensity = THREE.MathUtils.lerp(
-        filamentMaterialRef.current.emissiveIntensity,
-        brightness * 3.5,
-        Math.min(1, delta * 2.5)
-      );
+      filamentMaterialRef.current.emissiveIntensity = intensity;
+      filamentMaterialRef.current.emissive.lerpColors(BULB_WARM_COLOR, BULB_HOT_COLOR, heat);
     }
   });
 
@@ -676,15 +692,70 @@ function wireArc(a: THREE.Vector3, b: THREE.Vector3): THREE.CubicBezierCurve3 {
 // подключении — ощущение физической фиксации. Геометрия строится через
 // useMemo (пересчитывается только когда меняются концы, не каждый кадр)
 // и явно освобождается при размонтировании/пересборке.
+// "Бегущий ток": светящиеся бусины едут по проводу от "+" к "−", пока по
+// нему реально течёт ток (см. electricity-current-flow.ts). Чем больше ток,
+// тем быстрее; при коротком замыкании бусины красные.
+const FLOW_BEAD_SPACING_M = 0.45;
+
+function FlowBeads({
+  curve,
+  reversed,
+  currentA,
+  color,
+}: {
+  curve: THREE.Curve<THREE.Vector3>;
+  reversed: boolean;
+  currentA: number;
+  color: string;
+}) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+  const phaseRef = useRef(0);
+  const length = useMemo(() => curve.getLength(), [curve]);
+  const count = THREE.MathUtils.clamp(Math.round(length / FLOW_BEAD_SPACING_M), 2, 8);
+  // м/с вдоль провода: заметно даже при малом токе, но не сливается в полосу при большом
+  const speed = THREE.MathUtils.clamp(0.3 + Math.abs(currentA) * 0.22, 0.3, 1.6);
+
+  useFrame((_, delta) => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    phaseRef.current = (phaseRef.current + (delta * speed) / Math.max(length, 0.01)) % 1;
+    for (let i = 0; i < count; i++) {
+      const u = (phaseRef.current + i / count) % 1;
+      curve.getPointAt(reversed ? 1 - u : u, dummy.position);
+      // у клемм бусина меньше — плавно "выходит" из клеммы и "входит" в следующую
+      dummy.scale.setScalar(0.55 + 0.45 * Math.sin(Math.PI * u));
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+  });
+
+  return (
+    // raycast отключён: бусины не должны перехватывать клик по самому проводу
+    <instancedMesh key={count} ref={meshRef} args={[undefined, undefined, count]} raycast={() => null} frustumCulled={false}>
+      <sphereGeometry args={[0.042, 10, 10]} />
+      <meshBasicMaterial color={color} toneMapped={false} />
+    </instancedMesh>
+  );
+}
+
 function WireTube({
   a,
   b,
   color,
+  flow,
+  currentA,
+  flowColor,
   onClick,
 }: {
   a: THREE.Vector3;
   b: THREE.Vector3;
   color: string;
+  // направление тока в этом проводе; undefined — ток по нему не течёт
+  flow: WireFlow | undefined;
+  currentA: number;
+  flowColor: string;
   onClick: (e: { stopPropagation: () => void }) => void;
 }) {
   const capRef = useRef<THREE.Group>(null);
@@ -696,9 +767,8 @@ function WireTube({
   // предупреждений безопасности (красный = "уберёт/опасно").
   const [hovered, setHovered] = useState(false);
 
-  const geometry = useMemo(() => {
-    return new THREE.TubeGeometry(wireArc(a, b), 40, 0.028, 10, false);
-  }, [a, b]);
+  const curve = useMemo(() => wireArc(a, b), [a, b]);
+  const geometry = useMemo(() => new THREE.TubeGeometry(curve, 40, 0.028, 10, false), [curve]);
 
   useEffect(() => () => geometry.dispose(), [geometry]);
 
@@ -748,6 +818,7 @@ function WireTube({
           metalness={0.05}
         />
       </mesh>
+      {flow && <FlowBeads curve={curve} reversed={flow.reversed} currentA={currentA} color={flowColor} />}
       <group ref={capRef}>
         <mesh position={a}>
           <sphereGeometry args={[0.032, 10, 10]} />
@@ -762,8 +833,12 @@ function WireTube({
   );
 }
 
-function Wires() {
+function Wires({ solution }: { solution: CircuitSolution }) {
   const { state, removeConnection } = useExperimentState();
+  const flows = useMemo(
+    () => computeWireFlows(state.components, state.connections, solution),
+    [state.components, state.connections, solution]
+  );
   const { getTerminalPosition } = useWireDrag();
   // post-S9.9: пока идёт перетаскивание компонента, мировые позиции его
   // клемм меняются каждый кадр (см. ConnectionPoint.tsx), но простое
@@ -773,9 +848,16 @@ function Wires() {
   // визуально следовал за компонентом в реальном времени
   const { draggingComponentId } = useComponentDrag();
   const [, forceTick] = useState(0);
+  // провод может появиться раньше, чем его клеммы сообщили свои позиции
+  // (цепь, собранная лабораторией при загрузке, пока модели ещё грузятся) —
+  // перерисовываемся, пока позиции не появятся
+  const waitingForTerminalsRef = useRef(false);
   useFrame(() => {
-    if (draggingComponentId) forceTick((t) => (t + 1) % 1_000_000);
+    if (draggingComponentId || waitingForTerminalsRef.current) forceTick((t) => (t + 1) % 1_000_000);
   });
+  waitingForTerminalsRef.current = state.connections.some(
+    (c) => !getTerminalPosition(c.terminals[0]) || !getTerminalPosition(c.terminals[1])
+  );
 
   return (
     <>
@@ -789,6 +871,9 @@ function Wires() {
             a={a}
             b={b}
             color={WIRE_COLORS[index % WIRE_COLORS.length]}
+            flow={flows.get(connection.id)}
+            currentA={solution.currentA}
+            flowColor={solution.isShortCircuit ? "#f87171" : "#fef08a"}
             onClick={(e) => {
               e.stopPropagation();
               playDisconnect();
@@ -966,21 +1051,28 @@ function ElectricityProximityInteraction({ cameraMode }: { cameraMode: CameraMod
   );
 }
 
-// Какие детали нужны в каждом из 6 заданий "Быстрой проверки". Остальных
-// на столе нет, чтобы ученик видел только то, с чем работает. В
-// лабораторных работах (каталог) схема подсказок идёт через все 7 деталей,
-// поэтому там стол показывается целиком.
+// Какие детали нужны в каждом задании. Остальных на столе нет, чтобы ученик
+// видел только то, с чем работает. В лабораторных работах (каталог) схема
+// подсказок идёт через все 7 деталей, поэтому там стол показывается целиком.
 const TASK_BENCH_COMPONENTS: Record<string, string[]> = {
   "task-1-close-loop": ["battery", "switch", "bulb", "resistor"],
+  "task-2-lamp-brightness": ["battery", "switch", "bulb", "resistor"],
+  "task-5-find-break": ["battery", "switch", "bulb", "resistor"],
+  // скрытые задания (ARCHIVED_TASKS в task-engine.ts)
   "task-2-ammeter-series": ["battery", "switch", "bulb", "resistor", "ammeter"],
   "task-3-voltmeter-parallel": ["battery", "switch", "bulb", "resistor", "voltmeter"],
   "task-4-target-current": ["battery", "switch", "bulb", "resistor", "ammeter"],
-  "task-5-find-break": ["battery", "switch", "bulb", "resistor"],
   "task-6-fix-short": ["battery", "switch", "bulb", "resistor"],
 };
 
-// Нижняя панель лаборатории: "Тренировка" (6 коротких заданий) или
-// "Лабораторные работы" (каталог из 8 работ). Одновременно видна только одна.
+// Нижняя панель лаборатории: "Тренировка" (3 задания) или "Лабораторные
+// работы" (каталог из 8 работ). Одновременно видна только одна.
+//
+// Вкладка "Лабораторные работы" пока скрыта: ученик видит только три
+// задания. Весь её код остаётся рабочим — чтобы вернуть вкладку, достаточно
+// поставить здесь true.
+const LABS_TAB_ENABLED: boolean = false;
+
 export type LabMode = "training" | "labs";
 const LabModeContext = createContext<LabMode>("training");
 const LAB_MODE_KEY = "edumind:electricity-lab-mode";
@@ -1125,7 +1217,7 @@ function CircuitScene({
         <Resistor />
       </BenchSlot>
       <BenchSlot id="bulb">
-        <Bulb brightness={brightness} />
+        <Bulb brightness={brightness} powerRatio={bulbPowerRatio({ components: state.components, connections: state.connections, solution })} />
       </BenchSlot>
       <BenchSlot id="switch">
       <Switch
@@ -1147,7 +1239,7 @@ function CircuitScene({
       <BenchSlot id="fuse">
         <Fuse isBlown={fuse?.isBlown ?? false} justBlown={Boolean(solution.fuseToBlowId)} timeScale={timeScale} />
       </BenchSlot>
-      <Wires />
+      <Wires solution={solution} />
       <PendingWirePreview />
       <WireDragSurface y={0.01} size={12} />
       <ComponentDragSurface y={0.011} size={12} />
@@ -1237,6 +1329,46 @@ function TutorialAutoClose() {
   useEffect(() => {
     if (active && done) skipTutorial();
   }, [active, done, skipTutorial]);
+  return null;
+}
+
+// Цепь, которую лаборатория собирает сама для задания "Найди поломку", если
+// стол пуст (страницу обновили или нажали "Сбросить"): один случайный провод
+// из четырёх не ставится — его и нужно найти.
+const FIND_BREAK_WIRING: [string, string][] = [
+  ["battery_pos", "switch_a"],
+  ["switch_b", "resistor_a"],
+  ["resistor_b", "bulb_a"],
+  ["bulb_b", "battery_neg"],
+];
+
+// полная цепь для задания "Управляй яркостью", когда его открывают из списка
+// заданий на чистом столе: собирать её заново там не нужно, задание про ползунки
+function prebuiltWire([from, to]: [string, string]): Connection {
+  return { id: `prebuilt-${from}-${to}-${Date.now()}`, terminals: [from, to] };
+}
+
+function FindBreakSetup() {
+  const { task } = useTaskProgress();
+  const { state, addConnection } = useExperimentState();
+  const isBenchEmpty = state.connections.length === 0;
+  // не собирать дважды для одного и того же пустого стола (в dev React
+  // запускает эффекты по два раза)
+  const builtRef = useRef(false);
+
+  useEffect(() => {
+    if (task.id !== "task-5-find-break" || !isBenchEmpty) {
+      builtRef.current = false;
+      return;
+    }
+    if (builtRef.current) return;
+    builtRef.current = true;
+    const missing = Math.floor(Math.random() * FIND_BREAK_WIRING.length);
+    FIND_BREAK_WIRING.forEach(([from, to], index) => {
+      if (index !== missing) addConnection(prebuiltWire([from, to]));
+    });
+  }, [task.id, isBenchEmpty, addConnection]);
+
   return null;
 }
 
@@ -1643,7 +1775,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
   );
 
   const [labMode, setLabModeState] = useState<LabMode>(() => {
-    if (typeof window === "undefined") return "training";
+    if (!LABS_TAB_ENABLED || typeof window === "undefined") return "training";
     return window.localStorage.getItem(LAB_MODE_KEY) === "labs" ? "labs" : "training";
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -1697,6 +1829,14 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
     clock.reset();
   }
 
+  // ученик открыл задание из списка (или "пройти заново"): чистый стол с
+  // исходными напряжением и сопротивлением. Для "Найди поломку" цепь с
+  // разрывом соберёт FindBreakSetup, как только стол опустеет.
+  function prepareBenchFor(task: TaskDefinition) {
+    handleReset();
+    if (task.id === "task-2-lamp-brightness") FIND_BREAK_WIRING.forEach((pair) => addConnection(prebuiltWire(pair)));
+  }
+
   function handleClockToggle() {
     if (!clock.isRunning) playPowerOn();
     if (clock.isRunning) clock.pause();
@@ -1713,6 +1853,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
       connections={state.connections}
       solution={solution}
       onAdvance={plantFaultFor}
+      onSelectTask={prepareBenchFor}
     >
     <ElectricityLabExperienceProvider
       simulationId={simulation.id}
@@ -1746,11 +1887,36 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
             isFullscreen={isFullscreen}
           />
         </WireDragProvider>
+        {labMode === "training" && (
+          <>
+            <div className="pointer-events-none absolute inset-x-0 top-16 z-20 flex justify-center">
+              <TaskCompleteOverlay />
+            </div>
+            <OnlyForTask taskId="task-2-lamp-brightness">
+              <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center">
+                <BrightnessHud
+                  ratio={bulbPowerRatio({ components: state.components, connections: state.connections, solution })}
+                  voltageV={battery?.voltageV ?? 12}
+                  resistanceOhm={resistor?.resistanceOhm ?? 4}
+                  resistorInLoop={(resistor?.terminals ?? []).every((terminal) =>
+                    state.connections.some((c) => c.terminals.includes(terminal))
+                  )}
+                  onVoltageChange={handleVoltageChange}
+                  onResistanceChange={handleResistanceChange}
+                />
+              </div>
+            </OnlyForTask>
+          </>
+        )}
       </div>
 
       <div className="ds-glass mt-4 flex flex-col gap-4 rounded-ds-panel p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <LabModeTabs mode={labMode} onChange={setLabMode} />
+          {LABS_TAB_ENABLED ? (
+            <LabModeTabs mode={labMode} onChange={setLabMode} />
+          ) : (
+            <h2 className="text-ds-body font-semibold text-text-primary">{t.electricity.hud.tasksHeading}</h2>
+          )}
           <div className="flex items-center gap-2">
             <ElectricityResetButton onReset={handleReset} />
             <button
@@ -1858,43 +2024,7 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
             <TutorialAutoClose />
             <TutorialPanel />
             <TaskPanel />
-            {/* ползунки нужны только в задании "Настрой ток 0.5 А" */}
-            <OnlyForTask taskId="task-4-target-current">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label htmlFor="voltage-slider" className="mb-1 block text-ds-caption font-medium text-text-secondary">
-                {t.electricity.hud.voltageLabel}: {(battery?.voltageV ?? 0).toFixed(1)} {t.electricity.hud.unitV}
-              </label>
-              <input
-                id="voltage-slider"
-                type="range"
-                min={1}
-                max={24}
-                step={0.5}
-                value={battery?.voltageV ?? 12}
-                onChange={(e) => handleVoltageChange(Number(e.target.value))}
-                data-testid="voltage-slider"
-                className="w-full accent-accent"
-              />
-            </div>
-            <div>
-              <label htmlFor="resistance-slider" className="mb-1 block text-ds-caption font-medium text-text-secondary">
-                {t.electricity.hud.resistanceLabel}: {(resistor?.resistanceOhm ?? 0).toFixed(1)} {t.electricity.hud.unitOhm}
-              </label>
-              <input
-                id="resistance-slider"
-                type="range"
-                min={1}
-                max={40}
-                step={0.5}
-                value={resistor?.resistanceOhm ?? 4}
-                onChange={(e) => handleResistanceChange(Number(e.target.value))}
-                data-testid="resistance-slider"
-                className="w-full accent-accent"
-              />
-            </div>
-          </div>
-            </OnlyForTask>
+            <FindBreakSetup />
           </>
         ) : (
           <>

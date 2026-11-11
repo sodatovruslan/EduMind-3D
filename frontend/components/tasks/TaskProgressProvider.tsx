@@ -68,6 +68,12 @@ interface TaskProgressContextValue {
   result: TaskValidationResult;
   isLastTask: boolean;
   advance: () => void;
+  /** Ids of every task the student has completed at least once. */
+  completedTaskIds: string[];
+  /** A task can be opened once the one before it has been completed. */
+  isTaskUnlocked: (index: number) => boolean;
+  /** Open an unlocked task (again): the scene resets the bench for it. XP is only awarded the first time. */
+  goToTask: (index: number) => void;
   learningProfile: LearningProfile | null;
   newAchievements: string[];
   clearNewAchievements: () => void;
@@ -85,6 +91,7 @@ export function TaskProgressProvider({
   connections,
   solution,
   onAdvance,
+  onSelectTask,
   children,
 }: {
   simulationId: string;
@@ -94,6 +101,9 @@ export function TaskProgressProvider({
   // вызывается при переходе к следующему заданию, до того как оно станет
   // текущим — сцена может подготовить стол (например, "сломать" цепь)
   onAdvance?: (nextTask: TaskDefinition) => void;
+  // вызывается, когда ученик сам открывает задание из списка (в том числе
+  // уже пройденное — "пройти заново"): сцена готовит для него чистый стол
+  onSelectTask?: (task: TaskDefinition) => void;
   children: React.ReactNode;
 }) {
   const auth = useOptionalAuth();
@@ -205,6 +215,9 @@ export function TaskProgressProvider({
       });
   }, [status, task, completedIds, simulationId]);
 
+  const isTaskUnlocked = (index: number) =>
+    index >= 0 && index < TASKS.length && (index === 0 || completedIds.has(TASKS[index - 1].id));
+
   const value: TaskProgressContextValue = {
     taskIndex,
     task,
@@ -216,6 +229,13 @@ export function TaskProgressProvider({
       const next = Math.min(taskIndex + 1, TASKS.length - 1);
       if (next !== taskIndex) onAdvance?.(TASKS[next]);
       setTaskIndex(next);
+    },
+    completedTaskIds: Array.from(completedIds),
+    isTaskUnlocked,
+    goToTask: (index: number) => {
+      if (!isTaskUnlocked(index)) return;
+      onSelectTask?.(TASKS[index]);
+      setTaskIndex(index);
     },
     learningProfile,
     newAchievements,

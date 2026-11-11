@@ -149,18 +149,52 @@ function validateHeatingWater(state: LabState): ExperimentValidationResult {
   return { completed, errors, warnings: [], measurements: { temperatureC: container.temperatureC } };
 }
 
+/**
+ * Задания, которые видит ученик: три, одно продолжает другое. Солёная вода из
+ * первого задания — готовый реактив для второго. Остальные
+ * (ARCHIVED_EXPERIMENTS) пока скрыты — их проверки и тесты остаются рабочими,
+ * чтобы вернуть задание, достаточно перенести его в EXPERIMENTS.
+ */
 export const EXPERIMENTS: ExperimentDefinition[] = [
   {
     id: "experiment-1-dissolve-salt",
-    title: "Растворение соли",
-    description: "Раствори поваренную соль (NaCl) в воде.",
-    goal: "Вся добавленная соль должна раствориться, без осадка на дне.",
+    title: "Раствори соль",
+    description:
+      "Налей в сосуд воду, затем добавь поваренную соль (NaCl): перетащи бутылку на сосуд. Соль исчезнет — она растворилась.",
+    goal: "Вся соль растворилась, на дне нет осадка.",
     successConditions: ["В сосуде есть вода", "Соль полностью растворена (нет осадка)"],
     failureConditions: ["Нет воды", "Соль не добавлена", "Превышен предел растворимости — есть осадок"],
     difficulty: "easy",
     xpReward: 10,
     validate: validateDissolution,
   },
+  {
+    id: "experiment-3-precipitation",
+    title: "Получи белый осадок",
+    description:
+      "В солёную воду из прошлого задания добавь нитрат серебра (AgNO₃). Два прозрачных раствора дадут белые хлопья — это новое вещество, хлорид серебра.",
+    goal: "В сосуде выпал белый осадок хлорида серебра (AgCl).",
+    successConditions: ["В сосуде одновременно есть AgNO₃ и растворённый NaCl", "Reaction Engine зафиксировал осаждение AgCl"],
+    failureConditions: ["Добавлен только один из реагентов"],
+    difficulty: "medium",
+    xpReward: 15,
+    validate: validatePrecipitation,
+  },
+  {
+    id: "experiment-4-heat-water",
+    title: "Вскипяти воду",
+    description:
+      "Возьми чистый сосуд и отметь его активным. Налей воду, поставь сосуд на горелку и включи её. Следи за температурой: при 100°C вода закипит.",
+    goal: "Вода закипела: температура 100°C, идёт пар.",
+    successConditions: ["В сосуде есть вода", "Температура ≥ 100°C"],
+    failureConditions: ["Нет воды", "Температура ниже 100°C"],
+    difficulty: "hard",
+    xpReward: 20,
+    validate: validateHeatingWater,
+  },
+];
+
+export const ARCHIVED_EXPERIMENTS: ExperimentDefinition[] = [
   {
     id: "experiment-2-neutralization",
     title: "Нейтрализация",
@@ -171,28 +205,6 @@ export const EXPERIMENTS: ExperimentDefinition[] = [
     difficulty: "medium",
     xpReward: 15,
     validate: validateNeutralization,
-  },
-  {
-    id: "experiment-3-precipitation",
-    title: "Осаждение",
-    description: "Смешай нитрат серебра (AgNO₃) и раствор поваренной соли (NaCl).",
-    goal: "Должен образоваться белый осадок хлорида серебра (AgCl).",
-    successConditions: ["В сосуде одновременно есть AgNO₃ и растворённый NaCl", "Reaction Engine зафиксировал осаждение AgCl"],
-    failureConditions: ["Добавлен только один из реагентов"],
-    difficulty: "medium",
-    xpReward: 15,
-    validate: validatePrecipitation,
-  },
-  {
-    id: "experiment-4-heat-water",
-    title: "Нагрев воды",
-    description: "Нагрей воду в сосуде на горелке до кипения.",
-    goal: "Температура воды должна достичь 100°C (переход в газообразное состояние).",
-    successConditions: ["В сосуде есть вода", "Температура ≥ 100°C"],
-    failureConditions: ["Нет воды", "Температура ниже 100°C"],
-    difficulty: "easy",
-    xpReward: 10,
-    validate: validateHeatingWater,
   },
 ];
 

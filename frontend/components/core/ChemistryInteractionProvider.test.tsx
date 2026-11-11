@@ -506,7 +506,7 @@ describe("Stage S-2 — интеграция с ChemistryWorkspaceProvider (SET_
     );
 
     const before = result.current.workspace.state.stockBottles.find((b) => b.id === "stock-water")!;
-    expect(before.position).toEqual([-3.2, -1.6]);
+    expect(before.position).toEqual([-1.3, -0.9]);
 
     act(() => result.current.interaction.setFocused("stock-water"));
     act(() => result.current.interaction.pickUp("stock-water"));

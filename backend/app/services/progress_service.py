@@ -21,6 +21,7 @@ from app.schemas.progress import LabCompletedRequest, TaskEventRequest
 # task-engine.ts) — обновлять здесь при добавлении новых задач.
 TASK_TOPICS: dict[str, str] = {
     "task-1-close-loop": "Базовые цепи",
+    "task-2-lamp-brightness": "Мощность и яркость",
     "task-2-ammeter-series": "Амперметр",
     "task-3-voltmeter-parallel": "Вольтметр",
     "task-4-target-current": "Закон Ома",

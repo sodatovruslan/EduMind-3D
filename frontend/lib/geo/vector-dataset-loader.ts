@@ -20,7 +20,10 @@ export class VectorDatasetLoader<T> {
   private readonly fetchImpl: typeof fetch;
 
   constructor(private readonly urlFor: (key: string) => string, options: VectorDatasetLoaderOptions = {}) {
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    // The browser's fetch must be called with `this` being the window:
+    // stored on an object and called as `this.fetchImpl(...)` it rejects with
+    // "Illegal invocation" and no request is ever sent — hence the wrapper.
+    this.fetchImpl = options.fetchImpl ?? ((input, init) => fetch(input, init));
   }
 
   isCached(key: string): boolean {

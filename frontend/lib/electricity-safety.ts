@@ -102,7 +102,8 @@ function checkFuseAndOverload(components: CircuitComponent[], solution: CircuitS
   // предупреждение, ничего не меняет в физике
   const bulb = components.find((c) => c.kind === "bulb");
   const bulbReading = bulb ? solution.readings[bulb.id] : undefined;
-  if (bulb?.ratedPowerW !== undefined && bulbReading && bulbReading.powerW > bulb.ratedPowerW) {
+  // 0.5% запаса: ровно номинальная мощность — это рабочий режим, а не перегрузка
+  if (bulb?.ratedPowerW !== undefined && bulbReading && bulbReading.powerW > bulb.ratedPowerW * 1.005) {
     warnings.push({
       code: "overload",
       message: `⚠ Мощность на лампе (${bulbReading.powerW.toFixed(1)} Вт) превышает номинал (${bulb.ratedPowerW} Вт). В реальности лампа перегорела бы — снизь напряжение источника.`,

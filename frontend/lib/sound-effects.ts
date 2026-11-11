@@ -81,3 +81,10 @@ export function playFuseBlow() {
   noiseBurst(0.18, 0.07);
   tone(140, 0.3, 0.04, "sawtooth", 0.02);
 }
+
+/** Short rising three-note chime: a task was completed. */
+export function playSuccess() {
+  tone(523, 0.18, 0.035, "sine");
+  tone(659, 0.18, 0.035, "sine", 0.1);
+  tone(784, 0.32, 0.04, "sine", 0.2);
+}

@@ -81,7 +81,10 @@ export class VolcanoProvider {
   private readonly fetchImpl: typeof fetch;
 
   constructor(fetchImpl?: typeof fetch) {
-    this.fetchImpl = fetchImpl ?? fetch;
+    // The browser's fetch must be called with `this` being the window:
+    // stored on an object and called as `this.fetchImpl(...)` it rejects with
+    // "Illegal invocation" and no request is ever sent — hence the wrapper.
+    this.fetchImpl = fetchImpl ?? ((input, init) => fetch(input, init));
   }
 
   load(): Promise<VolcanoRecord[]> {

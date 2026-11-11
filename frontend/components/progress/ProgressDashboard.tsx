@@ -1,141 +1,200 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Award, Flame, Target, TrendingUp, Zap } from "lucide-react";
-import { getMyProgress, type LearningProfile } from "@/lib/progress-client";
-import { ACHIEVEMENT_EMOJI, ALL_ACHIEVEMENT_CODES } from "@/lib/achievements";
+import useSWR from "swr";
+import {
+  Brain,
+  Cable,
+  Cog,
+  Gem,
+  Lock,
+  Rocket,
+  Trophy,
+  Wrench,
+  Hammer,
+  FlaskConical,
+  type LucideIcon,
+} from "lucide-react";
+import { getMyProgress } from "@/lib/progress-client";
+import { ALL_ACHIEVEMENT_CODES } from "@/lib/achievements";
 import { useLocale } from "@/lib/locale-context";
-import { Skeleton, Surface } from "@/components/design-system";
+import { ButtonLink, Skeleton, Surface } from "@/components/design-system";
 
 /**
- * Progress Dashboard (Stage 4, restyled to Design V2 in D5) — читает уже
- * посчитанный backend'ом (progress_service.py) Learning Profile через
- * GET /api/progress/me. Ничего не считает сам — только отображает реальные
- * числа. Логика/фетч не менялись в D5, только токены/i18n.
+ * Прогресс ученика на странице профиля. Все числа приходят готовыми из
+ * GET /api/progress/me (progress_service.py) — здесь только отображение.
+ * Ключ SWR общий с шапкой профиля и AchievementsTeaser, так что запрос один.
  */
-function StatCard({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+
+const ACHIEVEMENT_ICON: Record<string, LucideIcon> = {
+  first_circuit: Cable,
+  first_perfect_lab: Gem,
+  five_labs_completed: Trophy,
+  no_hints_used: Brain,
+  fast_learner: Rocket,
+  electrician_beginner: Wrench,
+  electrician_intermediate: Hammer,
+  electrician_advanced: Cog,
+};
+
+function Stat({ label, value, suffix }: { label: string; value: string; suffix?: string }) {
   return (
-    <Surface elevated className="p-4">
-      <div className="mb-1 flex items-center gap-2 text-text-muted">
-        {icon}
-        <span className="text-ds-caption uppercase tracking-widest">{label}</span>
-      </div>
-      <p className="text-ds-title text-text-primary">{value}</p>
-    </Surface>
+    <div className="py-3 sm:px-6 sm:py-0 sm:first:pl-0">
+      <p className="text-sm text-text-muted">{label}</p>
+      <p className="mt-1 font-headline text-3xl font-semibold tabular-nums tracking-tight text-text-primary">
+        {value}
+        {suffix && <span className="ml-0.5 text-lg font-medium text-text-muted">{suffix}</span>}
+      </p>
+    </div>
+  );
+}
+
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 py-3">
+      <span className="text-sm text-text-secondary">{label}</span>
+      <span className="text-right text-sm font-medium text-text-primary">{children}</span>
+    </div>
   );
 }
 
 export default function ProgressDashboard() {
   const { t } = useLocale();
-  const [profile, setProfile] = useState<LearningProfile | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { data, error, isLoading } = useSWR("progress-me", getMyProgress);
+  const profile = data?.profile;
 
-  useEffect(() => {
-    getMyProgress()
-      .then((history) => setProfile(history.profile))
-      .catch(() => setError(t.dashboard.progress.empty))
-      .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <Skeleton className="h-28 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  // Только что созданный профиль приходит с нулями — вместо стены нулей
+  // показываем понятный первый шаг.
+  const isFreshProfile = profile && profile.completed_labs === 0 && profile.xp === 0;
+
+  if (error || !profile || isFreshProfile) {
+    return (
+      <Surface className="flex flex-col items-start gap-5 p-8 sm:flex-row sm:items-center" data-testid="progress-dashboard-empty">
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-accent/10 text-accent">
+          <FlaskConical size={22} strokeWidth={1.75} />
+        </div>
+        <p className="flex-1 text-ds-body text-text-secondary">{t.dashboard.progress.empty}</p>
+        <ButtonLink href="/dashboard" variant="primary">
+          {t.profile.emptyCta}
+        </ButtonLink>
+      </Surface>
+    );
+  }
 
   const DIFFICULTY_LABEL: Record<string, string> = {
     easy: t.dashboard.progress.difficultyEasy,
     medium: t.dashboard.progress.difficultyMedium,
     hard: t.dashboard.progress.difficultyHard,
   };
-
-  if (loading) {
-    return (
-      <Surface elevated className="p-6">
-        <Skeleton className="h-6 w-40" />
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {[0, 1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-20 w-full" />
-          ))}
-        </div>
-      </Surface>
-    );
-  }
-
-  // "нет данных" и "реальный, но ещё пустой профиль" — один и тот же
-  // честный empty-state для студента: только что созданный профиль
-  // возвращается backend'ом успешно (не ошибка), просто со всеми нулями —
-  // показывать стену нулей вместо приветливого empty-состояния было бы
-  // технически честно, но не полезно (см. D5-бриф §16/§17)
-  const isFreshProfile = profile && profile.completed_labs === 0 && profile.xp === 0;
-
-  if (error || !profile || isFreshProfile) {
-    return (
-      <Surface elevated className="p-6 text-ds-body text-text-muted" data-testid="progress-dashboard-empty">
-        {error ?? t.dashboard.progress.empty}
-      </Surface>
-    );
-  }
+  const unlockedCount = ALL_ACHIEVEMENT_CODES.filter((c) => profile.achievements.includes(c)).length;
 
   return (
-    <Surface elevated className="p-6" data-testid="progress-dashboard">
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-ds-title text-text-primary">{t.dashboard.progress.title}</h2>
-        <span className="rounded-full bg-accent/15 px-3 py-1 text-ds-caption text-accent">
-          {t.dashboard.progress.level} {profile.level}
-        </span>
-      </div>
+    <div className="space-y-6" data-testid="progress-dashboard">
+      {/* Основные цифры — одна строка с разделителями, без коробок */}
+      <Surface className="p-6">
+        <h2 className="mb-4 font-headline text-lg font-semibold text-text-primary">{t.profile.statsTitle}</h2>
+        <div className="grid grid-cols-2 gap-x-6 divide-border/[0.08] sm:grid-cols-4 sm:gap-x-0 sm:divide-x">
+          <Stat label={t.dashboard.progress.xp} value={String(profile.xp)} />
+          <Stat label={t.dashboard.progress.completedLabs} value={String(profile.completed_labs)} />
+          <Stat label={t.dashboard.progress.accuracy} value={String(profile.accuracy)} suffix="%" />
+          <Stat label={t.dashboard.progress.streak} value={String(profile.current_streak)} />
+        </div>
+      </Surface>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard icon={<Zap size={14} />} label={t.dashboard.progress.xp} value={String(profile.xp)} />
-        <StatCard icon={<Award size={14} />} label={t.dashboard.progress.completedLabs} value={String(profile.completed_labs)} />
-        <StatCard icon={<Target size={14} />} label={t.dashboard.progress.accuracy} value={`${profile.accuracy}%`} />
-        <StatCard icon={<Flame size={14} />} label={t.dashboard.progress.streak} value={String(profile.current_streak)} />
-        <StatCard icon={<TrendingUp size={14} />} label={t.dashboard.progress.avgHints} value={profile.average_hints.toFixed(1)} />
-        <StatCard icon={<TrendingUp size={14} />} label={t.dashboard.progress.avgAttempts} value={profile.average_attempts.toFixed(1)} />
-      </div>
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+        {/* Детали решения */}
+        <Surface className="p-6">
+          <h2 className="mb-2 font-headline text-lg font-semibold text-text-primary">{t.profile.detailsTitle}</h2>
+          <div className="divide-y divide-border/[0.08]">
+            <Row label={t.dashboard.progress.avgHints}>{profile.average_hints.toFixed(1)}</Row>
+            <Row label={t.dashboard.progress.avgAttempts}>{profile.average_attempts.toFixed(1)}</Row>
+            <Row label={t.dashboard.progress.recommendedNext}>
+              <span className="text-accent">
+                {DIFFICULTY_LABEL[profile.recommended_difficulty] ?? profile.recommended_difficulty}
+              </span>
+            </Row>
+          </div>
 
-      <div className="mt-4 rounded-ds-control border border-border/[0.08] bg-background p-3 text-ds-body text-text-secondary">
-        {t.dashboard.progress.recommendedNext}:{" "}
-        <span className="font-semibold text-accent">{DIFFICULTY_LABEL[profile.recommended_difficulty] ?? profile.recommended_difficulty}</span>
-      </div>
-
-      {(profile.strong_topics.length > 0 || profile.weak_topics.length > 0) && (
-        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {profile.strong_topics.length > 0 && (
-            <div className="rounded-ds-control border border-success/30 bg-success/10 p-3 text-ds-body text-text-primary">
-              <p className="mb-1 text-ds-caption uppercase tracking-widest text-success">{t.dashboard.progress.strongTopics}</p>
-              {profile.strong_topics.join(", ")}
+          {(profile.strong_topics.length > 0 || profile.weak_topics.length > 0) && (
+            <div className="mt-4 space-y-3">
+              {profile.strong_topics.length > 0 && (
+                <div>
+                  <p className="mb-1.5 text-sm text-text-muted">{t.dashboard.progress.strongTopics}</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {profile.strong_topics.map((topic) => (
+                      <span key={topic} className="rounded-md bg-success/10 px-2 py-0.5 text-sm text-success">
+                        {topic}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {profile.weak_topics.length > 0 && (
+                <div>
+                  <p className="mb-1.5 text-sm text-text-muted">{t.dashboard.progress.weakTopics}</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {profile.weak_topics.map((topic) => (
+                      <span key={topic} className="rounded-md bg-warning/10 px-2 py-0.5 text-sm text-warning">
+                        {topic}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
-          {profile.weak_topics.length > 0 && (
-            <div className="rounded-ds-control border border-warning/30 bg-warning/10 p-3 text-ds-body text-text-primary">
-              <p className="mb-1 text-ds-caption uppercase tracking-widest text-warning">{t.dashboard.progress.weakTopics}</p>
-              {profile.weak_topics.join(", ")}
-            </div>
-          )}
-        </div>
-      )}
+        </Surface>
 
-      <div className="mt-5">
-        <p className="mb-2 text-ds-caption uppercase tracking-widest text-text-muted">{t.dashboard.progress.achievements}</p>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" data-testid="achievements-grid">
-          {ALL_ACHIEVEMENT_CODES.map((code) => {
-            const unlocked = profile.achievements.includes(code);
-            const info = t.achievements[code as keyof typeof t.achievements];
-            return (
-              <div
-                key={code}
-                data-testid={`achievement-${code}`}
-                data-unlocked={unlocked}
-                title={info.description}
-                className={`rounded-ds-control border p-3 text-center text-ds-caption transition-colors ${
-                  unlocked ? "border-warning/50 bg-warning/10 text-warning" : "border-border/[0.08] bg-background text-text-muted opacity-50"
-                }`}
-              >
-                <div className="text-2xl">{ACHIEVEMENT_EMOJI[code]}</div>
-                <div className="mt-1 font-medium">{info.title}</div>
-              </div>
-            );
-          })}
-        </div>
+        {/* Достижения */}
+        <Surface className="p-6">
+          <div className="mb-4 flex items-baseline justify-between">
+            <h2 className="font-headline text-lg font-semibold text-text-primary">{t.dashboard.progress.achievements}</h2>
+            <span className="text-sm tabular-nums text-text-muted">
+              {unlockedCount} {t.profile.unlockedOf} {ALL_ACHIEVEMENT_CODES.length}
+            </span>
+          </div>
+          <ul className="grid gap-2 sm:grid-cols-2" data-testid="achievements-grid">
+            {ALL_ACHIEVEMENT_CODES.map((code) => {
+              const unlocked = profile.achievements.includes(code);
+              const info = t.achievements[code as keyof typeof t.achievements];
+              const Icon = unlocked ? ACHIEVEMENT_ICON[code] ?? Trophy : Lock;
+              return (
+                <li
+                  key={code}
+                  data-testid={`achievement-${code}`}
+                  data-unlocked={unlocked}
+                  title={info.description}
+                  className={`flex items-center gap-3 rounded-xl p-2.5 transition-colors ${
+                    unlocked ? "bg-warning/[0.07]" : "hover:bg-border/[0.03]"
+                  }`}
+                >
+                  <span
+                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                      unlocked ? "bg-warning/15 text-warning" : "bg-border/[0.05] text-text-muted"
+                    }`}
+                  >
+                    <Icon size={17} strokeWidth={1.75} />
+                  </span>
+                  <span className="min-w-0">
+                    <span className={`block truncate text-sm font-medium ${unlocked ? "text-text-primary" : "text-text-muted"}`}>
+                      {info.title}
+                    </span>
+                    <span className="block truncate text-xs text-text-muted">{info.description}</span>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </Surface>
       </div>
-    </Surface>
+    </div>
   );
 }

@@ -1,8 +1,8 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { AlertTriangle, ArrowRight, CheckCircle2, XCircle } from "lucide-react";
-import { ExperimentStatus } from "@/lib/experiment-validator";
+import { AlertTriangle, ArrowRight, Check, CheckCircle2, XCircle } from "lucide-react";
+import { EXPERIMENTS, ExperimentStatus } from "@/lib/experiment-validator";
 import { useExperimentProgress } from "@/components/experiments/ExperimentProgressProvider";
 import { useLocale } from "@/lib/locale-context";
 
@@ -24,6 +24,46 @@ const STATUS_COLOR: Record<ExperimentStatus, string> = {
   [ExperimentStatus.FAILED]: "text-danger border-danger/40",
 };
 
+/** Numbered steps: done (check), current (highlighted), still locked (muted). Click an unlocked one to (re)play it. */
+function ExperimentStepper({ label }: { label: string }) {
+  const { experimentIndex, completedExperimentIds, isExperimentUnlocked, goToExperiment } = useExperimentProgress();
+  return (
+    <ol className="mb-3 flex items-center gap-1.5" aria-label={label} data-testid="experiment-stepper">
+      {EXPERIMENTS.map((item, index) => {
+        const done = completedExperimentIds.includes(item.id);
+        const current = index === experimentIndex;
+        return (
+          <li key={item.id} className="flex min-w-0 flex-1 items-center gap-1.5" aria-current={current ? "step" : undefined}>
+            <button
+              type="button"
+              onClick={() => goToExperiment(index)}
+              disabled={!isExperimentUnlocked(index)}
+              data-testid={`experiment-step-${index + 1}`}
+              className="ds-focus-ring flex min-w-0 items-center gap-1.5 rounded-full pr-1 transition-opacity enabled:hover:opacity-75 disabled:cursor-not-allowed"
+            >
+              <span
+                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border font-mono text-ds-caption ${
+                  done
+                    ? "border-success/60 bg-success/15 text-success"
+                    : current
+                      ? "border-accent text-accent"
+                      : "border-border/[0.15] text-text-muted"
+                }`}
+              >
+                {done ? <Check size={13} /> : index + 1}
+              </span>
+              <span className={`hidden truncate text-ds-caption sm:block ${current ? "font-medium text-text-primary" : "text-text-muted"}`}>
+                {item.title}
+              </span>
+            </button>
+            {index < EXPERIMENTS.length - 1 && <span className={`h-px min-w-3 flex-1 ${done ? "bg-success/50" : "bg-border/[0.15]"}`} />}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 export default function ExperimentPanel() {
   const { t } = useLocale();
   const p = t.chemistry.panel;
@@ -38,9 +78,13 @@ export default function ExperimentPanel() {
 
   return (
     <div className="ds-glass rounded-ds-panel p-4" data-testid="experiment-panel">
+      <ExperimentStepper label={p.stepperAria} />
       <div className="mb-3 flex items-center justify-between">
         <div className="font-mono text-ds-caption uppercase tracking-widest text-text-muted">
-          {p.counter.replace("{index}", String(experimentIndex + 1)).replace("{difficulty}", DIFFICULTY_LABEL[experiment.difficulty])}
+          {p.counter
+            .replace("{index}", String(experimentIndex + 1))
+            .replace("{total}", String(EXPERIMENTS.length))
+            .replace("{difficulty}", DIFFICULTY_LABEL[experiment.difficulty])}
         </div>
         <div className="font-mono text-ds-caption text-accent" data-testid="experiment-xp">
           XP: {totalXp}

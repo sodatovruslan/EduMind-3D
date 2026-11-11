@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { addSubstance, createEmptyContainer, heat } from "./chemistry-engine";
 import { applyReactions } from "./reaction-engine";
-import { EXPERIMENTS, ExperimentStatus, validateExperiment } from "./experiment-validator";
+import { ARCHIVED_EXPERIMENTS, EXPERIMENTS, ExperimentStatus, validateExperiment } from "./experiment-validator";
 import { checkSafety } from "./chemistry-safety";
 import { buildChemistryAIContext } from "./chemistry-context-builder";
 import { CONTAINER_PHYSICS, createDefaultIntegrity } from "./container-physics";
@@ -38,7 +38,7 @@ describe("chemistry-context-builder — buildChemistryAIContext", () => {
     c = addSubstance(c, "hcl", 40);
     c = addSubstance(c, "naoh", 40);
     const { container, occurredReactions } = applyReactions(c);
-    const experiment = EXPERIMENTS.find((e) => e.id === "experiment-2-neutralization")!;
+    const experiment = ARCHIVED_EXPERIMENTS.find((e) => e.id === "experiment-2-neutralization")!;
     const occurredIds = occurredReactions.map((r) => r.id);
     const validation = validateExperiment(experiment, { container, occurredReactionIds: occurredIds });
 

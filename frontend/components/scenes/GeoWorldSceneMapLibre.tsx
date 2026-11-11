@@ -1,42 +1,53 @@
 "use client";
 
-// G6.10 → G6.11 → G6.12 — MapLibre production-foundation alternate renderer
-// for GeoWorld. G6.11 integrated the first real educational flow (Earth
-// layers via flat buttons + continent exploration). G6.12 adds the full
-// Earth Science layer set on top, WITHOUT touching the G6.11 foundation's
-// already-approved behavior: tectonic plates / volcanoes / earthquakes as
-// native MapLibre layers (useEarthScienceLayers), a real climate scenario
-// visualization (useClimateOverlay + ClimatePanel, same backend contract as
-// G6.11's `triggerClimateScenario`), and a genuinely interactive Earth
-// Structure special mode (EarthStructureMode — separate R3F canvas, §45:
-// never two heavy WebGL contexts at once, so MapLibreGlobeCanvas fully
-// UNMOUNTS while Earth Structure Mode is active, not just hidden via CSS).
+// GeoWorld — the globe with three missions, built like the task flows of the
+// Electricity and Chemistry labs:
+//   1. Find the continents — click the continent the prompt asks for.
+//   2. Ring of Fire        — open three volcanoes along the plate boundaries.
+//   3. To the centre       — explore the four layers of the Earth in section.
 //
-// Educational state (actionsLog/selections/score) still lives in
-// `useGeoLessonState` (lib/geo/education/) — renderer-independent domain
-// logic, unchanged contract, now extended with three new action types
-// (explore_plate_boundary/explore_volcano/explore_earthquake) that reuse
-// the SAME `/api/simulations/{id}/action`+`/complete` backend round-trip,
-// not a second scoring engine (§13/§16/§20/§37).
-import { useCallback, useMemo, useState } from "react";
+// The globe itself is the MapLibre renderer (satellite imagery, real
+// terrain); the third mission swaps it for the cut-open Earth
+// (EarthStructureMode, its own canvas — the map is fully unmounted then, the
+// two heavy WebGL contexts never live at once).
+//
+// What counts as progress is decided from real actions on the globe, in the
+// browser: a click tested against real country outlines, a volcano actually
+// opened, a layer actually selected. The backend round-trips of
+// useGeoLessonState are kept for scoring and for the layer facts, but a
+// mission never waits on them.
+//
+// The earlier free-form panels (layer switches, climate slider, feature
+// lists, the "experimental renderer" notice) are no longer rendered here;
+// their components and hooks are untouched and can be mounted again.
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale } from "@/lib/locale-context";
 import MapLibreGlobeCanvas from "@/components/geo/maplibre/MapLibreGlobeCanvas";
-import GeoLessonPanel from "@/components/geo/maplibre/GeoLessonPanel";
-import LayerControlPanel, { type BaseToggles, type EarthScienceToggles } from "@/components/geo/maplibre/LayerControlPanel";
 import EarthScienceLegend from "@/components/geo/maplibre/EarthScienceLegend";
 import FeatureInfoPanel from "@/components/geo/maplibre/FeatureInfoPanel";
-import AccessibleFeatureList from "@/components/geo/maplibre/AccessibleFeatureList";
-import ClimatePanel from "@/components/geo/maplibre/ClimatePanel";
 import EarthStructureMode from "@/components/geo/maplibre/EarthStructureMode";
-import { useGeoLessonState, type EarthLayerKey } from "@/lib/geo/education/useGeoLessonState";
-import { buildGeoAiContext } from "@/lib/geo/education/aiContext";
+import MissionHud, { type MissionFeedback } from "@/components/geo/missions/MissionHud";
+import MissionPanel from "@/components/geo/missions/MissionPanel";
+import TaskCompleteBanner from "@/components/lab/TaskCompleteBanner";
 import AskTeacherWidget from "@/components/help/AskTeacherWidget";
+import { useGeoLessonState, type EarthLayerKey } from "@/lib/geo/education/useGeoLessonState";
+import { useGeoMissions, type GeoMissionId } from "@/lib/geo/education/useGeoMissions";
+import {
+  MATERIK_VIEW,
+  continentAt,
+  tagCountriesWithMaterik,
+  type CountryCollection,
+  type MaterikId,
+} from "@/lib/geo/education/continents";
+import { buildGeoAiContext } from "@/lib/geo/education/aiContext";
 import { buildGeoHelpContext } from "@/lib/help/contextAdapters";
 import type { GeoFeatureInfo } from "@/lib/geo/education/featureInfo";
 import { useEarthScienceLayers, type EarthScienceLabels } from "@/lib/geo/maplibre/useEarthScienceLayers";
-import { useClimateOverlay, CLIMATE_THRESHOLD_C } from "@/lib/geo/maplibre/useClimateOverlay";
-import { setLabelsVisible, setTerrainVisible } from "@/lib/geo/maplibre/base-layer-toggles";
-import { DEFAULT_EARTHQUAKE_WINDOW, type EarthquakeWindowKey } from "@/lib/geo/maplibre/earth-science-sources";
+import { useContinentHighlight } from "@/lib/geo/maplibre/useContinentHighlight";
+import { setLabelsVisible } from "@/lib/geo/maplibre/base-layer-toggles";
+import { BORDERS_URL } from "@/lib/geo/maplibre/labels";
+import { LOCATIONS } from "@/lib/geo/maplibre/camera-presets";
+import { DEFAULT_EARTHQUAKE_WINDOW } from "@/lib/geo/maplibre/earth-science-sources";
 import type { CameraContext } from "@/lib/geo/maplibre/camera-context";
 import type { MapLibreGlobeState } from "@/lib/geo/maplibre/useMapLibreGlobe";
 import type { Simulation } from "@/lib/types";
@@ -45,16 +56,66 @@ export interface GeoWorldSceneMapLibreProps {
   simulation: Simulation;
 }
 
+// how long a reaction to a click stays on screen, and how long a wrong continent flashes red
+const FEEDBACK_MS = 4500;
+const WRONG_FLASH_MS = 900;
+// the Pacific "Ring of Fire" side of the globe: Japan, Indonesia, Kamchatka
+const RING_OF_FIRE_VIEW = { center: [150, 15] as [number, number], zoom: 2.2 };
+const CITY_LAYER_IDS = ["city-point", "city-label"];
+// one slow turn of the globe while the student has not touched it yet
+const IDLE_SPIN = { degrees: 150, durationMs: 60_000 };
+
+// the backend's rough continent keys (useGeoLessonState.exploreContinent) mapped
+// to the six school continents — only used when the country outlines failed to load
+const BACKEND_CONTINENT_TO_MATERIK: Record<string, MaterikId> = {
+  europe: "eurasia",
+  asia: "eurasia",
+  africa: "africa",
+  north_america: "north_america",
+  south_america: "south_america",
+  oceania: "australia",
+  antarctica: "antarctica",
+};
+
+type OutlinesState = { status: "loading" | "error"; data: null } | { status: "ready"; data: CountryCollection };
+
+/** Country outlines (Natural Earth) — the same file the globe loads for its labels, so it is already in the HTTP cache. */
+function useCountryOutlines(): OutlinesState {
+  const [state, setState] = useState<OutlinesState>({ status: "loading", data: null });
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(BORDERS_URL, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data: CountryCollection) => setState({ status: "ready", data }))
+      .catch((err) => {
+        if (!controller.signal.aborted) {
+          // eslint-disable-next-line no-console
+          console.warn("Country outlines failed to load:", err);
+          setState({ status: "error", data: null });
+        }
+      });
+    return () => controller.abort();
+  }, []);
+  return state;
+}
+
 export default function GeoWorldSceneMapLibre({ simulation }: GeoWorldSceneMapLibreProps) {
   const { t, locale } = useLocale();
-  const isDev = process.env.NODE_ENV !== "production";
+  const m = t.geo.missions;
   const lesson = useGeoLessonState(simulation.id);
-  const [camera, setCamera] = useState<CameraContext | null>(null);
+  const missions = useGeoMissions(simulation.id);
+  const outlines = useCountryOutlines();
+  const taggedOutlines = useMemo(() => (outlines.data ? tagCountriesWithMaterik(outlines.data) : null), [outlines.data]);
 
-  // G6.12 — доступ к сырому MapLibre instance, отдаётся наверх через
-  // onEngineReady (см. MapLibreGlobeCanvas.tsx) — тот же "замкнись на ref"
-  // приём, что onMapClick/onCameraChange, вызов ВСЕГДА отдаёт актуальный
-  // instance, даже если сам колбэк захвачен на раннем рендере.
+  const missionId: GeoMissionId = missions.mission.id;
+  const isContinents = missionId === "geo-mission-continents";
+  const isVolcanoes = missionId === "geo-mission-volcanoes";
+  const isCore = missionId === "geo-mission-core";
+
+  const [camera, setCamera] = useState<CameraContext | null>(null);
   const [engine, setEngine] = useState<{ getMap: () => any; status: MapLibreGlobeState["status"] }>({
     getMap: () => null,
     status: "loading",
@@ -62,37 +123,84 @@ export default function GeoWorldSceneMapLibre({ simulation }: GeoWorldSceneMapLi
   const handleEngineReady = useCallback((getMap: () => any, status: MapLibreGlobeState["status"]) => {
     setEngine({ getMap, status });
   }, []);
+  const mapReady = engine.status === "ready" && !isCore;
 
-  const [base, setBase] = useState<BaseToggles>({ labels: true, terrain: true });
-  const [earthScience, setEarthScience] = useState<EarthScienceToggles>({
-    tectonics: false,
-    volcanoes: false,
-    earthquakes: false,
-    climate: false,
-  });
-  const [earthquakeWindow, setEarthquakeWindow] = useState<EarthquakeWindowKey>(DEFAULT_EARTHQUAKE_WINDOW);
-  const [earthStructureMode, setEarthStructureMode] = useState(false);
   const [featureInfo, setFeatureInfo] = useState<GeoFeatureInfo | null>(null);
-  const [temperatureAnomaly, setTemperatureAnomaly] = useState(0);
+  const [selectedLayerKey, setSelectedLayerKey] = useState<EarthLayerKey | null>(null);
+  const [feedback, setFeedback] = useState<MissionFeedback | null>(null);
+  const [wrongContinent, setWrongContinent] = useState<MaterikId | null>(null);
+  const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wrongTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleToggleBase = useCallback(
-    (key: keyof BaseToggles) => {
-      setBase((prev) => {
-        const next = { ...prev, [key]: !prev[key] };
-        const map = engine.getMap();
-        if (map) {
-          if (key === "labels") setLabelsVisible(map, next.labels);
-          if (key === "terrain") setTerrainVisible(map, next.terrain);
-        }
-        return next;
-      });
+  const showFeedback = useCallback((next: MissionFeedback) => {
+    setFeedback(next);
+    if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+    feedbackTimerRef.current = setTimeout(() => setFeedback(null), FEEDBACK_MS);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+      if (wrongTimerRef.current) clearTimeout(wrongTimerRef.current);
     },
-    [engine]
+    []
   );
 
-  const handleToggleEarthScience = useCallback((key: keyof EarthScienceToggles) => {
-    setEarthScience((prev) => ({ ...prev, [key]: !prev[key] }));
-  }, []);
+  // a new mission starts with a clean slate on screen
+  useEffect(() => {
+    setFeedback(null);
+    setFeatureInfo(null);
+    setWrongContinent(null);
+    setSelectedLayerKey(null);
+  }, [missionId]);
+
+  // ---- the globe per mission: labels, camera, layers -------------------------------
+
+  // Mission 1 is about recognising the continents by shape: country names would turn it into reading.
+  useEffect(() => {
+    const map = engine.getMap();
+    if (!map || !mapReady) return;
+    try {
+      setLabelsVisible(map, !isContinents);
+      // city dots are never shown in the missions: next to the volcano dots
+      // they read as "points to click", and they bury the globe in labels
+      for (const id of CITY_LAYER_IDS) {
+        if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", "none");
+      }
+    } catch {
+      // label layers are part of the base style; if it is still loading they are simply set on the next run
+    }
+  }, [engine, mapReady, isContinents]);
+
+  // Opening view of each mission. The continents mission also turns the globe
+  // slowly until the student touches it (any drag or zoom stops the motion).
+  useEffect(() => {
+    const map = engine.getMap();
+    if (!map || !mapReady) return;
+    if (isVolcanoes) {
+      map.flyTo({ center: RING_OF_FIRE_VIEW.center, zoom: RING_OF_FIRE_VIEW.zoom, pitch: 0, duration: 2500, essential: true });
+      return;
+    }
+    const start = map.getCenter();
+    map.easeTo({
+      center: [start.lng + IDLE_SPIN.degrees, LOCATIONS.earth.center[1]],
+      zoom: LOCATIONS.earth.zoom,
+      pitch: 0,
+      duration: IDLE_SPIN.durationMs,
+      easing: (x: number) => x,
+    });
+  }, [engine, mapReady, isVolcanoes]);
+
+  useContinentHighlight({
+    getMap: engine.getMap,
+    mapReady,
+    countries: taggedOutlines,
+    enabled: isContinents,
+    found: missions.foundContinents,
+    wrong: wrongContinent,
+  });
+
+  const { markVolcanoOpened, markContinentFound, markLayerExplored } = missions;
 
   const handleFeatureSelect = useCallback(
     (info: GeoFeatureInfo) => {
@@ -104,12 +212,12 @@ export default function GeoWorldSceneMapLibre({ simulation }: GeoWorldSceneMapLi
           info.raw.boundaryType === "subduction" ? "subduction" : null
         );
       } else if (info.kind === "volcano" && info.raw) {
-        void lesson.exploreVolcano(String(info.raw.name ?? info.title), (info.raw.country as string | null) ?? null);
-      } else if (info.kind === "earthquake" && info.raw) {
-        void lesson.exploreEarthquake(String(info.raw.place ?? ""), Number(info.raw.magnitude ?? 0));
+        const name = String(info.raw.name ?? info.title);
+        markVolcanoOpened(name);
+        void lesson.exploreVolcano(name, (info.raw.country as string | null) ?? null);
       }
     },
-    [lesson]
+    [lesson, markVolcanoOpened]
   );
 
   const earthScienceLabels: EarthScienceLabels = useMemo(() => {
@@ -127,81 +235,120 @@ export default function GeoWorldSceneMapLibre({ simulation }: GeoWorldSceneMapLi
     };
   }, [t]);
 
-  const diagnostics = useEarthScienceLayers({
+  // plate boundaries and volcanoes are on the globe only in the volcano mission
+  const earthScience = useMemo(
+    () => ({ tectonics: isVolcanoes, volcanoes: isVolcanoes, earthquakes: false, climate: false }),
+    [isVolcanoes]
+  );
+  useEarthScienceLayers({
     getMap: engine.getMap,
-    mapReady: engine.status === "ready" && !earthStructureMode,
+    mapReady,
     enabled: earthScience,
-    earthquakeWindow,
+    earthquakeWindow: DEFAULT_EARTHQUAKE_WINDOW,
     locale,
     labels: earthScienceLabels,
     onFeatureSelect: handleFeatureSelect,
   });
 
-  const climateTriggered = Boolean(lesson.climateResult?.triggered);
-  useClimateOverlay({
-    getMap: engine.getMap,
-    mapReady: engine.status === "ready" && !earthStructureMode,
-    enabled: earthScience.climate,
-    temperatureAnomaly,
-    triggered: climateTriggered,
-  });
+  // ---- mission 1: a click on the globe -----------------------------------------------
 
-  const handleTemperatureChange = useCallback(
-    (value: number) => {
-      setTemperatureAnomaly(value);
-      void lesson.triggerClimateScenario(value, CLIMATE_THRESHOLD_C);
+  const targetContinent = missions.targetContinent;
+  const continentsDone = isContinents && missions.isComplete;
+
+  const judgeContinentClick = useCallback(
+    (clicked: MaterikId, lat: number, lng: number) => {
+      if (!targetContinent) return;
+      const names = m.continents.names;
+      if (clicked === targetContinent) {
+        markContinentFound(clicked);
+        showFeedback({ tone: "success", text: m.continents.correct.replace("{name}", names[clicked]), detail: m.continents.facts[clicked] });
+        // logged for the backend score; the mission itself does not wait for it
+        void lesson.exploreContinent(lat, lng);
+        return;
+      }
+      showFeedback({
+        tone: "error",
+        text: m.continents.wrong.replace("{name}", names[clicked]).replace("{target}", names[targetContinent]),
+      });
+      setWrongContinent(clicked);
+      if (wrongTimerRef.current) clearTimeout(wrongTimerRef.current);
+      wrongTimerRef.current = setTimeout(() => setWrongContinent(null), WRONG_FLASH_MS);
     },
-    [lesson]
+    [targetContinent, m, markContinentFound, showFeedback, lesson]
   );
 
   const handleMapClick = useCallback(
     (lngLat: { lng: number; lat: number }) => {
-      void lesson.exploreContinent(lngLat.lat, lngLat.lng);
-    },
-    [lesson]
-  );
+      if (!isContinents || continentsDone || !targetContinent) return;
 
-  const exploredLayers = useMemo(() => {
-    const keys = new Set<EarthLayerKey>();
-    for (const action of lesson.actionsLog) {
-      if (action.action_type === "explore_layer" && typeof action.layer === "string") {
-        keys.add(action.layer as EarthLayerKey);
+      if (outlines.status === "ready") {
+        const hit = continentAt(lngLat.lng, lngLat.lat, outlines.data);
+        if (!hit) {
+          showFeedback({ tone: "info", text: m.continents.ocean });
+        } else if (!hit.materik) {
+          const country = String((locale === "en" ? hit.country.NAME_EN ?? hit.country.NAME : hit.country.NAME_RU ?? hit.country.NAME) ?? "");
+          showFeedback({ tone: "info", text: m.continents.island.replace("{country}", country) });
+        } else {
+          judgeContinentClick(hit.materik, lngLat.lat, lngLat.lng);
+        }
+        return;
       }
-    }
-    return keys;
-  }, [lesson.actionsLog]);
 
-  const selectedLayerKey = (lesson.selectedLayer?.layer as EarthLayerKey | undefined) ?? null;
-
-  const handleToggleEarthStructure = useCallback(() => {
-    setEarthStructureMode((prev) => !prev);
-    setFeatureInfo(null);
-  }, []);
-
-  // QA FIX — реальная жалоба владельца продукта: нажатие на кнопку слоя в
-  // GeoLessonPanel (плоская панель под картой, G6.11) логировало действие
-  // и меняло текстовую карточку, но НИКАК не отражалось "на самой Земле" —
-  // в отличие от старого рендерера, где клик по слою сразу показывал
-  // cutaway. Теперь показывает: сам разрез живёт в Earth Structure Mode
-  // (G6.12, единственное место, где MapLibre-сцена вообще может показать
-  // внутреннее строение Земли, §3 — карта физически не режется), поэтому
-  // клик по слою здесь сразу переключает в этот режим с уже выбранным
-  // слоем — тот же `explore_layer` contract, тот же прогресс/scoring, но
-  // теперь с реальным визуальным ответом.
-  const handleExploreLayerFromLessonPanel = useCallback(
-    (layer: EarthLayerKey) => {
-      void lesson.exploreLayer(layer);
-      setEarthStructureMode(true);
-      setFeatureInfo(null);
+      // No outlines (still loading or the file is unreachable): ask the backend, which answers by rough regions.
+      if (outlines.status === "loading") {
+        showFeedback({ tone: "info", text: m.loadingData });
+        return;
+      }
+      void lesson.exploreContinent(lngLat.lat, lngLat.lng).then((result) => {
+        const clicked = result ? BACKEND_CONTINENT_TO_MATERIK[result.continent] : undefined;
+        if (!clicked) showFeedback({ tone: "info", text: m.continents.ocean });
+        else judgeContinentClick(clicked, lngLat.lat, lngLat.lng);
+      });
     },
-    [lesson]
+    [isContinents, continentsDone, targetContinent, outlines, locale, m, showFeedback, judgeContinentClick, lesson]
   );
 
-  // G6.11 §18 / G6.12 §38 — renderer-independent, компактный AI-контекст.
-  // G6.12 расширяет его активными Earth Science слоями/выбранным объектом/
-  // сценарием климата/режимом Earth Structure — НЕ сырым GeoJSON (§38).
-  // Никуда не отправляется в этом этапе (полноценный AI Geo Guide — G6.13,
-  // явно НЕ строится сейчас).
+  const flyTo = useCallback(
+    (center: readonly [number, number], zoom: number) => {
+      engine.getMap()?.flyTo({ center, zoom, pitch: 0, bearing: 0, duration: 2000, essential: true });
+    },
+    [engine]
+  );
+  const handleHint = useCallback(() => {
+    if (!targetContinent) return;
+    const view = MATERIK_VIEW[targetContinent];
+    flyTo(view.center, view.zoom);
+  }, [targetContinent, flyTo]);
+  const handleResetView = useCallback(() => flyTo(LOCATIONS.earth.center, LOCATIONS.earth.zoom), [flyTo]);
+
+  // ---- mission 3: layers of the Earth --------------------------------------------------
+
+  const exploredLayerSet = useMemo(() => new Set<EarthLayerKey>(missions.exploredLayers), [missions.exploredLayers]);
+  const handleExploreLayer = useCallback(
+    (layer: EarthLayerKey) => {
+      setSelectedLayerKey(layer);
+      markLayerExplored(layer);
+      // the layer's facts (depth, temperature, composition) come back from the backend
+      void lesson.exploreLayer(layer);
+    },
+    [lesson, markLayerExplored]
+  );
+
+  // all three missions done — submit the attempt for scoring, once
+  const attemptSubmittedRef = useRef(false);
+  const allDone = missions.isLastMission && missions.isComplete;
+  useEffect(() => {
+    if (!allDone) {
+      attemptSubmittedRef.current = false;
+      return;
+    }
+    if (attemptSubmittedRef.current) return;
+    attemptSubmittedRef.current = true;
+    void lesson.completeAttempt();
+  }, [allDone, lesson]);
+
+  // ---- "Ask Teacher": the same compact context as before -------------------------------
+
   const aiContext = useMemo(
     () =>
       camera &&
@@ -210,146 +357,101 @@ export default function GeoWorldSceneMapLibre({ simulation }: GeoWorldSceneMapLi
         actionsLog: lesson.actionsLog,
         selectedContinentName: lesson.selectedContinent?.name ?? null,
         completionScore: lesson.completionScore,
-        activeLayers: {
-          tectonics: earthScience.tectonics,
-          volcanoes: earthScience.volcanoes,
-          earthquakes: earthScience.earthquakes,
-          climate: earthScience.climate,
-        },
+        activeLayers: earthScience,
         selectedFeature: featureInfo,
-        climateScenario: { temperatureAnomaly, triggered: climateTriggered },
-        earthStructureMode,
+        climateScenario: { temperatureAnomaly: 0, triggered: false },
+        earthStructureMode: isCore,
       }),
-    [
-      camera,
-      lesson.actionsLog,
-      lesson.selectedContinent,
-      lesson.completionScore,
-      earthScience,
-      featureInfo,
-      temperatureAnomaly,
-      climateTriggered,
-      earthStructureMode,
-    ]
+    [camera, lesson.actionsLog, lesson.selectedContinent, lesson.completionScore, earthScience, featureInfo, isCore]
+  );
+
+  const missionTitle: Record<GeoMissionId, string> = {
+    "geo-mission-continents": m.continents.title,
+    "geo-mission-volcanoes": m.volcanoes.title,
+    "geo-mission-core": m.core.title,
+  };
+
+  const banner = (
+    <TaskCompleteBanner
+      visible={missions.isComplete}
+      taskId={missionId}
+      isLast={missions.isLastMission}
+      title={missions.isLastMission ? m.allDoneTitle : m.completeTitle}
+      subtitle={missions.isLastMission ? m.allDoneText : missionTitle[missionId]}
+      xpReward={missions.mission.xpReward}
+      nextLabel={m.nextButton}
+      restartLabel={m.restartButton}
+      onNext={missions.advance}
+      onRestart={() => missions.goToMission(0)}
+    />
   );
 
   return (
     <div className="rounded-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 sm:p-5">
-      {earthStructureMode ? (
-        // G6.12 — EarthStructureMode управляет собственной высотой через
-        // CanvasShell (h-[75vh]) и добавляет под канвасом инфо-панель В
-        // ОБЫЧНОМ потоке документа — реальный баг, найденный этим же QA-
-        // прогоном: если обернуть его в тот же `h-[70vh]` контейнер, что
-        // нужен MapLibreGlobeCanvas (который явно заполняет фиксированную
-        // высоту через `absolute inset-0`), инфо-панель со кнопками слоёв
-        // визуально "вытекает" ниже границ контейнера, а следующий по
-        // документу sibling (`experimentalNotice`) занимает своё место
-        // ПОД контейнером как если бы оверфлоя не было — визуально
-        // перекрывая кнопки и блокируя клики (`intercepts pointer events`).
-        <EarthStructureMode
-          exploredLayers={exploredLayers}
-          selectedLayerKey={selectedLayerKey}
-          selectedLayer={lesson.selectedLayer}
-          isSubmitting={lesson.isSubmitting}
-          onExploreLayer={lesson.exploreLayer}
-          onReturnToSurface={handleToggleEarthStructure}
-        />
-      ) : (
-        <div className="relative h-[70vh] min-h-[420px]">
-          <MapLibreGlobeCanvas
-            esriEnabledByDefault={false}
-            showControlPoints={isDev}
-            showDiagnostics={isDev}
-            showEsriToggle={isDev}
-            onMapClick={handleMapClick}
-            onCameraChange={setCamera}
-            onEngineReady={handleEngineReady}
+      <div className="relative">
+        {isCore ? (
+          <EarthStructureMode
+            exploredLayers={exploredLayerSet}
+            selectedLayerKey={selectedLayerKey}
+            selectedLayer={lesson.selectedLayer?.layer === selectedLayerKey ? lesson.selectedLayer : null}
+            isSubmitting={false}
+            onExploreLayer={handleExploreLayer}
           />
-        </div>
-      )}
+        ) : (
+          <div className="relative h-[76vh] min-h-[460px]">
+            <MapLibreGlobeCanvas
+              esriEnabledByDefault={false}
+              showPresets={false}
+              onMapClick={handleMapClick}
+              onCameraChange={setCamera}
+              onEngineReady={handleEngineReady}
+            />
 
-      <div className="ds-glass mt-4 rounded-ds-panel p-4">
-        <p className="text-ds-body text-text-secondary">{t.geo.maplibre.experimentalNotice}</p>
+            {isVolcanoes && (
+              <div className="pointer-events-none absolute bottom-10 left-3 z-10 max-w-[18rem]">
+                <EarthScienceLegend showTectonics showVolcanoes showEarthquakes={false} showClimate={false} />
+              </div>
+            )}
+
+            {isVolcanoes && featureInfo && (
+              <div className="absolute bottom-10 right-3 z-10 w-[min(22rem,calc(100%-1.5rem))]">
+                <FeatureInfoPanel info={featureInfo} onClose={() => setFeatureInfo(null)} />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* top-20: the simulation header floats over the top of the scene and reserves no space */}
+        <div className="pointer-events-none absolute inset-x-0 top-20 z-20 flex justify-center">
+          {missions.isComplete ? (
+            banner
+          ) : isContinents ? (
+            <MissionHud
+              prompt={m.continents.findPrompt}
+              target={targetContinent ? m.continents.names[targetContinent] : undefined}
+              done={missions.done}
+              total={missions.mission.total}
+              feedback={feedback}
+              hintLabel={m.hintButton}
+              onHint={handleHint}
+              resetLabel={m.resetView}
+              onResetView={handleResetView}
+            />
+          ) : isVolcanoes ? (
+            <MissionHud
+              prompt={m.volcanoes.prompt}
+              done={missions.done}
+              total={missions.mission.total}
+              feedback={feedback}
+              resetLabel={m.resetView}
+              onResetView={() => flyTo(RING_OF_FIRE_VIEW.center, RING_OF_FIRE_VIEW.zoom)}
+            />
+          ) : null}
+        </div>
       </div>
 
-      {!earthStructureMode && (
-        <LayerControlPanel
-          base={base}
-          onToggleBase={handleToggleBase}
-          earthScience={earthScience}
-          onToggleEarthScience={handleToggleEarthScience}
-          earthquakeWindow={earthquakeWindow}
-          onEarthquakeWindowChange={setEarthquakeWindow}
-          earthStructureMode={earthStructureMode}
-          onToggleEarthStructure={handleToggleEarthStructure}
-          diagnostics={diagnostics}
-        />
-      )}
-      {earthStructureMode && (
-        <div className="ds-glass mt-4 rounded-ds-panel p-4">
-          <label className="ds-focus-ring flex items-center gap-2 text-ds-body text-text-secondary">
-            <input type="checkbox" checked disabled className="accent-accent-geo" />
-            {t.geo.maplibre.layers.earthStructure}
-          </label>
-        </div>
-      )}
+      <MissionPanel missions={missions} />
 
-      {!earthStructureMode && (
-        <EarthScienceLegend
-          showTectonics={earthScience.tectonics}
-          showVolcanoes={earthScience.volcanoes}
-          showEarthquakes={earthScience.earthquakes}
-          showClimate={earthScience.climate}
-        />
-      )}
-
-      {!earthStructureMode && (earthScience.tectonics || earthScience.volcanoes || earthScience.earthquakes) && (
-        <div className="ds-glass mt-4 rounded-ds-panel p-4">
-          {earthScience.tectonics && <AccessibleFeatureList titleKey={t.geo.maplibre.layers.tectonics} features={diagnostics.sampleFeatures.tectonics} />}
-          {earthScience.volcanoes && <AccessibleFeatureList titleKey={t.geo.maplibre.layers.volcanoes} features={diagnostics.sampleFeatures.volcanoes} />}
-          {earthScience.earthquakes && (
-            <AccessibleFeatureList titleKey={t.geo.maplibre.layers.earthquakes} features={diagnostics.sampleFeatures.earthquakes} />
-          )}
-        </div>
-      )}
-
-      {!earthStructureMode && <FeatureInfoPanel info={featureInfo} onClose={() => setFeatureInfo(null)} />}
-
-      {!earthStructureMode && earthScience.climate && (
-        <ClimatePanel
-          temperatureAnomaly={temperatureAnomaly}
-          onChange={handleTemperatureChange}
-          triggered={climateTriggered}
-          phenomenon={lesson.climateResult?.phenomenon ?? null}
-          location={lesson.climateResult?.location ?? null}
-          description={lesson.climateResult?.description ?? ""}
-        />
-      )}
-
-      {!earthStructureMode && (
-        <GeoLessonPanel
-          selectedLayer={lesson.selectedLayer}
-          selectedContinent={lesson.selectedContinent}
-          exploredLayers={exploredLayers}
-          isSubmitting={lesson.isSubmitting}
-          error={lesson.error}
-          completionScore={lesson.completionScore}
-          onExploreLayer={handleExploreLayerFromLessonPanel}
-          onComplete={() => void lesson.completeAttempt()}
-          canComplete={lesson.actionsLog.length > 0}
-        />
-      )}
-
-      {isDev && aiContext && (
-        <details className="ds-glass mt-3 rounded-ds-panel p-3 text-ds-caption text-text-muted">
-          <summary className="cursor-pointer font-mono">AI context (dev-only preview, G6.11 §18 / G6.12 §38)</summary>
-          <pre className="mt-2 overflow-x-auto font-mono text-[11px]">{JSON.stringify(aiContext, null, 2)}</pre>
-        </details>
-      )}
-
-      {/* T10 — reuses the SAME compact `aiContext` this scene already
-          builds (G6.11 §18/G6.12 §38), just re-shaped for the human
-          "Ask Teacher" flow instead of the still-unwired G6.13 AI Guide. */}
       {aiContext && (
         <div className="pointer-events-none fixed bottom-4 left-4 z-40">
           <div className="pointer-events-auto">

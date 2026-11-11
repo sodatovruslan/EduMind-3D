@@ -30,11 +30,13 @@ const ALL_NAV_ITEMS: NavItem[] = [
   { key: "classes", href: "/teacher/classes", icon: GraduationCap },
 ];
 
-export function getNavItems(role: UserRole | undefined): NavItem[] {
+// `canSeeMessages` — see useCanSeeMessages: students only get Messages once
+// they actually have a teacher (or an existing conversation).
+export function getNavItems(role: UserRole | undefined, canSeeMessages = role === "teacher"): NavItem[] {
   const isTeacher = role === "teacher" || role === "admin";
   return ALL_NAV_ITEMS.filter((item) => {
     if (["teacherArea", "classes"].includes(item.key)) return isTeacher;
-    if (item.key === "messages") return role === "teacher" || role === "student";
+    if (item.key === "messages") return (role === "teacher" || role === "student") && canSeeMessages;
     return true;
   });
 }

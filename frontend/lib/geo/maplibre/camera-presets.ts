@@ -11,7 +11,8 @@ export interface CameraPreset {
 }
 
 export const LOCATIONS = {
-  earth: { center: [0, 20], zoom: 1.3, pitch: 0, label: "Вся Земля" },
+  // zoom 1.9: the whole globe fills most of the scene height instead of sitting small in the middle
+  earth: { center: [0, 20], zoom: 1.9, pitch: 0, label: "Вся Земля" },
   asia: { center: [90, 35], zoom: 2.6, pitch: 0, label: "Азия" },
   centralAsia: { center: [70, 40], zoom: 4.0, pitch: 0, label: "Центральная Азия" },
   tajikistan: { center: [71.0, 38.8], zoom: 6.2, pitch: 45, label: "Таджикистан" },

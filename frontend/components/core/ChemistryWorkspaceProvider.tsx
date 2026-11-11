@@ -722,8 +722,11 @@ export function createInitialState(): WorkspaceState {
     "cabinet-right-outer": 2,
   };
   const legacyTablePositions: Record<string, [number, number]> = {
-    water: [-3.2, -1.6], nacl: [-2.1, -1.6], hcl: [-1.0, -1.6],
-    naoh: [0.1, -1.6], cuso4: [1.2, -1.6], agno3: [2.3, -1.6],
+    // вода, соль и нитрат серебра — реактивы трёх заданий — стоят рядом за
+    // стаканом; остальные три остаются в заднем ряду (скрыты, пока включён
+    // chemistry-bench-focus)
+    water: [-1.3, -0.9], nacl: [-0.55, -0.9], agno3: [0.2, -0.9],
+    hcl: [-1.0, -1.6], naoh: [0.1, -1.6], cuso4: [1.2, -1.6],
   };
   const stockBottles: StockBottle[] = REAGENT_INVENTORY.map((reagent) => {
     const legacyPosition = legacyTablePositions[reagent.id];

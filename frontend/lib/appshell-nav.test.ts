@@ -2,9 +2,14 @@ import { describe, expect, it } from "vitest";
 import { getNavItems, isNavItemActive } from "./appshell-nav";
 
 describe("getNavItems (D4 — role-aware AppShell navigation)", () => {
-  it("gives a student Home + Messages — no teacher-only destination", () => {
-    const items = getNavItems("student");
+  it("gives a student with a teacher Home + Messages — no teacher-only destination", () => {
+    const items = getNavItems("student", true);
     expect(items.map((i) => i.key)).toEqual(["home", "messages"]);
+  });
+
+  it("hides Messages from a student who has no teacher yet", () => {
+    const items = getNavItems("student", false);
+    expect(items.map((i) => i.key)).toEqual(["home"]);
   });
 
   it("gives a teacher Home + Messages + the teacher area", () => {

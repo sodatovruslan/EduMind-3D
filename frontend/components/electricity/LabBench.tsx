@@ -9,7 +9,7 @@ import { Html } from "@react-three/drei";
  * top (light centimetre grid, like a real electronics mat). Both textures are
  * drawn on a canvas once — no image files. The tabletop's upper surface is y=0.
  */
-function useCanvasTexture(width: number, height: number, draw: (ctx: CanvasRenderingContext2D) => void) {
+export function useCanvasTexture(width: number, height: number, draw: (ctx: CanvasRenderingContext2D) => void) {
   const texture = useMemo(() => {
     const canvas = document.createElement("canvas");
     canvas.width = width;
@@ -27,7 +27,7 @@ function useCanvasTexture(width: number, height: number, draw: (ctx: CanvasRende
   return texture;
 }
 
-function drawWood(ctx: CanvasRenderingContext2D) {
+export function drawWood(ctx: CanvasRenderingContext2D) {
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
   ctx.fillStyle = "#9a6b42";
@@ -49,7 +49,7 @@ function drawWood(ctx: CanvasRenderingContext2D) {
   }
 }
 
-function drawMat(ctx: CanvasRenderingContext2D) {
+export function drawMat(ctx: CanvasRenderingContext2D) {
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
   ctx.fillStyle = "#1d3b3f";

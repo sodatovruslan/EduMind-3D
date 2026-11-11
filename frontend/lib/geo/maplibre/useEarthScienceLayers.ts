@@ -94,7 +94,27 @@ function withStyleReady(map: any, fn: () => void) {
     fn();
     return;
   }
-  map.once("load", fn);
+  // isStyleLoaded() is also false while tiles are still streaming in (for
+  // example during a camera flight), long after the one-time "load" event
+  // has fired, so waiting for "load" alone could wait forever and the layer
+  // never appeared. Sources and layers can be added as soon as the style
+  // itself is parsed, so try right away and only wait if the map refuses.
+  try {
+    fn();
+    return;
+  } catch {
+    // the style really is not ready yet
+  }
+  let done = false;
+  const run = () => {
+    if (done) return;
+    done = true;
+    map.off("load", run);
+    map.off("idle", run);
+    fn();
+  };
+  map.once("load", run);
+  map.once("idle", run);
 }
 
 function setLayersVisible(map: any, layerIds: string[], visible: boolean) {
@@ -256,9 +276,13 @@ export function useEarthScienceLayers(options: UseEarthScienceLayersOptions): Ea
       map.addSource("geo-volcanoes", {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
-        cluster: true,
-        clusterRadius: 40,
-        clusterMaxZoom: 9,
+        // No clustering: every volcano is its own dot from the first view.
+        // Grouped into numbered circles, the chains along the plate
+        // boundaries — the whole point of showing volcanoes — were
+        // invisible, and "click a volcano" had nothing to click until
+        // several zoom-ins later. The cluster layers below stay (they are
+        // simply empty) so turning clustering back on is this one flag.
+        cluster: false,
       });
 
       map.addLayer({
@@ -289,10 +313,13 @@ export function useEarthScienceLayers(options: UseEarthScienceLayersOptions): Ea
         filter: ["!", ["has", "point_count"]],
         paint: {
           "circle-color": VOLCANO_COLOR,
-          "circle-radius": 6,
-          "circle-stroke-width": 1.5,
-          "circle-stroke-color": "#ffffff",
-          "circle-opacity": 0.9,
+          // small from afar (hundreds of dots drawing the "ring of fire"),
+          // comfortably clickable once zoomed in
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 1, 4, 3, 5.5, 6, 8],
+          // a dark rim keeps the dot red; a white one washed small dots out to pink
+          "circle-stroke-width": 1,
+          "circle-stroke-color": "#450a0a",
+          "circle-opacity": 1,
         },
       });
 

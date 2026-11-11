@@ -57,7 +57,10 @@ export function buildBaseStyle(options: BuildStyleOptions = {}): any {
     projection: { type: "globe" },
     sources,
     sky: { "atmosphere-blend": ["interpolate", ["linear"], ["zoom"], 0, 1, 5, 1, 7, 0] },
-    light: { anchor: "map", position: [1.5, 90, 80] },
+    // The sun follows the viewer ("viewport"), high above the centre of the
+    // view. Anchored to the map it lit one fixed hemisphere and left the
+    // other — the Americas — in permanent night, where nothing could be found.
+    light: { anchor: "viewport", position: [1.5, 0, 20] },
     terrain: { source: "aws-terrarium", exaggeration: terrainExaggeration },
     layers: [
       { id: "background", type: "background", paint: { "background-color": "#000814" } },
@@ -65,7 +68,15 @@ export function buildBaseStyle(options: BuildStyleOptions = {}): any {
         id: "bluemarble",
         type: "raster",
         source: "gibs-bluemarble",
-        paint: { "raster-opacity": ["interpolate", ["linear"], ["zoom"], 6, 1, 9, 0], "raster-fade-duration": 400 },
+        paint: {
+          "raster-opacity": ["interpolate", ["linear"], ["zoom"], 6, 1, 9, 0],
+          "raster-fade-duration": 400,
+          // Blue Marble's deep ocean is almost black on screen; lifting the
+          // dark end and the saturation gives the blue planet seen from space
+          "raster-brightness-min": 0.16,
+          "raster-saturation": 0.35,
+          "raster-contrast": 0.08,
+        },
       },
       {
         id: "esri-imagery",
@@ -78,7 +89,14 @@ export function buildBaseStyle(options: BuildStyleOptions = {}): any {
         id: "hillshade",
         type: "hillshade",
         source: "aws-terrarium",
-        paint: { "hillshade-exaggeration": 0.6, "hillshade-illumination-direction": 315, "hillshade-shadow-color": "#0b0b12" },
+        paint: {
+          // Relief shading only once zoomed in on land. On the whole-Earth view
+          // it traced the sea floor as white streaks across every ocean, and
+          // the Blue Marble imagery already carries its own shading.
+          "hillshade-exaggeration": ["interpolate", ["linear"], ["zoom"], 4, 0, 7, 0.6],
+          "hillshade-illumination-direction": 315,
+          "hillshade-shadow-color": "#0b0b12",
+        },
       },
       {
         id: "borders-line",

@@ -9,6 +9,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useLocale } from "@/lib/locale-context";
 import { getNavItems, isNavItemActive } from "@/lib/appshell-nav";
 import { useUnreadMessagesCount } from "@/lib/useUnreadMessagesCount";
+import { useCanSeeMessages } from "@/lib/useCanSeeMessages";
 import { LocaleSwitcher, Surface, ThemeToggle } from "@/components/design-system";
 import UnreadBadge from "@/components/messaging/UnreadBadge";
 
@@ -25,7 +26,8 @@ export default function MobileDrawer({ open, onClose }: { open: boolean; onClose
   const pathname = usePathname();
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  const items = getNavItems(user?.role);
+  const canSeeMessages = useCanSeeMessages();
+  const items = getNavItems(user?.role, canSeeMessages);
   const unreadCount = useUnreadMessagesCount();
 
   useEffect(() => {

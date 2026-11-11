@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { addSubstance, createEmptyContainer, heat, SUBSTANCES } from "./chemistry-engine";
 import { applyReactions } from "./reaction-engine";
-import { EXPERIMENTS, ExperimentStatus, deriveExperimentStatus, validateExperiment, type LabState } from "./experiment-validator";
+import { ARCHIVED_EXPERIMENTS, EXPERIMENTS, ExperimentStatus, deriveExperimentStatus, validateExperiment, type LabState } from "./experiment-validator";
 
 function experimentById(id: string) {
-  const experiment = EXPERIMENTS.find((e) => e.id === id);
+  const experiment = [...EXPERIMENTS, ...ARCHIVED_EXPERIMENTS].find((e) => e.id === id);
   if (!experiment) throw new Error(`experiment ${id} not found`);
   return experiment;
 }

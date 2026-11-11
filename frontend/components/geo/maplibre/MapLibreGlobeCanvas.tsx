@@ -29,6 +29,12 @@ export interface MapLibreGlobeCanvasProps {
    * умолчанию даже когда переключатель виден.
    */
   showEsriToggle?: boolean;
+  /**
+   * Row of "fly to" buttons (whole Earth / Asia / … / Pamir) over the map.
+   * On by default; the missions scene turns it off — it draws its own
+   * prompt in the same place, and "Asia" would give the answer away.
+   */
+  showPresets?: boolean;
   className?: string;
   /** G6.11 — реальное геовзаимодействие: клик по глобусу отдаёт lng/lat, без образовательной семантики (та остаётся на вызывающем коде/бэкенде). */
   onMapClick?: (lngLat: { lng: number; lat: number }) => void;
@@ -45,11 +51,25 @@ export interface MapLibreGlobeCanvasProps {
   onEngineReady?: (getMap: () => any, status: MapLibreGlobeState["status"]) => void;
 }
 
+const STARFIELD_STYLE: React.CSSProperties = {
+  backgroundColor: "#02040a",
+  backgroundImage: [
+    "radial-gradient(1px 1px at 23px 41px, rgba(255,255,255,0.9), transparent)",
+    "radial-gradient(1px 1px at 131px 97px, rgba(255,255,255,0.7), transparent)",
+    "radial-gradient(1.5px 1.5px at 211px 163px, rgba(190,215,255,0.9), transparent)",
+    "radial-gradient(1px 1px at 67px 229px, rgba(255,255,255,0.6), transparent)",
+    "radial-gradient(1px 1px at 173px 19px, rgba(255,240,220,0.8), transparent)",
+    "radial-gradient(1px 1px at 89px 137px, rgba(255,255,255,0.5), transparent)",
+  ].join(", "),
+  backgroundSize: "260px 260px, 260px 260px, 340px 340px, 340px 340px, 190px 190px, 190px 190px",
+};
+
 export default function MapLibreGlobeCanvas({
   esriEnabledByDefault = false,
   showControlPoints = false,
   showDiagnostics = false,
   showEsriToggle = false,
+  showPresets = true,
   className,
   onMapClick,
   onCameraChange,
@@ -59,12 +79,20 @@ export default function MapLibreGlobeCanvas({
   const engine = useMapLibreGlobe({ esriEnabledByDefault, showControlPoints, onMapClick, onCameraChange });
 
   useEffect(() => {
+    // browser-test bridge (dev builds only): lets a Playwright check read the
+    // real map state (layers, loaded features) instead of guessing from pixels
+    if (process.env.NODE_ENV !== "production") (window as any).__e2eGeoMap = engine.getMap;
     onEngineReady?.(engine.getMap, engine.status);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine.status]);
 
   return (
-    <div className={`relative h-full w-full overflow-hidden rounded-ds-panel bg-black ${className ?? ""}`}>
+    <div
+      className={`relative h-full w-full overflow-hidden rounded-ds-panel ${className ?? ""}`}
+      // space behind the globe: near-black with a faint star field (two
+      // dot patterns of different period, so the repeat is not obvious)
+      style={STARFIELD_STYLE}
+    >
       {/*
         G6.11 — реальный баг, найденный browser QA (не GPU-артефакт
         песочницы): MapLibre САМ добавляет класс `maplibregl-map` этому
@@ -107,7 +135,7 @@ export default function MapLibreGlobeCanvas({
         зависящий от того, как SimulationShell решит спозиционировать себя.
       */}
       <div className="pointer-events-none absolute inset-x-0 top-20 z-10 flex flex-wrap gap-2 p-3">
-        {(Object.keys(LOCATIONS) as LocationKey[]).map((key) => (
+        {showPresets && (Object.keys(LOCATIONS) as LocationKey[]).map((key) => (
           <button
             key={key}
             onClick={() => engine.flyTo(key)}

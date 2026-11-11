@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { solveCircuit, type CircuitComponent, type Connection } from "./circuit-engine";
-import { TASKS, TaskStatus, deriveTaskStatus, validateTask, type CircuitState } from "./task-engine";
+import { ARCHIVED_TASKS, TASKS, TaskStatus, deriveTaskStatus, validateTask, type CircuitState } from "./task-engine";
 
 // те же id/терминалы, что и в реальной сцене (frontend/components/scenes/ElectricityLabScene.tsx
 // INITIAL_COMPONENTS) — валидаторы заданий завязаны именно на них, как и сама сцена
@@ -21,7 +21,7 @@ function makeState(components: CircuitComponent[], connections: Connection[]): C
 }
 
 function taskById(id: string) {
-  const task = TASKS.find((t) => t.id === id);
+  const task = [...TASKS, ...ARCHIVED_TASKS].find((t) => t.id === id);
   if (!task) throw new Error(`task ${id} not found`);
   return task;
 }
@@ -249,5 +249,70 @@ describe("task-engine — deriveTaskStatus", () => {
     ];
     const result = validateTask(taskById("task-1-close-loop"), makeState(components, connections));
     expect(deriveTaskStatus(result, true)).toBe(TaskStatus.COMPLETED);
+  });
+});
+
+describe("task-engine — яркость лампы", () => {
+  const task = taskById("task-2-lamp-brightness");
+  const withResistor: Connection[] = [
+    { id: "c1", terminals: ["battery_pos", "switch_a"] },
+    { id: "c2", terminals: ["switch_b", "resistor_a"] },
+    { id: "c3", terminals: ["resistor_b", "bulb_a"] },
+    { id: "c4", terminals: ["bulb_b", "battery_neg"] },
+  ];
+  const withoutResistor: Connection[] = [
+    { id: "c1", terminals: ["battery_pos", "switch_a"] },
+    { id: "c2", terminals: ["switch_b", "bulb_a"] },
+    { id: "c3", terminals: ["bulb_b", "battery_neg"] },
+  ];
+
+  it("reports bulb_too_dim at the default 12 V / 4 Ω (44% of rated power)", () => {
+    const result = validateTask(task, makeState(baseComponents(), withResistor));
+    expect(result.completed).toBe(false);
+    expect(result.errors.map((e) => e.code)).toEqual(["bulb_too_dim"]);
+    expect(result.measurements.brightnessRatio).toBeCloseTo(8 / 18, 5);
+  });
+
+  it("completes at exactly 100% of rated power (18 V with the 4 Ω resistor)", () => {
+    const result = validateTask(task, makeState(baseComponents({ voltageV: 18 }), withResistor));
+    expect(result.completed).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("completes inside the zone by lowering the resistance instead (12 V / 2.5 Ω)", () => {
+    const result = validateTask(task, makeState(baseComponents({ resistorOhm: 2.5 }), withResistor));
+    expect(result.completed).toBe(true);
+  });
+
+  it("reports bulb_overpowered when the lamp gets more than its rated power", () => {
+    const result = validateTask(task, makeState(baseComponents(), withoutResistor));
+    expect(result.completed).toBe(false);
+    expect(result.errors.map((e) => e.code)).toEqual(["bulb_overpowered"]);
+  });
+
+  it("works without the resistor too (6 V straight to the lamp)", () => {
+    const result = validateTask(task, makeState(baseComponents({ voltageV: 6 }), withoutResistor));
+    expect(result.completed).toBe(true);
+  });
+
+  it("does not complete while the switch is open, and says why", () => {
+    const result = validateTask(task, makeState(baseComponents({ voltageV: 18, switchClosed: false }), withResistor));
+    expect(result.completed).toBe(false);
+    expect(result.errors.some((e) => e.code === "switch_open")).toBe(true);
+    expect(result.measurements.brightnessRatio).toBe(0);
+  });
+
+  it("hints that the target is close when just outside the zone", () => {
+    const result = validateTask(task, makeState(baseComponents({ voltageV: 15 }), withResistor));
+    expect(result.completed).toBe(false);
+    expect(result.warnings).toHaveLength(1);
+  });
+});
+
+describe("task-engine — список заданий", () => {
+  it("shows exactly three tasks, easy to hard, with unique ids across the archive", () => {
+    expect(TASKS.map((t) => t.id)).toEqual(["task-1-close-loop", "task-2-lamp-brightness", "task-5-find-break"]);
+    const ids = [...TASKS, ...ARCHIVED_TASKS].map((t) => t.id);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });
