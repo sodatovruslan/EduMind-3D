@@ -99,18 +99,31 @@ export function materikOfCountry(properties: Record<string, unknown>, lng: numbe
   }
 }
 
+/**
+ * The country whose border contains this point, or null for open water.
+ * The single place where "what did the student click" is answered — the
+ * continent, the records and the country-shape missions all go through it.
+ */
+export function countryAt(lng: number, lat: number, countries: CountryCollection): Record<string, unknown> | null {
+  for (const feature of countries.features) {
+    for (const polygon of polygonsOf(feature.geometry)) {
+      if (inPolygon(lng, lat, polygon)) return feature.properties;
+    }
+  }
+  return null;
+}
+
+/** The feature of one country by its ADM0_A3 code, for drawing its outline. */
+export function countryByCode(countries: CountryCollection, adm0: string): CountryFeature | null {
+  return countries.features.find((feature) => String(feature.properties.ADM0_A3 ?? "") === adm0) ?? null;
+}
+
 /** What is at this point: a continent, an island outside the continents, or null for open water. */
 export function continentAt(lng: number, lat: number, countries: CountryCollection): ContinentHit | null {
   // the dataset stops short of the pole; everything south of 85°S is Antarctica
   if (lat <= -85) return { materik: "antarctica", country: { CONTINENT: "Antarctica", NAME: "Antarctica", NAME_RU: "Антарктида" } };
-  for (const feature of countries.features) {
-    for (const polygon of polygonsOf(feature.geometry)) {
-      if (inPolygon(lng, lat, polygon)) {
-        return { materik: materikOfCountry(feature.properties, lng), country: feature.properties };
-      }
-    }
-  }
-  return null;
+  const country = countryAt(lng, lat, countries);
+  return country ? { materik: materikOfCountry(country, lng), country } : null;
 }
 
 /**

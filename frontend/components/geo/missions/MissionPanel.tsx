@@ -2,9 +2,8 @@
 
 import { ArrowRight, Check, RotateCcw } from "lucide-react";
 import { useLocale } from "@/lib/locale-context";
-import { MATERIK_IDS } from "@/lib/geo/education/continents";
-import { EARTH_LAYER_KEYS, GEO_MISSIONS, type GeoMissionId, type GeoMissionsState } from "@/lib/geo/education/useGeoMissions";
-import type { EarthLayerKey } from "@/lib/geo/education/useGeoLessonState";
+import { MATERIK_IDS, countryByCode, type CountryCollection } from "@/lib/geo/education/continents";
+import { GEO_MISSIONS, type GeoMissionId, type GeoMissionsState } from "@/lib/geo/education/useGeoMissions";
 
 /**
  * GeoWorld mission panel under the globe: the three missions as steps, what
@@ -24,24 +23,31 @@ function Chip({ label, done }: { label: string; done: boolean }) {
   );
 }
 
-export default function MissionPanel({ missions }: { missions: GeoMissionsState }) {
-  const { t } = useLocale();
+export default function MissionPanel({
+  missions,
+  countries,
+}: {
+  missions: GeoMissionsState;
+  /** Country outlines, for naming the countries already recognised; null until loaded. */
+  countries?: CountryCollection | null;
+}) {
+  const { t, locale } = useLocale();
   const m = t.geo.missions;
-  const lesson = t.geo.maplibre.lesson;
   const { mission, missionIndex, isComplete, isLastMission } = missions;
 
   const text: Record<GeoMissionId, { title: string; description: string; goal: string }> = {
     "geo-mission-continents": m.continents,
-    "geo-mission-volcanoes": m.volcanoes,
-    "geo-mission-core": m.core,
-  };
-  const layerLabel: Record<EarthLayerKey, string> = {
-    crust: lesson.layerCrust,
-    mantle: lesson.layerMantle,
-    outer_core: lesson.layerOuterCore,
-    inner_core: lesson.layerInnerCore,
+    "geo-mission-records": m.records,
+    "geo-mission-shapes": m.shapes,
   };
   const current = text[mission.id];
+
+  const countryLabel = (adm0: string): string => {
+    const feature = countries ? countryByCode(countries, adm0) : null;
+    if (!feature) return adm0;
+    const p = feature.properties;
+    return String((locale === "en" ? p.NAME_EN ?? p.NAME : p.NAME_RU ?? p.NAME) ?? adm0);
+  };
 
   return (
     <section className="ds-glass mt-4 rounded-ds-panel p-4" data-testid="geo-mission-panel" aria-label={m.heading}>
@@ -113,26 +119,29 @@ export default function MissionPanel({ missions }: { missions: GeoMissionsState 
           </div>
         )}
 
-        {mission.id === "geo-mission-volcanoes" && (
+        {mission.id === "geo-mission-records" && (
           <>
+            {/* the questions of this run, in order; only the answers already found are named */}
             <div className="flex flex-wrap gap-2">
-              {missions.openedVolcanoes.map((name) => (
-                <Chip key={name} label={name} done />
-              ))}
-              {missions.openedVolcanoes.length === 0 && <p className="text-ds-caption text-text-muted">{m.volcanoes.clusterHint}</p>}
+              {missions.recordOrder.map((id) => {
+                const found = missions.foundRecords.includes(id);
+                return <Chip key={id} label={found ? m.records.answers[id] : m.records.questions[id]} done={found} />;
+              })}
             </div>
-            {isComplete && <p className="mt-2 text-ds-body text-text-secondary">{m.volcanoes.insight}</p>}
+            {isComplete && <p className="mt-2 text-ds-body text-text-secondary">{m.records.insight}</p>}
           </>
         )}
 
-        {mission.id === "geo-mission-core" && (
+        {mission.id === "geo-mission-shapes" && (
           <>
             <div className="flex flex-wrap gap-2">
-              {EARTH_LAYER_KEYS.map((layer) => (
-                <Chip key={layer} label={layerLabel[layer]} done={missions.exploredLayers.includes(layer)} />
-              ))}
+              {missions.shapeOrder.map((code, index) => {
+                const found = missions.foundShapes.includes(code);
+                // an unsolved country is never named here — that would be the answer
+                return <Chip key={code} label={found ? countryLabel(code) : `${index + 1}`} done={found} />;
+              })}
             </div>
-            {isComplete && <p className="mt-2 text-ds-body text-text-secondary">{m.core.insight}</p>}
+            {isComplete && <p className="mt-2 text-ds-body text-text-secondary">{m.shapes.insight}</p>}
           </>
         )}
       </div>

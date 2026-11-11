@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { Compass, Globe2 } from "lucide-react";
+import { Compass, Globe2, SkipForward } from "lucide-react";
 
 /**
  * What the mission wants right now, drawn over the globe: a short prompt
@@ -29,6 +29,8 @@ export default function MissionHud({
   feedback,
   hintLabel,
   onHint,
+  skipLabel,
+  onSkip,
   resetLabel,
   onResetView,
 }: {
@@ -40,6 +42,9 @@ export default function MissionHud({
   feedback: MissionFeedback | null;
   hintLabel?: string;
   onHint?: () => void;
+  /** Park this question for later; offered only once the student has missed a few times. */
+  skipLabel?: string;
+  onSkip?: () => void;
   resetLabel: string;
   onResetView: () => void;
 }) {
@@ -71,6 +76,17 @@ export default function MissionHud({
             >
               <Compass size={14} />
               {hintLabel}
+            </button>
+          )}
+          {onSkip && skipLabel && (
+            <button
+              type="button"
+              onClick={onSkip}
+              data-testid="geo-mission-skip-button"
+              className="ds-focus-ring flex items-center gap-1.5 rounded-full border border-white/15 px-3 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:bg-white/10"
+            >
+              <SkipForward size={14} />
+              {skipLabel}
             </button>
           )}
           <button
