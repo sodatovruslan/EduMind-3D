@@ -16,7 +16,7 @@ from app.models.simulation import Simulation, SimulationModule, SimulationVisibi
 
 SEED_SIMULATIONS = [
     {
-        "title": "Строение Земли: кора, мантия, ядро",
+        "title": "GeoWorld: материки, рекорды Земли и страны",
         "module": SimulationModule.GEO3D,
         "visibility": SimulationVisibility.PUBLIC,
         "subject": "География и геология",

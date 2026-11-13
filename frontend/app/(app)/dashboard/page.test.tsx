@@ -245,6 +245,27 @@ describe("DashboardPage — D8 Student Learning Center", () => {
     expect(screen.getByText("Нейтрализация")).toBeDefined();
   });
 
+  it("falls back to the newest real LabResult when the profile never recorded a completed lab", async () => {
+    // Профиль пуст: `last_completed_lab` пишет только ElectricityLabScene,
+    // а эти результаты — из GeoWorld, который его не вызывает.
+    mockResults = [
+      { id: "r1", user_id: "u1", simulation_id: "sim-geo", simulation_title: "Строение Земли", module: "geo3d", actions_log: [], score: 100, feedback: null, duration_seconds: 200, completed_at: "2026-02-01T10:00:00Z" },
+      { id: "r2", user_id: "u1", simulation_id: "sim-chem", simulation_title: "Нейтрализация", module: "chemistry_world", actions_log: [], score: 40, feedback: null, duration_seconds: 200, completed_at: "2026-02-09T10:00:00Z" },
+    ];
+    renderDashboard();
+
+    // блок зовёт вернуться в САМУЮ СВЕЖУЮ работу, а не рапортует о пустоте
+    expect(await screen.findByText(ru.dashboard.continueLearning.recentLabel)).toBeDefined();
+    expect(screen.queryByText(ru.dashboard.continueLearning.emptyTitle)).toBeNull();
+    const cta = await screen.findByRole("link", { name: new RegExp(ru.dashboard.continueLearning.recentCta) });
+    expect(cta.getAttribute("href")).toBe("/chemistry_world/sim-chem");
+  });
+
+  it("still shows the honest empty state when there is no save, no profile lab and no result at all", async () => {
+    renderDashboard();
+    expect(await screen.findByText(ru.dashboard.continueLearning.emptyTitle)).toBeDefined();
+  });
+
   it("D5.1: shows the real last-saved date for an active Chemistry save, not a fabricated progress percentage", async () => {
     mockSaves = [
       {
@@ -276,11 +297,17 @@ describe("DashboardPage — D8 Student Learning Center", () => {
     ];
     renderDashboard();
 
-    expect(await screen.findByText(`${ru.dashboard.worlds.completedLabel}:`)).toBeDefined();
-    expect(await screen.findByText("2")).toBeDefined();
+    // Два результата — это две ПОПЫТКИ одного и того же урока, а уроков в
+    // лаборатории один: карточка говорит «Пройдено 1 из 1», а не «2».
+    const done = ru.dashboard.worlds.lessonsProgress.replace("{done}", "1").replace("{total}", "1");
+    expect(await screen.findByText(done)).toBeDefined();
     expect(await screen.findByText("85")).toBeDefined(); // average of 80/90
-    // Chemistry has a real simulation but zero results — honest "not started", no fake 0%
-    expect((await screen.findAllByText(ru.dashboard.worlds.notStarted)).length).toBeGreaterThan(0);
+    // пройдены все уроки этой лаборатории — кнопка зовёт пройти заново, а не «войти»
+    expect(await screen.findByText(ru.dashboard.worlds.replayCta)).toBeDefined();
+    // Chemistry и GeoWorld: реальные уроки есть, результатов нет — честный ноль и «Начать»
+    const notStarted = ru.dashboard.worlds.lessonsProgress.replace("{done}", "0").replace("{total}", "1");
+    expect((await screen.findAllByText(notStarted)).length).toBe(2);
+    expect((await screen.findAllByText(ru.dashboard.worlds.startCta)).length).toBe(2);
     expect(screen.queryByText(/^0%$/)).toBeNull();
   });
 

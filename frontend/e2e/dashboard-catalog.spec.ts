@@ -46,12 +46,15 @@ test("Dashboard shows exactly the 3 real simulations, no test/archived cards", a
     const cards = page.locator('[href^="/geo3d/"], [href^="/electricity_lab/"], [href^="/chemistry_world/"]');
     await expect(cards).toHaveCount(3, { timeout: 15_000 });
 
-    const titles = await cards.locator("h3").allTextContents();
+    // Заголовок карточки — название УРОКА (h3); имя лаборатории идёт подписью
+    // над ним. Кнопка «Начать/Продолжить» — отдельный элемент, внутри неё
+    // заголовка нет, поэтому ищем по самой секции, а не внутри ссылок.
+    const titles = await page.locator("section#worlds h3").allTextContents();
     expect(titles.sort()).toEqual(
       [
         "Chemistry World: первые эксперименты",
         "Собери электрическую цепь",
-        "Строение Земли: кора, мантия, ядро",
+        "GeoWorld: материки, рекорды Земли и страны",
       ].sort()
     );
 

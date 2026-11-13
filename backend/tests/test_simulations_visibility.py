@@ -38,7 +38,7 @@ async def _seed_catalog(db_session) -> dict[str, Simulation]:
             difficulty=1,
         ),
         "geo_public": Simulation(
-            title="Строение Земли: кора, мантия, ядро",
+            title="GeoWorld: материки, рекорды Земли и страны",
             module=SimulationModule.GEO3D,
             visibility=SimulationVisibility.PUBLIC,
             subject="География и геология",
@@ -135,7 +135,7 @@ async def test_catalog_returns_exactly_one_public_geoworld_card(client, db_sessi
     response = await client.get("/api/simulations/", headers=headers)
     geo_cards = [s for s in response.json() if s["module"] == "geo3d"]
     assert len(geo_cards) == 1
-    assert geo_cards[0]["title"] == "Строение Земли: кора, мантия, ядро"
+    assert geo_cards[0]["title"] == "GeoWorld: материки, рекорды Земли и страны"
 
 
 async def test_catalog_returns_exactly_the_three_public_cards(client, db_session):
@@ -148,7 +148,7 @@ async def test_catalog_returns_exactly_the_three_public_cards(client, db_session
         [
             "Chemistry World: первые эксперименты",
             "Собери электрическую цепь",
-            "Строение Земли: кора, мантия, ядро",
+            "GeoWorld: материки, рекорды Земли и страны",
         ]
     )
 

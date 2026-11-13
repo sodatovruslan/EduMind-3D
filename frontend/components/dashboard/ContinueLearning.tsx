@@ -5,6 +5,7 @@ import { ArrowRight, PlayCircle } from "lucide-react";
 import { useLocale } from "@/lib/locale-context";
 import { getMyChemistrySaves } from "@/lib/chemistry-saves-client";
 import { getMyProgress } from "@/lib/progress-client";
+import { getMyResults } from "@/lib/results-client";
 import type { Simulation } from "@/lib/types";
 import { ButtonLink, Skeleton, Surface } from "@/components/design-system";
 
@@ -18,7 +19,24 @@ import { ButtonLink, Skeleton, Surface } from "@/components/design-system";
  *    real progress signal a save actually carries — no fabricated %).
  * 2. Otherwise `LearningProfile.last_completed_lab` — framed as "recent
  *    work", not resumable.
- * 3. Otherwise an honest, visually designed empty state.
+ * 3. Otherwise the student's most recent LabResult — same "recent work"
+ *    framing, see below.
+ * 4. Otherwise an honest, visually designed empty state.
+ *
+ * Шаг 3 добавлен потому, что шаг 2 работает НЕ для всех модулей:
+ * `last_completed_lab` пишется только из `submitLabCompleted()`, а этот
+ * вызов есть ровно в одной сцене — ElectricityLabScene. Ученик, который
+ * проходил GeoWorld или Chemistry World, имеет настоящие строки
+ * LabResult, но пустой профиль, и блок показывал ему «пока нечего
+ * продолжать» независимо от того, сколько он на самом деле прошёл.
+ * Последний результат из `GET /api/results/me` — такой же реальный факт,
+ * как и профиль, просто записанный другим концом бэкенда; данные уже
+ * загружены для секции лабораторий, лишнего запроса нет (SWR дедуплицирует
+ * по ключу "results-me").
+ *
+ * Корень при этом не здесь: сцены географии и химии по-прежнему не
+ * сообщают о завершении лабы, из-за чего `completed_labs` (а значит
+ * достижения и уровень) стоит на нуле. Это чинится в самих сценах.
  *
  * Visually reworked to be the dominant half of a 2-column row with
  * ProgressSnapshot (see dashboard/page.tsx) instead of a thin full-width
@@ -28,8 +46,9 @@ export default function ContinueLearning({ simulations }: { simulations: Simulat
   const { t, locale } = useLocale();
   const { data: saves, isLoading: savesLoading } = useSWR("chemistry-saves-me", getMyChemistrySaves);
   const { data: progress, isLoading: progressLoading } = useSWR("progress-me", getMyProgress);
+  const { data: results, isLoading: resultsLoading } = useSWR("results-me", getMyResults);
 
-  const isLoading = savesLoading || progressLoading || simulations === undefined;
+  const isLoading = savesLoading || progressLoading || resultsLoading || simulations === undefined;
 
   if (isLoading) {
     return (
@@ -48,7 +67,14 @@ export default function ContinueLearning({ simulations }: { simulations: Simulat
       ? simulations?.find((s) => s.id === progress.profile.last_completed_lab)
       : undefined;
 
-  const target = activeSaveSimulation ?? recentSimulation;
+  // Самый свежий результат ученика — запасной путь, когда профиль молчит.
+  const lastResult =
+    !activeSaveSimulation && !recentSimulation && results && results.length > 0
+      ? [...results].sort((a, b) => new Date(b.completed_at).getTime() - new Date(a.completed_at).getTime())[0]
+      : undefined;
+  const lastResultSimulation = lastResult ? simulations?.find((s) => s.id === lastResult.simulation_id) : undefined;
+
+  const target = activeSaveSimulation ?? recentSimulation ?? lastResultSimulation;
 
   return (
     <section className="flex h-full flex-col">
