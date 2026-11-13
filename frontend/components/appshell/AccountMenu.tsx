@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { LogOut, User as UserIcon } from "lucide-react";
+import { LayoutDashboard, LogOut, User as UserIcon } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { useLocale } from "@/lib/locale-context";
 import { GlassPanel } from "@/components/design-system";
@@ -17,6 +17,11 @@ function initialsOf(fullName: string): string {
  * D4 — account entry point in TopBar. Replaces the old
  * `components/ui/Navbar.tsx` (plain name+logout text row). Shows only real
  * user data (name/role/initials) — nothing invented.
+ *
+ * «Главная» (/dashboard) живёт здесь, а не в горизонтальном меню TopBar:
+ * из меню пункт убран как дублирующий шум, а логотип теперь ведёт на
+ * лендинг — без этой ссылки с /profile, /messages и /teacher не было бы
+ * пути в кабинет в один клик (см. комментарии в lib/appshell-nav.ts).
  */
 export default function AccountMenu() {
   const { user, logout } = useAuth();
@@ -78,6 +83,15 @@ export default function AccountMenu() {
 
           <div className="my-1 h-px bg-border/[0.08]" />
 
+          <Link
+            href="/dashboard"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="ds-focus-ring flex items-center gap-2 rounded-ds-control px-2 py-2 text-ds-body text-text-secondary transition-colors hover:bg-text-primary/5 hover:text-text-primary"
+          >
+            <LayoutDashboard size={16} />
+            {t.shell.nav.home}
+          </Link>
           <Link
             href="/profile"
             role="menuitem"

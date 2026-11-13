@@ -279,7 +279,7 @@ export const en: typeof ru = {
     panel: {
       counter: "Task {index} / {total} · {difficulty}",
       goalLabel: "Goal",
-      completedMessage: "✔ Experiment completed (+{xp} XP)",
+      completedMessage: "Experiment completed (+{xp} XP)",
       emptyChecklist: "Start the experiment to see the check.",
       allDone: "All experiments completed",
       nextButton: "Next experiment",
@@ -430,7 +430,7 @@ export const en: typeof ru = {
       reset: "Reset",
       qualityAria: "Render quality",
       statusConnect: "Connect the terminals with wires: drag from one connection point to another to complete the circuit. Click a wire to disconnect it.",
-      statusShort: "⚠ Short circuit! Circuit resistance is nearly zero — calculated current {current} A.",
+      statusShort: "Short circuit! Circuit resistance is nearly zero — calculated current {current} A.",
       statusClosedNoCurrent: "The circuit is closed, but no current is flowing — check the switch and fuse.",
       statusActive: "Current is flowing: I = {current} A (Ohm's law: U/R = {voltage} V / loop).",
       quickCheckHeading: "Quick check",
@@ -447,7 +447,7 @@ export const en: typeof ru = {
     panel: {
       counter: "Task {index} / {total} · {difficulty}",
       goalLabel: "Goal",
-      completedMessage: "✔ Task completed (+{xp} XP)",
+      completedMessage: "Task completed (+{xp} XP)",
       emptyChecklist: "Build the circuit to see the check.",
       allDone: "All tasks completed",
       nextButton: "Next task",
@@ -942,6 +942,7 @@ export const en: typeof ru = {
   },
   shell: {
     nav: {
+      label: "Main navigation",
       home: "Home",
       messages: "Messages",
       teacherArea: "Students",
@@ -956,10 +957,6 @@ export const en: typeof ru = {
       profile: "Profile",
       logout: "Log out",
       menuLabel: "Account menu",
-    },
-    rail: {
-      expand: "Expand navigation",
-      collapse: "Collapse navigation",
     },
     mobile: {
       openMenu: "Open menu",

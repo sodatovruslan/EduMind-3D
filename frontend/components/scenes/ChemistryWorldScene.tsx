@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { ContactShadows, Html, useGLTF } from "@react-three/drei";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertOctagon, Flame, Lock, RotateCcw, RotateCw, Unlock, Volume2, VolumeX } from "lucide-react";
+import { AlertOctagon, AlertTriangle, Flame, Lock, RotateCcw, RotateCw, Unlock, Volume2, VolumeX } from "lucide-react";
 import CanvasShell from "@/components/scenes/CanvasShell";
 import { CameraMode } from "@/lib/chemistry-lab-modes";
 import { useFullscreen } from "@/lib/useFullscreen";
@@ -3902,7 +3902,10 @@ function ChemistryWorldInner({ simulation }: ChemistryWorldSceneProps) {
                     </div>
                     <ul className="mb-3 space-y-0.5 text-ds-body text-danger" data-testid="emergency-stop-causes">
                       {state.emergencyStop.causes.map((cause) => (
-                        <li key={cause.code}>⚠ {cause.message}</li>
+                        <li key={cause.code} className="flex items-start gap-1.5">
+                          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                          <span>{cause.message}</span>
+                        </li>
                       ))}
                     </ul>
                     <p className="mb-3 text-ds-caption text-danger/80">

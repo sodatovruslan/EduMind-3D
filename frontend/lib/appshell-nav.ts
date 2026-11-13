@@ -1,13 +1,18 @@
-import { GraduationCap, LayoutDashboard, MessageCircle, Users } from "lucide-react";
+import { GraduationCap, MessageCircle, Users } from "lucide-react";
 import type { UserRole } from "@/lib/types";
 
 /**
  * D4 — role-aware navigation destinations for the authenticated standard
- * shell (Rail + MobileDrawer share this single source of truth). Only real
- * routes: `/dashboard` (all roles — it's still the "Мои симуляции" catalog,
- * unchanged in D4) and `/teacher` (teacher/admin only, matches the existing
- * role gate already enforced inside `teacher/page.tsx`'s own
- * `ProtectedRoute allowedRoles`). No invented destinations.
+ * shell (TopBar + MobileDrawer share this single source of truth). Only real
+ * routes: `/teacher` (teacher/admin only, matches the existing role gate
+ * already enforced inside `teacher/page.tsx`'s own `ProtectedRoute
+ * allowedRoles`) and `/messages`. No invented destinations.
+ *
+ * `/dashboard` сознательно НЕ в этом списке: для ученика он был
+ * единственным пунктом, то есть панель навигации состояла из одной ссылки
+ * «Главная» рядом с логотипом — дублирующий шум. Попасть в кабинет можно
+ * из меню аккаунта (AccountMenu / нижний блок MobileDrawer), откуда бы ни
+ * шёл пользователь; логотип ведёт на лендинг.
  *
  * T5 — `/messages` added for students and teachers (the two roles human
  * messaging is actually built for — see backend/app/routers/messaging.py's
@@ -15,16 +20,15 @@ import type { UserRole } from "@/lib/types";
  * item, matching that same backend decision instead of silently disagreeing
  * with it in the UI.
  */
-export type NavItemKey = "home" | "teacherArea" | "classes" | "messages";
+export type NavItemKey = "teacherArea" | "classes" | "messages";
 
 export interface NavItem {
   key: NavItemKey;
   href: string;
-  icon: typeof LayoutDashboard;
+  icon: typeof MessageCircle;
 }
 
 const ALL_NAV_ITEMS: NavItem[] = [
-  { key: "home", href: "/dashboard", icon: LayoutDashboard },
   { key: "messages", href: "/messages", icon: MessageCircle },
   { key: "teacherArea", href: "/teacher", icon: Users },
   { key: "classes", href: "/teacher/classes", icon: GraduationCap },
@@ -35,9 +39,8 @@ const ALL_NAV_ITEMS: NavItem[] = [
 export function getNavItems(role: UserRole | undefined, canSeeMessages = role === "teacher"): NavItem[] {
   const isTeacher = role === "teacher" || role === "admin";
   return ALL_NAV_ITEMS.filter((item) => {
-    if (["teacherArea", "classes"].includes(item.key)) return isTeacher;
     if (item.key === "messages") return (role === "teacher" || role === "student") && canSeeMessages;
-    return true;
+    return isTeacher;
   });
 }
 

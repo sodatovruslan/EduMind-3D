@@ -279,7 +279,7 @@ export const tg: typeof ru = {
     panel: {
       counter: "Супориш {index} / {total} · {difficulty}",
       goalLabel: "Мақсад",
-      completedMessage: "✔ Таҷриба иҷро шуд (+{xp} XP)",
+      completedMessage: "Таҷриба иҷро шуд (+{xp} XP)",
       emptyChecklist: "Таҷрибаро оғоз кун, то санҷишро бинӣ.",
       allDone: "Ҳамаи таҷрибаҳо иҷро шуданд",
       nextButton: "Таҷрибаи навбатӣ",
@@ -430,7 +430,7 @@ export const tg: typeof ru = {
       reset: "Аз нав кардан",
       qualityAria: "Сифати рендер",
       statusConnect: "Клеммаҳоро бо сим пайваст кун: аз як нуқтаи пайваст ба нуқтаи дигар кашола кун, то занҷири пурра созӣ. Клик болои сим — қатъи пайваст.",
-      statusShort: "⚠ Қисрсавии занҷир! Муқовимати занҷир қариб сифр аст — ҷараёни ҳисобшуда {current} А.",
+      statusShort: "Қисрсавии занҷир! Муқовимати занҷир қариб сифр аст — ҷараёни ҳисобшуда {current} А.",
       statusClosedNoCurrent: "Занҷир пӯшида аст, аммо ҷараён намеравад — калид ва фюзро санҷед.",
       statusActive: "Ҷараён меравад: I = {current} А (қонуни Ом: U/R = {voltage} В / занҷир).",
       quickCheckHeading: "Санҷиши зуд",
@@ -447,7 +447,7 @@ export const tg: typeof ru = {
     panel: {
       counter: "Супориш {index} / {total} · {difficulty}",
       goalLabel: "Мақсад",
-      completedMessage: "✔ Супориш иҷро шуд (+{xp} XP)",
+      completedMessage: "Супориш иҷро шуд (+{xp} XP)",
       emptyChecklist: "Занҷирро ҷамъ кун, то санҷишро бинӣ.",
       allDone: "Ҳамаи супоришҳо иҷро шуданд",
       nextButton: "Супориши навбатӣ",
@@ -942,6 +942,7 @@ export const tg: typeof ru = {
   },
   shell: {
     nav: {
+      label: "Навигатсияи асосӣ",
       home: "Асосӣ",
       messages: "Паёмҳо",
       teacherArea: "Хонандагон",
@@ -956,10 +957,6 @@ export const tg: typeof ru = {
       profile: "Профил",
       logout: "Баромадан",
       menuLabel: "Менюи ҳисоб",
-    },
-    rail: {
-      expand: "Кушодани навигатсия",
-      collapse: "Пӯшидани навигатсия",
     },
     mobile: {
       openMenu: "Кушодани меню",

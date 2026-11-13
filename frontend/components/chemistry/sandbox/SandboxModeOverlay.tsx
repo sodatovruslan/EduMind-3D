@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Camera, Footprints, Maximize, Minimize } from "lucide-react";
+import { BarChart3, Camera, Footprints, Maximize, Minimize } from "lucide-react";
 import { CameraMode } from "@/lib/chemistry-lab-modes";
 import { RoomInteriorBounds } from "@/lib/sandbox-locomotion";
 import { isTypingTarget } from "@/lib/dom-input-utils";
@@ -165,7 +165,10 @@ export function SandboxModeOverlay({
       {isDev && isSandbox && showDiag && (
         <div className="pointer-events-none self-start max-w-md rounded-xl border border-cyan-500/40 bg-slate-950/90 p-3.5 text-xs backdrop-blur space-y-2 shadow-2xl">
           <div className="flex items-center justify-between border-b border-cyan-900/60 pb-1.5">
-            <span className="font-bold text-cyan-300">📊 Dev Diagnostics: Real Wall Collision Registry</span>
+            <span className="flex items-center gap-1.5 font-bold text-cyan-300">
+              <BarChart3 size={13} />
+              Dev Diagnostics: Real Wall Collision Registry
+            </span>
             <span className="text-[10px] font-mono text-slate-400">[F3 для скрыть]</span>
           </div>
 

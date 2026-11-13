@@ -150,9 +150,9 @@ export function ammeterPlacementMessage(check: AmmeterPlacementCheck): string | 
     case "not_connected":
       return null; // отсутствие подключения — не ошибка размещения, просто нечего мерить
     case "parallel_invalid":
-      return `⚠ Амперметр подключён параллельно — он шунтирует ${check.shuntedComponentId}. Переподключи амперметр последовательно (в разрыв провода).`;
+      return `Амперметр подключён параллельно — он шунтирует ${check.shuntedComponentId}. Переподключи амперметр последовательно (в разрыв провода).`;
     case "not_in_loop":
-      return "⚠ Амперметр не входит в главный контур — проверь, что цепь замкнута.";
+      return "Амперметр не входит в главный контур — проверь, что цепь замкнута.";
     case "valid":
       return null;
   }
@@ -163,7 +163,7 @@ export function voltmeterPlacementMessage(check: VoltmeterPlacementCheck): strin
     case "not_connected":
       return null;
     case "series_invalid":
-      return "⚠ Вольтметр подключён последовательно — из-за большого сопротивления он размыкает цепь. Подключи его параллельно нагрузке (лампе или резистору), не разрывая основной провод.";
+      return "Вольтметр подключён последовательно — из-за большого сопротивления он размыкает цепь. Подключи его параллельно нагрузке (лампе или резистору), не разрывая основной провод.";
     case "valid":
       return null;
   }

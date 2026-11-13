@@ -28,7 +28,7 @@ describe("MinimalShell — D4 immersive route shell", () => {
     cleanup();
   });
 
-  it("renders children with no navigation chrome (no Rail/TopBar/nav landmarks)", async () => {
+  it("renders children with no navigation chrome (no TopBar/nav landmarks)", async () => {
     render(
       <MinimalShell>
         <p>simulation canvas</p>

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Check, RotateCcw } from "lucide-react";
+import { ArrowRight, Check, CheckCircle2, RotateCcw } from "lucide-react";
 import { useLocale } from "@/lib/locale-context";
 import { MATERIK_IDS, countryByCode, type CountryCollection } from "@/lib/geo/education/continents";
 import { GEO_MISSIONS, type GeoMissionId, type GeoMissionsState } from "@/lib/geo/education/useGeoMissions";
@@ -107,8 +107,11 @@ export default function MissionPanel({
         data-testid="geo-mission-progress"
         data-complete={isComplete}
       >
-        <div className={`mb-2 text-ds-caption font-medium ${isComplete ? "text-success" : "text-text-secondary"}`}>
-          {isComplete ? `✔ ${m.doneLabel} (+${mission.xpReward} XP)` : m.progress.replace("{done}", String(missions.done)).replace("{total}", String(mission.total))}
+        <div className={`mb-2 flex items-center gap-1.5 text-ds-caption font-medium ${isComplete ? "text-success" : "text-text-secondary"}`}>
+          {isComplete && <CheckCircle2 size={14} className="shrink-0" />}
+          {isComplete
+            ? `${m.doneLabel} (+${mission.xpReward} XP)`
+            : m.progress.replace("{done}", String(missions.done)).replace("{total}", String(mission.total))}
         </div>
 
         {mission.id === "geo-mission-continents" && (

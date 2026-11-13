@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { Box, LogOut, User as UserIcon, X } from "lucide-react";
+import { Box, LayoutDashboard, LogOut, User as UserIcon, X } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { useLocale } from "@/lib/locale-context";
 import { getNavItems, isNavItemActive } from "@/lib/appshell-nav";
@@ -100,10 +100,14 @@ export default function MobileDrawer({ open, onClose }: { open: boolean; onClose
           >
             <Surface elevated className="flex h-full flex-col rounded-none border-y-0 border-l-0 p-4">
               <div className="mb-4 flex items-center justify-between">
-                <div className="flex items-center gap-2 font-headline text-base font-bold text-text-primary">
+                <Link
+                  href="/"
+                  onClick={onClose}
+                  className="ds-focus-ring flex items-center gap-2 rounded-ds-control font-headline text-base font-bold text-text-primary"
+                >
                   <Box className="text-accent" size={20} />
                   EduMind 3D
-                </div>
+                </Link>
                 <button
                   ref={closeButtonRef}
                   type="button"
@@ -146,6 +150,15 @@ export default function MobileDrawer({ open, onClose }: { open: boolean; onClose
 
                 {user && (
                   <>
+                    <Link
+                      href="/dashboard"
+                      onClick={onClose}
+                      aria-current={pathname === "/dashboard" ? "page" : undefined}
+                      className="ds-focus-ring flex items-center gap-2 rounded-ds-control px-3 py-2.5 text-ds-body text-text-secondary transition-colors hover:bg-text-primary/5 hover:text-text-primary"
+                    >
+                      <LayoutDashboard size={18} />
+                      {t.shell.nav.home}
+                    </Link>
                     <Link
                       href="/profile"
                       onClick={onClose}

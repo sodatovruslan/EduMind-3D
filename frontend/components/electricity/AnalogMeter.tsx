@@ -1,5 +1,6 @@
 "use client";
 
+import { AlertTriangle } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useFrame } from "@react-three/fiber";
@@ -130,7 +131,7 @@ export default function AnalogMeter({
     shownValueRef.current = THREE.MathUtils.lerp(shownValueRef.current, target, Math.min(1, delta * 4));
     if (needleRef.current) needleRef.current.rotation.z = -valueToAngle(shownValueRef.current, max);
     if (readoutRef.current) {
-      readoutRef.current.textContent = warningMessage ? `⚠ ${wrongLabel}` : `${shownValueRef.current.toFixed(2)} ${unit}`;
+      readoutRef.current.textContent = warningMessage ? wrongLabel : `${shownValueRef.current.toFixed(2)} ${unit}`;
     }
   });
 
@@ -190,7 +191,10 @@ export default function AnalogMeter({
             warningMessage ? "bg-red-950/90 text-red-300" : "bg-black/80 text-emerald-300"
           }`}
         >
-          <span ref={readoutRef}>{warningMessage ? `⚠ ${wrongLabel}` : `${value.toFixed(2)} ${unit}`}</span>
+          <span className="flex items-center gap-1">
+            {warningMessage && <AlertTriangle size={10} className="shrink-0" />}
+            <span ref={readoutRef}>{warningMessage ? wrongLabel : `${value.toFixed(2)} ${unit}`}</span>
+          </span>
         </div>
       </Html>
     </group>

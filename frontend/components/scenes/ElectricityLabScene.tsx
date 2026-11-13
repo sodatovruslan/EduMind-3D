@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import * as THREE from "three";
 import { useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { Html, QuadraticBezierLine, MeshTransmissionMaterial, useGLTF } from "@react-three/drei";
-import { Play, Pause, RotateCcw, AlertTriangle, Settings } from "lucide-react";
+import { Play, Pause, RotateCcw, AlertTriangle, Settings, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import CanvasShell from "@/components/scenes/CanvasShell";
 import AITeacherChat from "@/components/ai/AITeacherChat";
@@ -50,7 +50,7 @@ import {
 import { checkElectricalSafety, type SafetyWarning } from "@/lib/electricity-safety";
 import { apiFetch, ApiError } from "@/lib/api";
 import { playConnect, playDisconnect, playFuseBlow, playPowerOn, playSwitchClick } from "@/lib/sound-effects";
-import { ACHIEVEMENT_EMOJI } from "@/lib/achievements";
+import { achievementIcon } from "@/lib/achievements";
 import { explainError } from "@/lib/error-explanations";
 import { submitLabCompleted } from "@/lib/progress-client";
 import type { Simulation } from "@/lib/types";
@@ -1250,13 +1250,15 @@ function CircuitScene({
         <Html fullscreen style={{ pointerEvents: "none" }}>
           <div className="pointer-events-none absolute right-4 top-20 flex max-w-xs flex-col gap-2">
             {ammeterWarning && (
-              <div data-testid="ammeter-reading-warning" className="rounded-lg border border-red-400/40 bg-red-950/85 px-3 py-2 text-xs leading-snug text-red-100 shadow-lg">
-                ⚠ {ammeterWarning}
+              <div data-testid="ammeter-reading-warning" className="flex items-start gap-1.5 rounded-lg border border-red-400/40 bg-red-950/85 px-3 py-2 text-xs leading-snug text-red-100 shadow-lg">
+                <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                <span>{ammeterWarning}</span>
               </div>
             )}
             {voltmeterWarning && (
-              <div data-testid="voltmeter-reading-warning" className="rounded-lg border border-red-400/40 bg-red-950/85 px-3 py-2 text-xs leading-snug text-red-100 shadow-lg">
-                ⚠ {voltmeterWarning}
+              <div data-testid="voltmeter-reading-warning" className="flex items-start gap-1.5 rounded-lg border border-red-400/40 bg-red-950/85 px-3 py-2 text-xs leading-snug text-red-100 shadow-lg">
+                <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                <span>{voltmeterWarning}</span>
               </div>
             )}
           </div>
@@ -1603,23 +1605,37 @@ function ProgressBanners() {
   return (
     <div className="flex flex-col gap-2 sm:col-span-2">
       {newAchievements.length > 0 && (
-        <div className="flex items-center justify-between rounded-ds-control border border-warning/40 bg-warning/10 p-3 text-ds-body text-warning">
-          <span>
-            {newAchievements
-              .map((code) => `${ACHIEVEMENT_EMOJI[code] ?? "🏆"} ${t.achievements[code as keyof typeof t.achievements]?.title ?? code}`)
-              .join(", ")}{" "}
-            {t.electricity.hud.newAchievementSuffix}
+        <div className="flex items-center justify-between gap-2 rounded-ds-control border border-warning/40 bg-warning/10 p-3 text-ds-body text-warning">
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            {newAchievements.map((code) => {
+              const Icon = achievementIcon(code);
+              return (
+                <span key={code} className="flex items-center gap-1.5">
+                  <Icon size={16} strokeWidth={1.75} className="shrink-0" />
+                  {t.achievements[code as keyof typeof t.achievements]?.title ?? code}
+                </span>
+              );
+            })}
+            <span>{t.electricity.hud.newAchievementSuffix}</span>
           </span>
-          <button onClick={clearNewAchievements} className="ds-focus-ring rounded-ds-control text-warning/70 transition-colors hover:text-warning">
-            ×
+          <button
+            onClick={clearNewAchievements}
+            aria-label={t.shell.mobile.closeMenu}
+            className="ds-focus-ring shrink-0 rounded-ds-control text-warning/70 transition-colors hover:text-warning"
+          >
+            <X size={16} />
           </button>
         </div>
       )}
       {repeatedMistakeCode && (
         <div className="flex items-center justify-between rounded-ds-control border border-accent-geo/40 bg-accent-geo/10 p-3 text-ds-body text-accent-geo">
           <span>{t.electricity.hud.repeatedMistakeMessage.replace("{mistake}", explainError(repeatedMistakeCode, repeatedMistakeCode))}</span>
-          <button onClick={dismissRepeatedMistake} className="ds-focus-ring ml-2 shrink-0 rounded-ds-control text-accent-geo/70 transition-colors hover:text-accent-geo">
-            ×
+          <button
+            onClick={dismissRepeatedMistake}
+            aria-label={t.shell.mobile.closeMenu}
+            className="ds-focus-ring ml-2 shrink-0 rounded-ds-control text-accent-geo/70 transition-colors hover:text-accent-geo"
+          >
+            <X size={16} />
           </button>
         </div>
       )}
@@ -1973,7 +1989,10 @@ function ElectricityLabInner({ simulation }: ElectricityLabSceneProps) {
         >
           {!solution.isClosedLoop && <p className="text-text-muted">{t.electricity.hud.statusConnect}</p>}
           {solution.isClosedLoop && solution.isShortCircuit && (
-            <p className="font-medium text-danger">{t.electricity.hud.statusShort.replace("{current}", solution.currentA.toFixed(1))}</p>
+            <p className="flex items-start gap-1.5 font-medium text-danger">
+              <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+              <span>{t.electricity.hud.statusShort.replace("{current}", solution.currentA.toFixed(1))}</span>
+            </p>
           )}
           {solution.isClosedLoop && !solution.isShortCircuit && !solution.isCircuitActive && (
             <p className="text-warning">{t.electricity.hud.statusClosedNoCurrent}</p>

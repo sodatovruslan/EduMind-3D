@@ -116,12 +116,16 @@ export default function ExperimentPanel() {
         </div>
 
         {status === ExperimentStatus.COMPLETED ? (
-          <p className="text-success">{p.completedMessage.replace("{xp}", String(experiment.xpReward))}</p>
+          <p className="flex items-center gap-1.5 text-success">
+            <CheckCircle2 size={14} className="shrink-0" />
+            {p.completedMessage.replace("{xp}", String(experiment.xpReward))}
+          </p>
         ) : (
           <ul className="space-y-0.5" data-testid="experiment-error-list">
             {result.errors.map((e) => (
-              <li key={e.code} className={e.critical ? "text-danger" : "text-text-secondary"}>
-                ❌ {e.message}
+              <li key={e.code} className={`flex items-start gap-1.5 ${e.critical ? "text-danger" : "text-text-secondary"}`}>
+                <XCircle size={14} className="mt-0.5 shrink-0" />
+                <span>{e.message}</span>
               </li>
             ))}
             {result.errors.length === 0 && <li className="text-text-muted">{p.emptyChecklist}</li>}

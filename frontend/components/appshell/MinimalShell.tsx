@@ -5,7 +5,7 @@ import { QualityProvider } from "@/lib/quality-context";
 
 /**
  * D4 — minimal shell for immersive/simulation routes (Chemistry World,
- * Electricity Lab, GeoWorld, SimLab). No Rail, no TopBar: a permanent
+ * Electricity Lab, GeoWorld, SimLab). No TopBar, no app chrome at all: a permanent
  * navigation chrome would eat into the 3D viewport, which is exactly the
  * "SaaS dashboard containing a 3D iframe" anti-pattern this whole redesign
  * targets (see §2/§9 of EDUMIND_DESIGN_SYSTEM_V2.md). Still enforces the

@@ -4,6 +4,7 @@
 // вулкан / землетрясение / слой Земли / континент), использующая общий
 // renderer-independent `GeoFeatureInfo` (lib/geo/education/featureInfo.ts) —
 // вместо 4 отдельных info-card компонентов на каждый тип объекта.
+import { X } from "lucide-react";
 import { useLocale } from "@/lib/locale-context";
 import type { GeoFeatureInfo } from "@/lib/geo/education/featureInfo";
 
@@ -26,10 +27,10 @@ export default function FeatureInfoPanel({ info, onClose }: FeatureInfoPanelProp
         <button
           type="button"
           onClick={onClose}
-          className="ds-focus-ring shrink-0 rounded-full px-2 py-1 text-ds-caption text-text-muted transition-colors hover:text-text-primary"
+          className="ds-focus-ring shrink-0 rounded-full p-1.5 text-text-muted transition-colors hover:text-text-primary"
           aria-label={t.geo.maplibre.earthScience.closeFeatureInfo}
         >
-          ✕
+          <X size={16} />
         </button>
       </div>
       <ul className="mt-2 space-y-1">

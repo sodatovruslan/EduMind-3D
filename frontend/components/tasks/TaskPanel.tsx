@@ -114,17 +114,22 @@ export default function TaskPanel() {
         </div>
 
         {status === TaskStatus.COMPLETED ? (
-          <p className="text-success">{p.completedMessage.replace("{xp}", String(task.xpReward))}</p>
+          <p className="flex items-center gap-1.5 text-success">
+            <CheckCircle2 size={14} className="shrink-0" />
+            {p.completedMessage.replace("{xp}", String(task.xpReward))}
+          </p>
         ) : (
           <ul className="space-y-0.5" data-testid="task-error-list">
             {result.errors.map((e) => (
-              <li key={e.code} className={e.critical ? "text-danger" : "text-text-secondary"}>
-                ❌ {explainError(e.code, e.message)}
+              <li key={e.code} className={`flex items-start gap-1.5 ${e.critical ? "text-danger" : "text-text-secondary"}`}>
+                <XCircle size={14} className="mt-0.5 shrink-0" />
+                <span>{explainError(e.code, e.message)}</span>
               </li>
             ))}
             {result.warnings.map((w) => (
-              <li key={w} className="text-warning">
-                ⚠ {w}
+              <li key={w} className="flex items-start gap-1.5 text-warning">
+                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                <span>{w}</span>
               </li>
             ))}
             {result.errors.length === 0 && result.warnings.length === 0 && (

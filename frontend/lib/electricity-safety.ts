@@ -51,7 +51,7 @@ function checkShortCircuit(solution: CircuitSolution): SafetyWarning[] {
   return [
     {
       code: "short_circuit",
-      message: `⚡ Короткое замыкание! Сопротивление контура почти нулевое — расчётный ток ${solution.currentA.toFixed(
+      message: `Короткое замыкание! Сопротивление контура почти нулевое — расчётный ток ${solution.currentA.toFixed(
         1
       )} А. В реальной цепи это вызывает перегрев проводов и может привести к пожару.`,
       severity: "danger",
@@ -75,7 +75,7 @@ function checkFuseAndOverload(components: CircuitComponent[], solution: CircuitS
     if (component.isBlown) {
       warnings.push({
         code: "fuse_blown",
-        message: `🔥 Предохранитель перегорел — цепь разорвана. Это защита от перегрузки: ток превысил допустимые ${
+        message: `Предохранитель перегорел — цепь разорвана. Это защита от перегрузки: ток превысил допустимые ${
           component.ratedCurrentA ?? "?"
         } А. Нажми «Сбросить», чтобы заменить предохранитель.`,
         severity: "danger",
@@ -90,7 +90,7 @@ function checkFuseAndOverload(components: CircuitComponent[], solution: CircuitS
     if (currentA >= component.ratedCurrentA * FUSE_OVERLOAD_WARNING_RATIO && currentA < component.ratedCurrentA) {
       warnings.push({
         code: "overload",
-        message: `⚠ Ток ${currentA.toFixed(1)} А приближается к пределу предохранителя (${component.ratedCurrentA} А). Ещё немного — и он перегорит. Снизь напряжение или увеличь сопротивление.`,
+        message: `Ток ${currentA.toFixed(1)} А приближается к пределу предохранителя (${component.ratedCurrentA} А). Ещё немного — и он перегорит. Снизь напряжение или увеличь сопротивление.`,
         severity: "warning",
       });
     }
@@ -106,7 +106,7 @@ function checkFuseAndOverload(components: CircuitComponent[], solution: CircuitS
   if (bulb?.ratedPowerW !== undefined && bulbReading && bulbReading.powerW > bulb.ratedPowerW * 1.005) {
     warnings.push({
       code: "overload",
-      message: `⚠ Мощность на лампе (${bulbReading.powerW.toFixed(1)} Вт) превышает номинал (${bulb.ratedPowerW} Вт). В реальности лампа перегорела бы — снизь напряжение источника.`,
+      message: `Мощность на лампе (${bulbReading.powerW.toFixed(1)} Вт) превышает номинал (${bulb.ratedPowerW} Вт). В реальности лампа перегорела бы — снизь напряжение источника.`,
       severity: "warning",
     });
   }
@@ -167,7 +167,7 @@ function checkUnsafeConnection(components: CircuitComponent[], connections: Conn
   return [
     {
       code: "unsafe_connection",
-      message: `⚠ Ток течёт в обход предохранителя — цепь работает без защиты от перегрузки. В реальности при коротком замыкании или перегрузке это может привести к пожару.`,
+      message: `Ток течёт в обход предохранителя — цепь работает без защиты от перегрузки. В реальности при коротком замыкании или перегрузке это может привести к пожару.`,
       severity: "danger",
     },
   ];

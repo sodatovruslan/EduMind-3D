@@ -23,7 +23,7 @@ import AchievementsTeaser from "@/components/dashboard/AchievementsTeaser";
  * admin list rather than a hub.
  *
  * D5.2 — the content column here (inside StandardAppShell's `<main>`, which
- * spans the FULL remaining viewport width after the Rail) previously had a
+ * spans the FULL viewport width — the shell has no side rail) previously had a
  * `max-width` with no `mx-auto`, so on wide desktops it sat flush against
  * the left edge of that column instead of being centered within it — the
  * root cause of the "left-heavy" composition. `mx-auto` centers it; the
@@ -41,7 +41,7 @@ import AchievementsTeaser from "@/components/dashboard/AchievementsTeaser";
  * full grid on /profile, deliberately not duplicated here — see
  * EDUMIND_DESIGN_SYSTEM_V2.md D8 notes for the full data audit).
  *
- * Teacher/admin visiting `/dashboard` (Rail's "Home" is role-agnostic)
+ * Teacher/admin visiting `/dashboard` (TopBar's "Home" is role-agnostic)
  * still get a minimal world-browse fallback instead of fabricated student
  * widgets — but the D5 explanatory dev-copy about which panel teachers
  * should use instead was removed (§11 of the D5.1 brief); the heading

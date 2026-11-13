@@ -2,7 +2,7 @@
 
 import useSWR from "swr";
 import { getMyProgress } from "@/lib/progress-client";
-import { ACHIEVEMENT_EMOJI, ALL_ACHIEVEMENT_CODES } from "@/lib/achievements";
+import { achievementIcon, ALL_ACHIEVEMENT_CODES } from "@/lib/achievements";
 import { useLocale } from "@/lib/locale-context";
 import { ButtonLink, Skeleton, Surface } from "@/components/design-system";
 
@@ -50,6 +50,10 @@ export default function AchievementsTeaser() {
           {visibleCodes.map((code) => {
             const isUnlocked = unlocked.includes(code);
             const info = t.achievements[code as keyof typeof t.achievements];
+            // Те же иконки и та же «плитка», что в полной сетке достижений
+            // на /profile (ProgressDashboard) — одно достижение не должно
+            // выглядеть на двух экранах по-разному.
+            const Icon = achievementIcon(code, isUnlocked);
             return (
               <Surface
                 key={code}
@@ -59,7 +63,13 @@ export default function AchievementsTeaser() {
                 title={info.description}
                 className={`p-3 text-center ${isUnlocked ? "border-warning/50" : "opacity-50"}`}
               >
-                <div className="text-2xl">{ACHIEVEMENT_EMOJI[code]}</div>
+                <span
+                  className={`mx-auto flex h-9 w-9 items-center justify-center rounded-lg ${
+                    isUnlocked ? "bg-warning/15 text-warning" : "bg-border/[0.05] text-text-muted"
+                  }`}
+                >
+                  <Icon size={17} strokeWidth={1.75} />
+                </span>
                 <div className="mt-1 text-ds-caption font-medium text-text-primary">{info.title}</div>
               </Surface>
             );

@@ -1,21 +1,9 @@
 "use client";
 
 import useSWR from "swr";
-import {
-  Brain,
-  Cable,
-  Cog,
-  Gem,
-  Lock,
-  Rocket,
-  Trophy,
-  Wrench,
-  Hammer,
-  FlaskConical,
-  type LucideIcon,
-} from "lucide-react";
+import { FlaskConical } from "lucide-react";
 import { getMyProgress } from "@/lib/progress-client";
-import { ALL_ACHIEVEMENT_CODES } from "@/lib/achievements";
+import { achievementIcon, ALL_ACHIEVEMENT_CODES } from "@/lib/achievements";
 import { useLocale } from "@/lib/locale-context";
 import { ButtonLink, Skeleton, Surface } from "@/components/design-system";
 
@@ -24,17 +12,6 @@ import { ButtonLink, Skeleton, Surface } from "@/components/design-system";
  * GET /api/progress/me (progress_service.py) — здесь только отображение.
  * Ключ SWR общий с шапкой профиля и AchievementsTeaser, так что запрос один.
  */
-
-const ACHIEVEMENT_ICON: Record<string, LucideIcon> = {
-  first_circuit: Cable,
-  first_perfect_lab: Gem,
-  five_labs_completed: Trophy,
-  no_hints_used: Brain,
-  fast_learner: Rocket,
-  electrician_beginner: Wrench,
-  electrician_intermediate: Hammer,
-  electrician_advanced: Cog,
-};
 
 function Stat({ label, value, suffix }: { label: string; value: string; suffix?: string }) {
   return (
@@ -165,7 +142,7 @@ export default function ProgressDashboard() {
             {ALL_ACHIEVEMENT_CODES.map((code) => {
               const unlocked = profile.achievements.includes(code);
               const info = t.achievements[code as keyof typeof t.achievements];
-              const Icon = unlocked ? ACHIEVEMENT_ICON[code] ?? Trophy : Lock;
+              const Icon = achievementIcon(code, unlocked);
               return (
                 <li
                   key={code}

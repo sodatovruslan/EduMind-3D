@@ -290,7 +290,7 @@ export const ru = {
     panel: {
       counter: "Задание {index} / {total} · {difficulty}",
       goalLabel: "Цель",
-      completedMessage: "✔ Задание выполнено (+{xp} XP)",
+      completedMessage: "Задание выполнено (+{xp} XP)",
       emptyChecklist: "Начни задание, чтобы увидеть проверку.",
       allDone: "Все задания пройдены",
       nextButton: "Следующее задание",
@@ -441,7 +441,7 @@ export const ru = {
       reset: "Сбросить",
       qualityAria: "Качество рендера",
       statusConnect: "Соедини терминалы проводами: потяни от одной точки подключения к другой, чтобы собрать полный контур. Клик по проводу — разрыв соединения.",
-      statusShort: "⚠ Короткое замыкание! Сопротивление контура почти нулевое — расчетный ток {current} А.",
+      statusShort: "Короткое замыкание! Сопротивление контура почти нулевое — расчетный ток {current} А.",
       statusClosedNoCurrent: "Цепь замкнута, но ток не течет — проверь выключатель и предохранитель.",
       statusActive: "Ток течет: I = {current} А (закон Ома: U/R = {voltage} В / контур).",
       quickCheckHeading: "Быстрая проверка",
@@ -458,7 +458,7 @@ export const ru = {
     panel: {
       counter: "Задание {index} / {total} · {difficulty}",
       goalLabel: "Цель",
-      completedMessage: "✔ Задание выполнено (+{xp} XP)",
+      completedMessage: "Задание выполнено (+{xp} XP)",
       emptyChecklist: "Собери схему, чтобы увидеть проверку.",
       allDone: "Все задания пройдены",
       nextButton: "Следующее задание",
@@ -954,6 +954,7 @@ export const ru = {
   },
   shell: {
     nav: {
+      label: "Основная навигация",
       home: "Главная",
       messages: "Сообщения",
       teacherArea: "Ученики",
@@ -968,10 +969,6 @@ export const ru = {
       profile: "Профиль",
       logout: "Выйти",
       menuLabel: "Меню аккаунта",
-    },
-    rail: {
-      expand: "Развернуть навигацию",
-      collapse: "Свернуть навигацию",
     },
     mobile: {
       openMenu: "Открыть меню",

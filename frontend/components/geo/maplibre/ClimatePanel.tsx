@@ -8,6 +8,7 @@
 // слайдер, легенду единиц/сценария и явную оговорку "образовательная
 // симуляция, не научный прогноз" (§26, обязательно, т.к. это НЕ полноценная
 // климатическая модель, а один смоделированный сценарий схода селя).
+import { AlertTriangle } from "lucide-react";
 import { useLocale } from "@/lib/locale-context";
 
 export interface ClimatePanelProps {
@@ -48,8 +49,9 @@ export default function ClimatePanel({ temperatureAnomaly, onChange, triggered, 
         role="status"
       >
         {triggered && phenomenon && location && (
-          <p className="font-semibold">
-            ⚠ {phenomenon} — {location}
+          <p className="flex items-center gap-1.5 font-semibold">
+            <AlertTriangle size={14} className="shrink-0" />
+            {phenomenon} — {location}
           </p>
         )}
         <p className={triggered ? "text-warning/90" : "text-text-muted"}>{description}</p>

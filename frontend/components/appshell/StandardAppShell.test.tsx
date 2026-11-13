@@ -53,13 +53,26 @@ describe("StandardAppShell — D4 authenticated navigation", () => {
     cleanup();
   });
 
-  it("renders the student navigation — Home only, no teacher-only destination", async () => {
+  it("renders no top-bar destinations for a student without a teacher, and no teacher-only destination", async () => {
     renderShell();
     await act(async () => {});
 
-    expect(screen.getAllByRole("link", { name: new RegExp(ru.shell.nav.home) }).length).toBeGreaterThan(0);
+    // Пунктов нет вовсе — значит и пустого navigation-landmark быть не должно
+    expect(screen.queryByRole("navigation", { name: ru.shell.nav.label })).toBeNull();
     expect(screen.queryByRole("link", { name: ru.shell.nav.teacherArea })).toBeNull();
     expect(replaceMock).not.toHaveBeenCalled(); // не разлогинило/не редиректнуло валидного пользователя
+  });
+
+  it("brand mark links to the landing page, and the account menu is the way back to /dashboard", async () => {
+    renderShell();
+    await act(async () => {});
+
+    const brand = screen.getAllByRole("link", { name: /EduMind 3D/ })[0];
+    expect(brand.getAttribute("href")).toBe("/");
+
+    fireEvent.click(screen.getByRole("button", { name: ru.shell.account.menuLabel }));
+    const dashboardItem = await screen.findByRole("menuitem", { name: new RegExp(ru.shell.nav.home) });
+    expect(dashboardItem.getAttribute("href")).toBe("/dashboard");
   });
 
   it("renders the teacher navigation — Home + teacher area", async () => {
@@ -79,8 +92,8 @@ describe("StandardAppShell — D4 authenticated navigation", () => {
     const teacherLinks = screen.getAllByRole("link", { name: new RegExp(ru.shell.nav.teacherArea) });
     expect(teacherLinks.some((link) => link.getAttribute("aria-current") === "page")).toBe(true);
 
-    const homeLinks = screen.getAllByRole("link", { name: new RegExp(ru.shell.nav.home) });
-    expect(homeLinks.every((link) => link.getAttribute("aria-current") !== "page")).toBe(true);
+    const classesLinks = screen.getAllByRole("link", { name: new RegExp(ru.shell.nav.classes) });
+    expect(classesLinks.every((link) => link.getAttribute("aria-current") !== "page")).toBe(true);
   });
 
   it("mobile drawer opens via the TopBar trigger, closes on Escape", async () => {
@@ -113,16 +126,29 @@ describe("StandardAppShell — D4 authenticated navigation", () => {
   });
 
   it("mobile drawer closes when a nav link is clicked", async () => {
+    mockUser = { id: "u2", email: "t@b.com", full_name: "Олег Смирнов", role: "teacher", created_at: "2026-01-01" };
     renderShell();
     await act(async () => {});
 
     fireEvent.click(screen.getByRole("button", { name: ru.shell.mobile.openMenu }));
     const dialog = await screen.findByRole("dialog");
-    const homeLinkInDrawer = Array.from(dialog.querySelectorAll("a")).find((a) => a.textContent?.includes(ru.shell.nav.home));
-    expect(homeLinkInDrawer).toBeDefined();
+    const navLinkInDrawer = Array.from(dialog.querySelectorAll("a")).find((a) => a.textContent?.includes(ru.shell.nav.teacherArea));
+    expect(navLinkInDrawer).toBeDefined();
 
-    fireEvent.click(homeLinkInDrawer!);
+    fireEvent.click(navLinkInDrawer!);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("mobile drawer also carries the /dashboard link, since the brand mark now goes to the landing", async () => {
+    renderShell();
+    await act(async () => {});
+
+    fireEvent.click(screen.getByRole("button", { name: ru.shell.mobile.openMenu }));
+    const dialog = await screen.findByRole("dialog");
+    const links = Array.from(dialog.querySelectorAll("a"));
+
+    expect(links.some((a) => a.getAttribute("href") === "/dashboard")).toBe(true);
+    expect(links.some((a) => a.getAttribute("href") === "/")).toBe(true);
   });
 
   it("account menu shows the real user's name/role and logout works", async () => {
@@ -152,27 +178,34 @@ describe("StandardAppShell — D4 authenticated navigation", () => {
   });
 
   it("switching language updates the rendered navigation labels", async () => {
+    mockUser = { id: "u2", email: "t@b.com", full_name: "Олег Смирнов", role: "teacher", created_at: "2026-01-01" };
     renderShell();
     await act(async () => {});
 
-    expect(screen.getAllByRole("link", { name: new RegExp(ru.shell.nav.home) }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("link", { name: new RegExp(ru.shell.nav.teacherArea) }).length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getAllByRole("radio", { name: "English" })[0]);
     await act(async () => {});
 
-    expect(screen.getAllByRole("link", { name: new RegExp(en.shell.nav.home) }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("link", { name: new RegExp(en.shell.nav.teacherArea) }).length).toBeGreaterThan(0);
   });
 
-  it("persists the rail collapsed preference across remounts", async () => {
-    const { unmount } = renderShell();
-    await act(async () => {});
-
-    fireEvent.click(screen.getByRole("button", { name: ru.shell.rail.collapse }));
-    expect(window.localStorage.getItem("edumind:rail-collapsed")).toBe("true");
-    unmount();
-
+  it("keeps desktop navigation inside the top bar — no permanent vertical rail", async () => {
+    mockUser = { id: "u2", email: "t@b.com", full_name: "Олег Смирнов", role: "teacher", created_at: "2026-01-01" };
     renderShell();
     await act(async () => {});
-    expect(await screen.findByRole("button", { name: ru.shell.rail.expand })).toBeDefined();
+
+    // Единственный постоянный навигационный блок — горизонтальный, внутри
+    // <header>. Боковой колонки (<aside>/complementary) в оболочке нет:
+    // именно это и было смыслом замены Rail на пункты в TopBar.
+    expect(document.querySelector("aside")).toBeNull();
+
+    const banner = screen.getByRole("banner");
+    const nav = screen.getByRole("navigation", { name: ru.shell.nav.label });
+    expect(banner.contains(nav)).toBe(true);
+
+    const labels = Array.from(nav.querySelectorAll("a")).map((a) => a.textContent ?? "");
+    expect(labels.some((l) => l.includes(ru.shell.nav.teacherArea))).toBe(true);
+    expect(labels.some((l) => l.includes(ru.shell.nav.classes))).toBe(true);
   });
 });
