@@ -1,0 +1,39 @@
+# Blueprint для Render: описывает бэкенд целиком, чтобы сервис поднимался
+# из файла, а не десятком кликов в панели.
+#
+# Фронтенд тут сознательно отсутствует — он живёт на Vercel.
+# База тоже: бесплатный Postgres самого Render удаляется через 30 дней,
+# поэтому DATABASE_URL указывает на внешний Neon (бессрочный free-план)
+# и задаётся вручную при создании blueprint.
+services:
+  - type: web
+    name: edumind-backend
+    runtime: docker
+    repo: https://github.com/sodatovruslan/EduMind-3D
+    branch: main
+    # Пути от корня репозитория: Dockerfile лежит в backend/, туда же
+    # ограничен контекст сборки, чтобы фронтенд не уезжал в образ.
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    region: frankfurt
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      # Демо-стенд без SMTP: без этого флага регистрация отдаёт 503, а вход —
+      # 403 EMAIL_NOT_VERIFIED, т.е. войти нельзя вообще никак.
+      - key: AUTO_VERIFY_EMAIL
+        value: "true"
+      # Render сгенерирует стойкое значение сам — секрет не проходит через
+      # репозиторий, чат и мою историю команд.
+      - key: SECRET_KEY
+        generateValue: true
+      # Домен фронта на Vercel. Превью-деплои имеют другие адреса и в этот
+      # список не попадают — их браузер заблокирует по CORS.
+      - key: CORS_ORIGINS
+        value: https://edumind-3d-parvizsodatovs-projects.vercel.app
+      # sync: false — Render спросит значение при создании. Строку подключения
+      # из Neon вставляешь прямо туда.
+      - key: DATABASE_URL
+        sync: false

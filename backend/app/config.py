@@ -3,6 +3,10 @@
 Значения подтягиваются из .env, с дефолтами для локальной разработки.
 """
 from pydantic import field_validator
+
+# Параметры строки подключения, которые понимает только libpq (psycopg2),
+# но не asyncpg — на них он падает, поэтому для async-движка они вырезаются.
+_LIBPQ_ONLY_PARAMS = {"sslmode", "channel_binding", "gssencmode", "target_session_attrs"}
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -64,8 +68,29 @@ class Settings(BaseSettings):
         """
         Alembic-миграции гоняются синхронно (это норма даже для async-приложений —
         миграциям не нужен event loop), поэтому им нужен sync-драйвер, а не asyncpg.
+        psycopg2 понимает sslmode/channel_binding в строке, поэтому параметры
+        тут сохраняются как есть.
         """
         return self.DATABASE_URL.replace("+asyncpg", "+psycopg2")
+
+    @property
+    def database_url_async(self) -> str:
+        """
+        То же подключение, но пригодное для asyncpg: он не понимает libpq-шные
+        sslmode и channel_binding и падает на них с TypeError, а именно их
+        дописывают к строке Neon и Supabase. Выкусываем их здесь, а сам TLS
+        включается через connect_args (см. database.py и is_ssl_required).
+        """
+        base, _, query = self.DATABASE_URL.partition("?")
+        if not query:
+            return base
+        kept = [p for p in query.split("&") if p.split("=")[0] not in _LIBPQ_ONLY_PARAMS]
+        return base + ("?" + "&".join(kept) if kept else "")
+
+    @property
+    def is_ssl_required(self) -> bool:
+        """TLS нужен, если его требовала исходная строка подключения."""
+        return "sslmode=require" in self.DATABASE_URL or "sslmode=verify" in self.DATABASE_URL
 
 
 settings = Settings()

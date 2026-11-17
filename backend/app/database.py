@@ -10,9 +10,17 @@ from sqlalchemy.orm import declarative_base
 
 from app.config import settings
 
-connect_args = {"check_same_thread": False} if settings.DATABASE_URL.startswith("sqlite") else {}
+if settings.DATABASE_URL.startswith("sqlite"):
+    connect_args = {"check_same_thread": False}
+elif settings.is_ssl_required:
+    # Managed-Postgres (Neon, Supabase, Render) требует TLS. asyncpg задаёт его
+    # аргументом ssl, а не параметром sslmode в URL — тот из строки вырезан,
+    # иначе драйвер падает ещё до первого подключения.
+    connect_args = {"ssl": "require"}
+else:
+    connect_args = {}
 
-engine = create_async_engine(settings.DATABASE_URL, connect_args=connect_args)
+engine = create_async_engine(settings.database_url_async, connect_args=connect_args)
 SessionLocal = async_sessionmaker(engine, class_=AsyncSession, autocommit=False, autoflush=False, expire_on_commit=False)
 
 Base = declarative_base()
