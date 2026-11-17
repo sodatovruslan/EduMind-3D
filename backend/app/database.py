@@ -17,6 +17,13 @@ elif settings.is_ssl_required:
     # аргументом ssl, а не параметром sslmode в URL — тот из строки вырезан,
     # иначе драйвер падает ещё до первого подключения.
     connect_args = {"ssl": "require"}
+    if "-pooler." in settings.DATABASE_URL:
+        # Строка через пулер (pgbouncer в transaction-режиме). asyncpg по
+        # умолчанию кэширует prepared statements, а пулер отдаёт следующий
+        # запрос в другое соединение — в итоге сыплется InvalidSQLStatementName
+        # на ровном месте. Отключаем кэш, чтобы годилась любая строка, которую
+        # Neon показывает в консоли (там pooled-вариант предлагается первым).
+        connect_args["statement_cache_size"] = 0
 else:
     connect_args = {}
 
