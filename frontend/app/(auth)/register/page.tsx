@@ -11,7 +11,7 @@ import PasswordField from "@/components/auth/PasswordField";
 
 export default function RegisterPage() {
   const router = useRouter();
-  const { register } = useAuth();
+  const { register, login } = useAuth();
   const { t } = useLocale();
 
   const [fullName, setFullName] = useState("");
@@ -35,7 +35,14 @@ export default function RegisterPage() {
 
     setIsSubmitting(true);
     try {
-      await register(email, password, fullName);
+      const created = await register(email, password, fullName);
+      if (created.email_verified) {
+        // Бэкенд поднят с AUTO_VERIFY_EMAIL (демо-стенд без SMTP): кода на
+        // почте нет, поэтому экран ввода кода стал бы тупиком. Логиним сразу.
+        await login(email, password);
+        router.push("/dashboard");
+        return;
+      }
       router.push(`/verify-email?email=${encodeURIComponent(email.trim().toLowerCase())}`);
     } catch (err) {
       if (err instanceof ApiError && err.code === "VERIFICATION_EMAIL_FAILED") {

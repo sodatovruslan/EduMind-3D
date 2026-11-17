@@ -9,7 +9,7 @@ interface AuthContextValue {
   user: User | null;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, fullName: string) => Promise<void>;
+  register: (email: string, password: string, fullName: string) => Promise<User>;
   logout: () => void;
   refreshUser: () => Promise<void>;
 }
@@ -47,7 +47,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function register(email: string, password: string, fullName: string) {
-    await apiFetch("/api/auth/register", {
+    // Возвращаем созданного пользователя, а не void: вызывающей стороне нужен
+    // его email_verified, чтобы решить, вести человека на ввод кода или сразу
+    // внутрь (на демо-стенде с AUTO_VERIFY_EMAIL подтверждать нечего).
+    return await apiFetch<User>("/api/auth/register", {
       method: "POST",
       auth: false,
       body: JSON.stringify({ email, password, full_name: fullName }),

@@ -1,0 +1,5 @@
+# Shell-скрипты всегда с LF: иначе собранный на Windows образ падает в
+# контейнере с "exec format error" — шебанг читается как "/usr/bin/env sh\r",
+# и такой интерпретатор не находится.
+*.sh text eol=lf
+Dockerfile text eol=lf

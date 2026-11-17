@@ -36,6 +36,14 @@ def _issue_tokens(user_id: str) -> Token:
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
     user = await register_user(db, user_in)
+    if settings.AUTO_VERIFY_EMAIL:
+        # Демо-стенд без SMTP: подтверждаем сразу, иначе /login вернёт 403
+        # EMAIL_NOT_VERIFIED и войти будет нельзя вообще никак. Код не
+        # выпускаем и письмо не отправляем — подтверждать нечего.
+        user.email_verified = True
+        await db.commit()
+        await db.refresh(user)
+        return user
     code = await issue_verification_code(db, user)
     try:
         await send_verification_email(user.email, code)
