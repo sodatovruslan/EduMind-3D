@@ -1,10 +1,22 @@
-# Blueprint для Render: описывает бэкенд целиком, чтобы сервис поднимался
-# из файла, а не десятком кликов в панели.
+# Blueprint для Render: поднимает базу и бэкенд одной кнопкой Apply.
+# Вводить вручную ничего не нужно — DATABASE_URL и SECRET_KEY Render
+# подставляет сам.
 #
 # Фронтенд тут сознательно отсутствует — он живёт на Vercel.
-# База тоже: бесплатный Postgres самого Render удаляется через 30 дней,
-# поэтому DATABASE_URL указывает на внешний Neon (бессрочный free-план)
-# и задаётся вручную при создании blueprint.
+#
+# ВНИМАНИЕ про базу: бесплатный Postgres на Render удаляется через 30 дней
+# после создания (плюс 14 дней отсрочки), вместе с данными. Это осознанный
+# выбор ради демо «здесь и сейчас». Для пилота со школами базу надо увести
+# на бессрочный бесплатный план Neon — тогда меняется ровно одна переменная
+# DATABASE_URL у сервиса, код трогать не придётся: строки с sslmode и
+# пулером он уже умеет (см. app/config.py и app/database.py).
+databases:
+  - name: edumind-db
+    databaseName: edumind
+    user: edumind
+    plan: free
+    region: frankfurt
+
 services:
   - type: web
     name: edumind-backend
@@ -33,7 +45,8 @@ services:
       # список не попадают — их браузер заблокирует по CORS.
       - key: CORS_ORIGINS
         value: https://edumind-3d-parvizsodatovs-projects.vercel.app
-      # sync: false — Render спросит значение при создании. Строку подключения
-      # из Neon вставляешь прямо туда.
+      # Адрес базы Render подставляет сам из блока databases выше.
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: edumind-db
+          property: connectionString
