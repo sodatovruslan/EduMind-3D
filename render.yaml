@@ -21,7 +21,7 @@ services:
   - type: web
     name: edumind-backend
     runtime: docker
-    repo: https://github.com/sodatovruslan/EduMind-3D
+    repo: https://github.com/ParvizSodatov/EduMind-3D
     branch: main
     # Пути от корня репозитория: Dockerfile лежит в backend/, туда же
     # ограничен контекст сборки, чтобы фронтенд не уезжал в образ.
