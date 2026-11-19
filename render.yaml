@@ -44,7 +44,7 @@ services:
       # Домен фронта на Vercel. Превью-деплои имеют другие адреса и в этот
       # список не попадают — их браузер заблокирует по CORS.
       - key: CORS_ORIGINS
-        value: https://edumind-3d-parvizsodatovs-projects.vercel.app
+        value: https://edumind-3d-parvizsodatovs-projects.vercel.app,https://edumind-3d.vercel.app
       # Адрес базы Render подставляет сам из блока databases выше.
       - key: DATABASE_URL
         fromDatabase:
